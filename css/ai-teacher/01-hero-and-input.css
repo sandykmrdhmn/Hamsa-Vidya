@@ -1,0 +1,752 @@
+/* ==========================================================================
+   ai-teacher.css — part 01-hero-and-input.css
+   Hero emblem, input studio, HUD bar
+
+   Extracted from the original 4868-line ai-teacher.css
+   (source lines 1-623).
+
+   ORDER MATTERS: these parts must stay linked in numeric order in
+   index.html. Later rules intentionally override earlier ones.
+   ========================================================================== */
+
+/* ==========================================================================
+   HAMSA VIDYA (हंस विद्या) — AI Teacher / AI Explain Design System
+   Material 3 Luxury Educational Cards, Responsive Flowcharts & Diagram Studio
+   ========================================================================== */
+
+/* View Container */
+.ai-teacher-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.5rem 1.25rem 4rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  animation: fadeIn 0.35s ease-out;
+}
+
+/* ==========================================================================
+   HERO BANNER
+
+   Replaces the earlier layout (a 96px orbital logo beside two lines of text),
+   which left most of the panel empty. The space now carries live counters from
+   the student's own history and an explicit breakdown of what each generated
+   lesson contains.
+
+   All decorative layers are aria-hidden and collapse under
+   prefers-reduced-motion.
+   ========================================================================== */
+
+.teacher-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-color);
+  background:
+    linear-gradient(160deg,
+      color-mix(in srgb, var(--color-primary) 10%, transparent) 0%,
+      transparent 45%),
+    var(--gradient-card, var(--bg-card));
+  box-shadow: var(--shadow-lg);
+  padding: clamp(1.6rem, 4vw, 2.6rem) clamp(1.25rem, 4vw, 2.75rem);
+  isolation: isolate;
+}
+
+/* Soft colour wash. Static gradients rather than moving orbs, so the panel
+   reads as premium without competing with the content below it. */
+.teacher-hero-aurora {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+  pointer-events: none;
+}
+
+.hero-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(58px);
+  opacity: 0.5;
+}
+
+.hero-orb-1 {
+  width: 320px;
+  height: 320px;
+  top: -140px;
+  left: -90px;
+  background: var(--color-primary);
+  opacity: 0.28;
+}
+
+.hero-orb-2 {
+  width: 260px;
+  height: 260px;
+  bottom: -130px;
+  right: -60px;
+  background: var(--color-secondary, var(--color-primary-light));
+  opacity: 0.22;
+}
+
+.hero-orb-3 {
+  width: 200px;
+  height: 200px;
+  top: 40%;
+  right: 28%;
+  background: var(--color-gold);
+  opacity: 0.1;
+}
+
+/* Faint engineering grid — adds texture at very low contrast. */
+.teacher-hero-grid-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, currentColor 1px, transparent 1px),
+    linear-gradient(to bottom, currentColor 1px, transparent 1px);
+  background-size: 44px 44px;
+  color: var(--text-muted);
+  opacity: 0.05;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 100%);
+}
+
+.teacher-hero-inner {
+  position: relative;
+  max-width: 780px;
+  margin: 0 auto;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+/* -------------------------------------------------------------- Badge */
+.teacher-title-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.38rem 0.95rem;
+  border-radius: var(--radius-full);
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 38%, transparent);
+  color: var(--color-primary-light);
+  font-size: 0.74rem;
+  font-weight: 750;
+  letter-spacing: 0.09em;
+  white-space: nowrap;
+}
+
+.live-pulse-radar {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  box-shadow: 0 0 8px var(--color-success);
+  animation: radarBeaconPing 2s infinite cubic-bezier(0, 0, 0.2, 1);
+  flex-shrink: 0;
+}
+
+@keyframes radarBeaconPing {
+  0%   { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.65); }
+  70%  { transform: scale(1.15); box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.9); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* -------------------------------------------------------------- Title */
+.teacher-hero-title {
+  font-family: var(--font-family-display);
+  font-size: clamp(1.9rem, 5.2vw, 3.15rem);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.03em;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+}
+
+.hero-title-line {
+  color: var(--text-main);
+  display: block;
+}
+
+/* Gradient text needs a colour fallback: if the clip is unsupported the text
+   would otherwise render fully transparent. */
+.hero-title-accent {
+  color: var(--color-primary-light);
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+@supports (-webkit-text-fill-color: transparent) {
+  .hero-title-accent {
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+.teacher-hero-subtitle {
+  font-size: clamp(0.95rem, 2.2vw, 1.07rem);
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0;
+  max-width: 60ch;
+}
+
+.hero-lang-hi {
+  font-family: var(--font-family-hindi);
+  color: var(--color-primary-light);
+  font-weight: 650;
+}
+
+/* -------------------------------------------------- Live stat counters */
+.teacher-hero-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.6rem;
+  width: 100%;
+  max-width: 560px;
+  margin-top: 0.5rem;
+}
+
+.hero-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.7rem 0.5rem;
+  border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--bg-surface-elevated) 70%, transparent);
+  border: 1px solid var(--border-subtle);
+  transition: transform var(--transition-fast), border-color var(--transition-fast);
+}
+
+.hero-stat:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.hero-stat-value {
+  font-family: var(--font-family-display);
+  font-size: 1.32rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.hero-stat-accent .hero-stat-value {
+  color: var(--color-primary-light);
+}
+
+.hero-stat-label {
+  font-size: 0.68rem;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.055em;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.25;
+}
+
+/* ------------------------------------------------ "Every answer includes" */
+.teacher-hero-deliverables {
+  width: 100%;
+  margin-top: 0.75rem;
+  padding-top: 1.1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.deliverables-heading {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.7rem;
+}
+
+.deliverables-heading i {
+  color: var(--color-gold);
+}
+
+.deliverables-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.deliverable-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.42rem 0.8rem;
+  border-radius: var(--radius-full);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  /* help cursor signals the tooltip carries extra detail */
+  cursor: help;
+  transition: color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.deliverable-pill i {
+  color: var(--color-primary-light);
+  flex-shrink: 0;
+}
+
+.deliverable-pill:hover {
+  color: var(--text-main);
+  border-color: color-mix(in srgb, var(--color-primary) 50%, transparent);
+  transform: translateY(-2px);
+}
+
+/* ------------------------------------------------------------ Responsive */
+@media (max-width: 720px) {
+  .teacher-hero-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-width: 360px;
+  }
+  .hero-orb-3 {
+    display: none;
+  }
+}
+
+@media (max-width: 420px) {
+  .teacher-title-badge {
+    font-size: 0.66rem;
+    letter-spacing: 0.05em;
+    white-space: normal;
+    text-align: center;
+  }
+  .deliverable-pill {
+    font-size: 0.74rem;
+    padding: 0.36rem 0.65rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-pulse-radar {
+    animation: none;
+  }
+  .hero-stat:hover,
+  .deliverable-pill:hover {
+    transform: none;
+  }
+}
+
+/* Blur-heavy decoration is wasted ink on paper. */
+@media print {
+  .teacher-hero-aurora,
+  .teacher-hero-grid-overlay,
+  .teacher-hero-stats,
+  .teacher-hero-deliverables {
+    display: none !important;
+  }
+  .teacher-hero {
+    box-shadow: none;
+    border: none;
+    padding: 0;
+  }
+}
+
+/* Sub-Navigation: Explain Studio | Saved Bookmarks | History */
+.teacher-tabs-nav {
+  display: flex;
+  justify-content: center;
+  gap: 0.5rem;
+  background: var(--bg-card);
+  padding: 0.4rem;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+  max-width: 500px;
+  margin: 0 auto;
+  box-shadow: var(--shadow-sm);
+}
+
+.teacher-tab-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.15rem;
+  border-radius: var(--radius-full);
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.teacher-tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.teacher-tab-btn:hover i {
+  transform: scale(1.15) rotate(-5deg);
+  transition: transform 0.25s ease;
+}
+
+.teacher-tab-btn.active {
+  background: var(--color-primary);
+  color: #ffffff;
+  box-shadow: 0 3px 14px var(--color-primary-glow);
+  transform: translateY(-1px);
+}
+
+.teacher-tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 25%;
+  width: 50%;
+  height: 2px;
+  background: #38BDF8;
+  border-radius: var(--radius-full);
+  box-shadow: 0 0 8px #38BDF8;
+}
+
+/* ==========================================================================
+   INPUT STUDIO CARD
+   ========================================================================== */
+.teacher-input-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-2xl);
+  padding: 1.75rem;
+  box-shadow: var(--shadow-md);
+  position: relative;
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: border-color var(--transition-normal), box-shadow var(--transition-normal);
+}
+
+.teacher-input-card:focus-within {
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 28px var(--color-primary-glow);
+}
+
+.teacher-input-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.15rem;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.teacher-input-title {
+  font-size: 1.28rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  letter-spacing: -0.01em;
+}
+
+.teacher-title-icon-orb {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-glow);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px var(--color-primary-glow);
+}
+
+.teacher-input-subtext {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* ==========================================================================
+   SYMMETRICAL PEDAGOGICAL HUD BAR (Active Profile & Depth Dock)
+   ========================================================================== */
+.teacher-hud-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.08) 0%, rgba(79, 70, 229, 0.06) 100%);
+  border: 1px solid rgba(16, 185, 129, 0.22);
+  border-radius: var(--radius-xl);
+  padding: 0.85rem 1.15rem;
+  margin-bottom: 1.15rem;
+  gap: 1.25rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+}
+
+.hud-profile-card {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.hud-avatar-orbit {
+  position: relative;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary-glow);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.hud-pulse-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 9px;
+  height: 9px;
+  border-radius: var(--radius-full);
+  background: #10B981;
+  box-shadow: 0 0 8px #10B981;
+  animation: pulseDot 2s infinite ease-in-out;
+}
+
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.35); opacity: 0.7; }
+}
+
+.hud-info-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.hud-meta-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.hud-sub-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+}
+
+.hud-pill-tag {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--radius-full);
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.hud-main-title {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.hud-exam-tag {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  padding: 0.1rem 0.5rem;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+/* HUD Level Selector on Right */
+.hud-level-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.hud-level-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.hud-select-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.hud-level-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  font-weight: 600;
+  padding: 0.45rem 2.2rem 0.45rem 0.9rem;
+  border-radius: var(--radius-md);
+  outline: none;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-fast);
+}
+
+.hud-level-select:hover {
+  border-color: var(--color-primary-light);
+  background: var(--bg-secondary);
+}
+
+.hud-level-select:focus {
+  border-color: var(--color-primary-light);
+  box-shadow: 0 0 12px var(--color-primary-glow);
+}
+
+.hud-select-arrow {
+  position: absolute;
+  right: 0.75rem;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+  transition: transform var(--transition-fast);
+}
+
+@media (max-width: 768px) {
+  .teacher-hud-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.85rem;
+  }
+  .hud-level-card {
+    align-items: stretch;
+  }
+  .hud-select-wrapper {
+    width: 100%;
+  }
+  .hud-level-select {
+    width: 100%;
+  }
+}
+
+.teacher-input-hint-banner {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 1.15rem;
+}
+
+/* Multi-line Textarea */
+.teacher-textarea-wrapper {
+  position: relative;
+  width: 100%;
+}
+
+.teacher-textarea {
+  width: 100%;
+  min-height: 130px;
+  max-height: 380px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.1rem 1.25rem;
+  font-family: inherit;
+  font-size: 1.02rem;
+  line-height: 1.65;
+  color: var(--text-primary);
+  resize: vertical;
+  transition: all var(--transition-fast);
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.teacher-textarea:focus {
+  outline: none;
+  border-color: var(--color-primary-light);
+  background: var(--bg-card);
+  box-shadow: 0 0 0 3px var(--color-primary-glow), inset 0 2px 4px rgba(0, 0, 0, 0.03);
+}
+
+.teacher-textarea::placeholder {
+  color: var(--text-muted);
+  font-size: 0.96rem;
+}
+
+/* Attached Media Pill (Image / PDF Preview) */
+.attached-media-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.65rem 0.95rem;
+  background: var(--color-info-bg);
+  border: 1px solid var(--color-info-border);
+  border-radius: var(--radius-md);
+  font-size: 0.85rem;
+  color: var(--text-primary);
+}
+
+.attached-media-thumb {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+  border: 1px solid var(--border-color);
+}
+
+.attached-media-info {
+  flex: 1;
+}
+
+.attached-media-name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.attached-media-remove {
+  background: transparent;
+  border: none;
+  color: var(--color-error);
+  cursor: pointer;
+  padding: 0.3rem;
+  border-radius: var(--radius-xs);
+}

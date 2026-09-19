@@ -1,0 +1,747 @@
+/* ==========================================================================
+   HAMSA VIDYA (हंस विद्या) — Shared View Hero Banner
+   ==========================================================================
+
+   One banner design for every tab, built by UIUtils.buildViewHero().
+
+   WHY THIS FILE EXISTS
+   Nine views each opened differently. Four (create-quiz, library, quiz-history,
+   settings) had no header styling at all — just an `<h2>` inside an
+   inline-styled flex div. Five had a header class used by exactly one view
+   (.study-vault-hero, .tools-hero-header, .aw-header-row, .ea-hero, and
+   flashcards borrowing the dashboard's .hero-card). So there was no shared
+   visual language and nine places to keep in sync.
+
+   RELATIONSHIP TO THE TWO REFERENCE HEROES
+   The Dashboard masthead (.dash-masthead, css/dashboard.css) and the AI Teacher
+   hero (.teacher-hero, css/ai-teacher/01-hero-and-input.css) keep their own
+   markup and CSS. They are the designs this file matches, and rewriting them
+   on top of this component would churn their existing test coverage without
+   changing a pixel. The motion vocabulary here is deliberately the same:
+   an aurora wash, a one-shot entrance rise, a flowing gradient on the accent
+   line and a light sweep across it.
+
+   Keyframes are re-declared locally with `vhero` names rather than reusing
+   dashboard.css's. Keyframe names are global, so borrowing them would work —
+   but it would make this component silently depend on dashboard.css being
+   linked first, and a tab other than the dashboard would break if that ever
+   changed.
+
+   NAMESPACE
+   Everything is `.vhero*`, which cannot collide with the per-view header rules
+   still living in the byte-frozen css/components/* parts.
+
+   LOAD ORDER
+   Linked late — after every per-view stylesheet — so a hero always wins over
+   whatever the view's own header rules used to do. Still before a11y.css, so
+   focus rings keep the last word.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. ACCENT TOKENS
+
+   A hero sets one accent and every layer below reads --vh / --vh-rgb from it:
+   the badge, the orbs, the gradient title, the stat values, the buttons.
+   ========================================================================== */
+
+.vhero {
+  --vh: var(--color-primary);
+  --vh-rgb: var(--color-primary-rgb);
+}
+
+.vhero-accent-violet  { --vh: #8B5CF6; --vh-rgb: 139, 92, 246; }
+.vhero-accent-emerald { --vh: #10B981; --vh-rgb: 16, 185, 129; }
+.vhero-accent-amber   { --vh: #F59E0B; --vh-rgb: 245, 158, 11; }
+.vhero-accent-cyan    { --vh: #06B6D4; --vh-rgb: 6, 182, 212; }
+.vhero-accent-pink    { --vh: #EC4899; --vh-rgb: 236, 72, 153; }
+.vhero-accent-indigo  { --vh: #6366F1; --vh-rgb: 99, 102, 241; }
+.vhero-accent-orange  { --vh: #F97316; --vh-rgb: 249, 115, 22; }
+.vhero-accent-slate   { --vh: #64748B; --vh-rgb: 100, 116, 139; }
+
+
+/* ==========================================================================
+   2. PANEL
+   ========================================================================== */
+
+.vhero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: var(--radius-2xl);
+  border: 1px solid rgba(var(--vh-rgb), 0.22);
+  background:
+    radial-gradient(ellipse 120% 90% at 50% -25%,
+      rgba(var(--vh-rgb), 0.2) 0%,
+      transparent 62%),
+    radial-gradient(ellipse 90% 70% at 50% 125%,
+      rgba(245, 158, 11, 0.09) 0%,
+      transparent 60%),
+    var(--glass-card);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  box-shadow: var(--shadow-xl), var(--specular-highlight);
+  padding: clamp(1.5rem, 4vw, 2.75rem) clamp(1.15rem, 4vw, 2.5rem);
+  margin-bottom: clamp(1.25rem, 3vw, 2rem);
+  text-align: center;
+  animation: vheroEnter 850ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes vheroEnter {
+  from { opacity: 0; transform: translateY(-12px) scale(0.99); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------------------ Aurora layers */
+.vhero-aurora {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+/* Rotating conic sweep, masked to a soft ellipse so the hard conic seam never
+   shows as a visible edge. */
+.vhero-rays {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(var(--vh-rgb), 0.14) 28deg,
+    transparent 66deg,
+    rgba(245, 158, 11, 0.1) 140deg,
+    transparent 180deg,
+    rgba(var(--vh-rgb), 0.12) 256deg,
+    transparent 310deg,
+    transparent 360deg
+  );
+  mask-image: radial-gradient(ellipse 55% 55% at 50% 50%, #000 10%, transparent 72%);
+  -webkit-mask-image: radial-gradient(ellipse 55% 55% at 50% 50%, #000 10%, transparent 72%);
+  animation: vheroRaysSpin 48s linear infinite;
+}
+
+@keyframes vheroRaysSpin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.vhero-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(62px);
+}
+
+.vhero-orb-1 {
+  width: 320px;
+  height: 320px;
+  top: -170px;
+  left: 6%;
+  background: var(--vh);
+  opacity: 0.3;
+  animation: vheroOrbBreathe 16s ease-in-out infinite;
+}
+
+.vhero-orb-2 {
+  width: 260px;
+  height: 260px;
+  bottom: -150px;
+  right: 8%;
+  background: var(--color-accent);
+  opacity: 0.22;
+  animation: vheroOrbBreathe 21s ease-in-out infinite reverse;
+}
+
+@keyframes vheroOrbBreathe {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(16px, -12px, 0) scale(1.14); }
+}
+
+/* Faint engineering grid, fading out downward — adds texture at very low
+   contrast without reading as a pattern. */
+.vhero-grid-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, currentColor 1px, transparent 1px),
+    linear-gradient(to bottom, currentColor 1px, transparent 1px);
+  background-size: 46px 46px;
+  color: var(--text-muted);
+  opacity: 0.05;
+  mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 35%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, #000 35%, transparent 100%);
+}
+
+
+/* ==========================================================================
+   3. CONTENT
+   ========================================================================== */
+
+.vhero-inner {
+  position: relative;
+  max-width: 940px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+/* ------------------------------------------------------------------- Badge */
+.vhero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.36rem 0.95rem;
+  border-radius: var(--radius-full);
+  background: rgba(var(--vh-rgb), 0.11);
+  border: 1px solid rgba(var(--vh-rgb), 0.34);
+  color: var(--vh);
+  font-size: clamp(0.62rem, 1.5vw, 0.73rem);
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  line-height: 1.5;
+}
+
+.vhero-badge i {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+/* Live pulse, same idiom as the dashboard's .live-dot and the AI Teacher's
+   .live-pulse-radar. */
+.vhero-pulse {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  animation: vheroPulse 2.2s infinite cubic-bezier(0, 0, 0.2, 1);
+}
+
+@keyframes vheroPulse {
+  0%   { transform: scale(0.88); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+  70%  { transform: scale(1.12); box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.88); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+/* ------------------------------------------------------------------- Title */
+.vhero-title {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.06em;
+  font-family: var(--font-family-display);
+  font-size: clamp(1.75rem, 5.2vw, 3.25rem);
+  font-weight: 800;
+  line-height: 1.08;
+  letter-spacing: -0.032em;
+  text-wrap: balance;
+}
+
+.vhero-title-line {
+  display: block;
+  color: var(--text-main);
+}
+
+/* Gradient text needs a solid colour declared first: without it the text
+   renders fully transparent wherever background-clip:text is unsupported. */
+.vhero-title-accent {
+  position: relative;
+  display: block;
+  color: var(--vh);
+  background-image: linear-gradient(
+    100deg,
+    var(--vh) 0%,
+    var(--color-accent) 26%,
+    var(--color-gold) 50%,
+    var(--vh) 74%,
+    var(--color-accent) 100%
+  );
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: vheroFlow 11s ease-in-out infinite alternate;
+}
+
+/* The light sweep. A second copy of the glyphs drawn from `data-text`, because
+   background-clip:text can only be applied once per element. */
+.vhero-title-accent::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.85) 50%,
+    transparent 62%
+  );
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  pointer-events: none;
+  animation: vheroShine 7s ease-in-out infinite;
+}
+
+/* On light themes a white sweep over near-white text is invisible, so the band
+   carries a tint of the accent instead. */
+[data-theme="LIGHT"] .vhero-title-accent::after,
+[data-theme="SOFT_WHITE"] .vhero-title-accent::after,
+[data-theme="WARM_GOLD"] .vhero-title-accent::after,
+[data-theme="SAGE_GREEN"] .vhero-title-accent::after,
+[data-theme="SEPIA"] .vhero-title-accent::after {
+  background: linear-gradient(
+    100deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.95) 46%,
+    rgba(var(--vh-rgb), 0.55) 50%,
+    rgba(255, 255, 255, 0.95) 54%,
+    transparent 62%
+  );
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+@keyframes vheroFlow {
+  from { background-position: 0% center; }
+  to   { background-position: 100% center; }
+}
+
+@keyframes vheroShine {
+  0%        { background-position: -140% center; }
+  45%, 100% { background-position: 240% center; }
+}
+
+/* Devanagari needs more line box and no negative tracking, or the matras
+   collide with the line above. */
+.vhero-hindi {
+  font-family: var(--font-family-hindi), var(--font-family-display), sans-serif;
+  font-size: clamp(0.95rem, 2.6vw, 1.45rem);
+  font-weight: 700;
+  line-height: 1.6;
+  letter-spacing: 0.01em;
+  color: var(--color-gold-dark);
+}
+
+[data-theme="DARK"] .vhero-hindi,
+[data-theme="MIDNIGHT_BLUE"] .vhero-hindi,
+[data-theme="CHARCOAL"] .vhero-hindi,
+[data-theme="OLED"] .vhero-hindi {
+  color: var(--color-gold-light);
+}
+
+.vhero-tagline {
+  margin: 0;
+  max-width: 68ch;
+  font-size: clamp(0.82rem, 1.9vw, 0.98rem);
+  font-weight: 500;
+  line-height: 1.65;
+  color: var(--text-secondary);
+  text-wrap: pretty;
+}
+
+/* ------------------------------------------------------------ Live counters */
+.vhero-stats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: clamp(0.75rem, 3vw, 2.25rem);
+  margin-top: 0.4rem;
+  padding: 0.85rem clamp(0.85rem, 3vw, 1.75rem);
+  border-radius: var(--radius-lg);
+  background: rgba(var(--vh-rgb), 0.06);
+  border: 1px solid rgba(var(--vh-rgb), 0.16);
+}
+
+.vhero-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 78px;
+}
+
+.vhero-stat-value {
+  font-family: var(--font-family-display);
+  font-size: clamp(1.2rem, 3vw, 1.6rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  color: var(--vh);
+  /* Tabular figures stop the row jittering while counters animate. */
+  font-variant-numeric: tabular-nums;
+}
+
+.vhero-stat-label {
+  font-size: clamp(0.6rem, 1.5vw, 0.7rem);
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* ------------------------------------------------------------------ Actions */
+.vhero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.6rem;
+  margin-top: 0.35rem;
+}
+
+.vhero-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.62rem 1.25rem;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--vh);
+  color: #FFF;
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 750;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px -4px rgba(var(--vh-rgb), 0.7);
+  transition: all var(--transition-fast);
+}
+
+.vhero-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 9px 22px -4px rgba(var(--vh-rgb), 0.8);
+}
+
+.vhero-btn i {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.vhero-btn-ghost {
+  background: rgba(var(--vh-rgb), 0.1);
+  border: 1px solid rgba(var(--vh-rgb), 0.34);
+  color: var(--vh);
+  box-shadow: none;
+}
+
+.vhero-btn-ghost:hover {
+  background: rgba(var(--vh-rgb), 0.2);
+  border-color: var(--vh);
+  box-shadow: 0 6px 16px -6px rgba(var(--vh-rgb), 0.5);
+}
+
+/* ------------------------------------------------------- Capability chips */
+.vhero-chips {
+  width: 100%;
+  margin-top: 0.6rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.vhero-chips-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.7rem;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.vhero-chips-head i {
+  width: 13px;
+  height: 13px;
+}
+
+.vhero-chips-grid {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.45rem;
+}
+
+.vhero-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius-full);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.vhero-chip:hover {
+  border-color: rgba(var(--vh-rgb), 0.45);
+  color: var(--text-main);
+  transform: translateY(-2px);
+}
+
+.vhero-chip i {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  color: var(--vh);
+}
+
+
+/* ==========================================================================
+   4. DEMOTED LEGACY HEADERS
+
+   Two views kept their old header element, but only for the controls that used
+   to live inside it — the title, badge and subtitle moved into the hero above.
+   Those elements still carry their original class, whose rules (big padding, a
+   decorative ::before, a gradient background) are in byte-frozen files we must
+   not edit. A modifier class strips them back to a plain container so the page
+   does not show two stacked banners.
+   ========================================================================== */
+
+/* Tools hub: .tools-hero-header now wraps only the search box and category
+   filters. Rules being neutralised: css/components/10-tools.css:27 and :39. */
+.tools-hero-header.tools-hero-controls-only {
+  padding: 0;
+  margin: 0 0 1.25rem;
+  background: none;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  text-align: left;
+  min-height: 0;
+}
+
+.tools-hero-header.tools-hero-controls-only::before,
+.tools-hero-header.tools-hero-controls-only::after {
+  display: none;
+}
+
+.tools-hero-header.tools-hero-controls-only .tools-hero-inner {
+  padding: 0;
+  max-width: none;
+}
+
+/* Exam alerts: .ea-hero now holds only the profile-completeness badge and the
+   live-sync strip, both of which update independently of a full re-render.
+   Rules being neutralised: css/exam-alerts.css:6 and :13. */
+.ea-hero.ea-hero-status-only {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 0.95rem clamp(1rem, 3vw, 1.5rem);
+  margin-bottom: 1.25rem;
+  min-height: 0;
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  box-shadow: none;
+}
+
+.ea-hero.ea-hero-status-only::before,
+.ea-hero.ea-hero-status-only::after {
+  display: none;
+}
+
+.ea-hero.ea-hero-status-only .ea-profile-status,
+.ea-hero.ea-hero-status-only .ea-live-status-bar {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+
+/* ==========================================================================
+   5. RESPONSIVE
+   ========================================================================== */
+
+@media (max-width: 760px) {
+  .vhero {
+    padding: 1.35rem 1.1rem;
+  }
+
+  .vhero-badge {
+    letter-spacing: 0.1em;
+    /* The kicker is one long uppercase string; it has to be allowed to wrap. */
+    white-space: normal;
+  }
+
+  /* Blurred orbs wider than the viewport read as a flat wash, not a glow. */
+  .vhero-orb-1 { width: 210px; height: 210px; top: -110px; }
+  .vhero-orb-2 { width: 190px; height: 190px; bottom: -100px; }
+
+  .vhero-stats {
+    gap: 0.75rem 1.25rem;
+    width: 100%;
+  }
+
+  .vhero-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .vhero-btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 420px) {
+  /* Two counters per row rather than a cramped single line of four. */
+  .vhero-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+
+/* ==========================================================================
+   6. REDUCED MOTION
+
+   The entrance animation uses `both`, so cancelling it without restoring
+   opacity would leave the whole banner invisible.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .vhero,
+  .vhero-title-accent {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .vhero-rays,
+  .vhero-orb,
+  .vhero-pulse {
+    animation: none;
+  }
+
+  .vhero-title-accent::after {
+    display: none;
+  }
+
+  .vhero-btn:hover,
+  .vhero-chip:hover {
+    transform: none;
+  }
+}
+
+
+/* ==========================================================================
+   7. PRINT
+   ========================================================================== */
+
+@media print {
+  .vhero-aurora,
+  .vhero-grid-overlay,
+  .vhero-actions,
+  .vhero-pulse {
+    display: none !important;
+  }
+
+  .vhero {
+    animation: none;
+    opacity: 1;
+    padding: 1rem 1.25rem;
+    background: #FFF !important;
+    box-shadow: none !important;
+    border: 1px solid #CBD5E1 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Gradient-clipped text prints as nothing, so it has to fall back to ink. */
+  .vhero-title-accent {
+    -webkit-text-fill-color: currentColor;
+    background: none;
+    animation: none;
+    color: #0B0F19 !important;
+  }
+
+  .vhero-title-accent::after {
+    display: none;
+  }
+
+  .vhero-title {
+    font-size: 1.85rem;
+  }
+}
+
+
+/* ==========================================================================
+   8. EXAM DATA-QUALITY MARKERS
+
+   Lives here rather than in css/exam-alerts.css because that file is linked
+   before this one and these rules must win over its `.spec-value` styling.
+
+   A blank exam field is a fact — the listing has not published it and the
+   notification has not been read yet — so it is rendered as a stated absence
+   rather than a dash that could be mistaken for a value.
+   ========================================================================== */
+
+.spec-value-unknown {
+  color: var(--text-muted);
+  font-style: italic;
+  font-weight: 550;
+  /* Dotted underline signals "there is an explanation here" without the
+     underline reading as a link. */
+  border-bottom: 1px dotted var(--border-medium);
+  cursor: help;
+}
+
+/* The profile-gap strip sits directly under the hero and asks for the specific
+   fields that are blocking verdicts. */
+.ea-profile-gap {
+  animation: vheroEnter 600ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@media (max-width: 640px) {
+  .ea-profile-gap {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .ea-profile-gap .btn {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ea-profile-gap {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media print {
+  .ea-profile-gap {
+    display: none !important;
+  }
+
+  /* On paper an unknown must not look like a styling artefact. */
+  .spec-value-unknown {
+    border-bottom: none;
+    color: #64748B !important;
+  }
+}

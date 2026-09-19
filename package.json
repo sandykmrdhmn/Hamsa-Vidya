@@ -1,0 +1,29 @@
+{
+  "name": "hamsa-vidya-web",
+  "version": "1.0.0",
+  "description": "HAMSA VIDYA (हंस विद्या) — AI Wisdom & Quiz Companion",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "node scratch/run-all-checks.js",
+    "check": "node scratch/syntax-check.js"
+  },
+  "keywords": [
+    "edtech",
+    "ai",
+    "quiz",
+    "mcq",
+    "upsc",
+    "gemini",
+    "pdf-ingestion"
+  ],
+  "author": "Hamsa Vidya Team",
+  "license": "MIT",
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}

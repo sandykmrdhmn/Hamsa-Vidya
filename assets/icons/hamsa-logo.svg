@@ -1,0 +1,183 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" fill="none" class="hamsa-svg">
+  <defs>
+    <!-- Gold Metallic Gradients -->
+    <linearGradient id="goldMetallic" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FEF08A" />
+      <stop offset="35%" stop-color="#F59E0B" />
+      <stop offset="70%" stop-color="#D97706" />
+      <stop offset="100%" stop-color="#B45309" />
+    </linearGradient>
+
+    <!-- Pearl White Swan Gradient -->
+    <linearGradient id="swanPearl" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="50%" stop-color="#F1F5F9" />
+      <stop offset="100%" stop-color="#E2E8F0" />
+    </linearGradient>
+
+    <!-- Lotus Petal Gradient (Pink to Gold) -->
+    <linearGradient id="lotusPink" x1="0%" y1="100%" x2="0%" y2="0%">
+      <stop offset="0%" stop-color="#EC4899" />
+      <stop offset="50%" stop-color="#F472B6" />
+      <stop offset="100%" stop-color="#FDE68A" />
+    </linearGradient>
+
+    <!-- Celestial Violet Glow -->
+    <linearGradient id="celestialViolet" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#4F46E5" />
+      <stop offset="50%" stop-color="#7C3AED" />
+      <stop offset="100%" stop-color="#9333EA" />
+    </linearGradient>
+
+    <!-- Halo Radial Aura -->
+    <radialGradient id="haloRadial" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#F59E0B" stop-opacity="0.35" />
+      <stop offset="60%" stop-color="#7C3AED" stop-opacity="0.15" />
+      <stop offset="100%" stop-color="#4F46E5" stop-opacity="0" />
+    </radialGradient>
+
+    <!-- Glow Filter -->
+    <filter id="divineGlow" x="-25%" y="-25%" width="150%" height="150%">
+      <feGaussianBlur stdDeviation="2.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+
+    <style>
+      .anim-halo {
+        transform-origin: 60px 60px;
+        animation: spinHalo 24s linear infinite;
+      }
+      .anim-string {
+        animation: stringResonate 2.8s ease-in-out infinite alternate;
+      }
+      .anim-wings {
+        transform-origin: 60px 60px;
+        animation: wingLevitate 4s ease-in-out infinite alternate;
+      }
+      .anim-lotus {
+        transform-origin: 60px 85px;
+        animation: lotusBreathe 3.6s ease-in-out infinite alternate;
+      }
+      .anim-sparkle {
+        animation: sparklePulse 2s ease-in-out infinite alternate;
+      }
+
+      @keyframes spinHalo {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+      @keyframes stringResonate {
+        0% { stroke-opacity: 0.55; stroke-width: 0.75; }
+        50% { stroke-opacity: 1; stroke-width: 1.35; stroke: #FEF08A; filter: drop-shadow(0 0 2px #F59E0B); }
+        100% { stroke-opacity: 0.55; stroke-width: 0.75; }
+      }
+      @keyframes wingLevitate {
+        0% { transform: translateY(0); }
+        100% { transform: translateY(-2px); }
+      }
+      @keyframes lotusBreathe {
+        0% { transform: scale(0.98); }
+        100% { transform: scale(1.02); }
+      }
+      @keyframes sparklePulse {
+        0% { opacity: 0.4; transform: scale(0.8); }
+        100% { opacity: 1; transform: scale(1.2); }
+      }
+    </style>
+  </defs>
+
+  <!-- 1. Ambient Celestial Halo -->
+  <circle cx="60" cy="60" r="56" fill="url(#haloRadial)" />
+  <circle cx="60" cy="60" r="54" stroke="url(#goldMetallic)" stroke-width="1.2" stroke-dasharray="6 3" opacity="0.65" class="anim-halo" />
+  <circle cx="60" cy="60" r="50" stroke="url(#celestialViolet)" stroke-width="0.8" opacity="0.35" />
+
+  <!-- 2. Sacred Book of Vidya (Foundation / Pedestal) -->
+  <g id="sacred-book">
+    <!-- Book Base / Cover -->
+    <path d="M22 100 C38 94, 52 96, 60 102 C68 96, 82 94, 98 100 L95 106 C80 101, 67 103, 60 108 C53 103, 40 101, 25 106 Z" 
+          fill="url(#goldMetallic)" opacity="0.9" />
+    <!-- Book Pages (Open Spread of Knowledge) -->
+    <path d="M24 97 C38 91, 52 93, 60 99 C68 93, 82 91, 96 97 C82 93, 68 95, 60 101 C52 95, 38 93, 24 97 Z" 
+          fill="url(#swanPearl)" />
+    <!-- Book Spine Ribbons -->
+    <path d="M59 99 L59 108 L61 108 L61 99 Z" fill="#B45309" />
+  </g>
+
+  <!-- 3. Blooming Kamal (Sacred Lotus of Purity) -->
+  <g id="sacred-lotus" class="anim-lotus">
+    <!-- Outer Lower Petals -->
+    <path d="M36 90 C32 80, 42 74, 48 80 C44 86, 38 90, 36 90 Z" fill="url(#lotusPink)" opacity="0.8" />
+    <path d="M84 90 C88 80, 78 74, 72 80 C76 86, 82 90, 84 90 Z" fill="url(#lotusPink)" opacity="0.8" />
+    
+    <!-- Mid Petals -->
+    <path d="M42 86 C38 72, 52 68, 56 78 C50 84, 44 86, 42 86 Z" fill="url(#lotusPink)" />
+    <path d="M78 86 C82 72, 68 68, 64 78 C70 84, 76 86, 78 86 Z" fill="url(#lotusPink)" />
+    
+    <!-- Center Core Blooming Petals -->
+    <path d="M50 84 C48 68, 60 62, 60 62 C60 62, 72 68, 70 84 C66 87, 54 87, 50 84 Z" 
+          fill="url(#lotusPink)" filter="url(#divineGlow)" opacity="0.95" />
+    <path d="M56 82 C54 72, 60 68, 60 68 C60 68, 66 72, 64 82 C62 84, 58 84, 56 82 Z" fill="#FEF08A" opacity="0.9" />
+  </g>
+
+  <!-- 4. Hamsa (Divine Swan Wings & Body) -->
+  <g id="divine-swan" class="anim-wings">
+    <!-- Left Wing Feathers (Ascending Wisdom) -->
+    <path d="M48 62 C38 52, 26 40, 24 24 C28 34, 38 42, 46 50 C36 38, 28 26, 36 16 C40 26, 50 36, 54 44 C46 32, 44 18, 52 12 C55 22, 58 34, 56 46 Z" 
+          fill="url(#goldMetallic)" filter="url(#divineGlow)" opacity="0.9" />
+    
+    <!-- Right Wing Feathers -->
+    <path d="M72 62 C82 52, 94 40, 96 24 C92 34, 82 42, 74 50 C84 38, 92 26, 84 16 C80 26, 70 36, 66 44 C74 32, 76 18, 68 12 C65 22, 62 34, 64 46 Z" 
+          fill="url(#goldMetallic)" filter="url(#divineGlow)" opacity="0.9" />
+
+    <!-- Swan Central Pearl Body & Elegant Neck -->
+    <path d="M54 58 C52 46, 56 36, 52 26 C50 20, 54 14, 60 14 C66 14, 70 20, 68 26 C64 36, 68 46, 66 58 Z" 
+          fill="url(#swanPearl)" />
+
+    <!-- Swan Head & Graceful S-Curve Beak -->
+    <circle cx="60" cy="18" r="4.5" fill="url(#swanPearl)" />
+    <!-- Beak (Discriminating Viveka) -->
+    <path d="M63 17 L70 19 L63 21 Z" fill="url(#goldMetallic)" />
+    <!-- Eye of Wisdom -->
+    <circle cx="61.5" cy="17.2" r="0.9" fill="#0B0F19" />
+    <circle cx="61.8" cy="17" r="0.35" fill="#FFFFFF" />
+  </g>
+
+  <!-- 5. Maa Saraswati's Divine Veena / Sitar -->
+  <g id="saraswati-veena">
+    <!-- Veena Resonator Gourd (Base Resting near Lotus) -->
+    <circle cx="60" cy="74" r="11" fill="url(#goldMetallic)" stroke="#B45309" stroke-width="1.2" />
+    <circle cx="60" cy="74" r="8" fill="url(#celestialViolet)" opacity="0.8" />
+    <circle cx="60" cy="74" r="4.5" fill="url(#goldMetallic)" />
+
+    <!-- Veena Neck / Fretboard (Extending Upward Through the Swan) -->
+    <path d="M58 74 L58 18 L62 18 L62 74 Z" fill="url(#goldMetallic)" />
+    
+    <!-- Veena Headstock & Tuning Pegs (Khuti) -->
+    <path d="M56 18 C54 14, 66 14, 64 18 Z" fill="#B45309" />
+    <circle cx="55" cy="20" r="1.5" fill="url(#goldMetallic)" />
+    <circle cx="65" cy="20" r="1.5" fill="url(#goldMetallic)" />
+    <circle cx="55" cy="24" r="1.5" fill="url(#goldMetallic)" />
+    <circle cx="65" cy="24" r="1.5" fill="url(#goldMetallic)" />
+    <!-- Dragon / Peacock Tail Finial Curve -->
+    <path d="M60 14 C62 9, 68 9, 68 13 C68 16, 62 16, 60 14 Z" fill="url(#goldMetallic)" />
+
+    <!-- 4 Resonating Golden Veena Strings (With Shimmering Live Vibration) -->
+    <line x1="59.0" y1="20" x2="59.0" y2="74" stroke="#FEF08A" stroke-width="0.8" class="anim-string" style="animation-delay: 0.1s;" />
+    <line x1="59.7" y1="20" x2="59.7" y2="74" stroke="#FEF08A" stroke-width="0.8" class="anim-string" style="animation-delay: 0.35s;" />
+    <line x1="60.3" y1="20" x2="60.3" y2="74" stroke="#FEF08A" stroke-width="0.8" class="anim-string" style="animation-delay: 0.6s;" />
+    <line x1="61.0" y1="20" x2="61.0" y2="74" stroke="#FEF08A" stroke-width="0.8" class="anim-string" style="animation-delay: 0.85s;" />
+
+    <!-- Veena Bridge (Javari) -->
+    <rect x="57" y="72" width="6" height="2" rx="0.5" fill="#B45309" />
+  </g>
+
+  <!-- 6. Celestial Sparkles (Crown of Supreme Intellect) -->
+  <g id="celestial-sparkles" class="anim-sparkle">
+    <!-- Top Crown Sparkle -->
+    <path d="M60 4 L61.5 8 L65 9.5 L61.5 11 L60 15 L58.5 11 L55 9.5 L58.5 8 Z" fill="#FEF08A" filter="url(#divineGlow)" />
+    <!-- Left Subtle Sparkle -->
+    <path d="M22 36 L23 39 L26 40 L23 41 L22 44 L21 41 L18 40 L21 39 Z" fill="#FEF08A" opacity="0.8" />
+    <!-- Right Subtle Sparkle -->
+    <path d="M98 36 L99 39 L102 40 L99 41 L98 44 L97 41 L94 40 L97 39 Z" fill="#FEF08A" opacity="0.8" />
+  </g>
+</svg>

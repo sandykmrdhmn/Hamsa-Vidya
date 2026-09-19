@@ -1,0 +1,333 @@
+/* ==========================================================================
+   ai-teacher.css — part 05-toolbar-and-chat.css
+   Sticky actions, follow-up chat, bookmarks drawer
+
+   Extracted from the original 4868-line ai-teacher.css
+   (source lines 2846-3168).
+
+   ORDER MATTERS: these parts must stay linked in numeric order in
+   index.html. Later rules intentionally override earlier ones.
+   ========================================================================== */
+
+/* ==========================================================================
+   STICKY ACTIONS TOOLBAR
+   ========================================================================== */
+.teacher-actions-bar {
+  position: sticky;
+  bottom: 1rem;
+  z-index: 40;
+  background: rgba(26, 26, 36, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 0.6rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  box-shadow: var(--shadow-xl);
+  max-width: 960px;
+  margin: 0 auto;
+  flex-wrap: wrap;
+}
+
+[data-theme="LIGHT"] .teacher-actions-bar {
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.actions-group {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.teacher-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  padding: 0.48rem 0.95rem;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.teacher-action-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--color-primary-light);
+  border-color: var(--color-primary-light);
+  box-shadow: 0 4px 14px var(--color-primary-glow);
+  transform: translateY(-2px);
+}
+
+.teacher-action-btn:hover i {
+  transform: scale(1.18) rotate(-6deg);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.teacher-action-btn:active {
+  transform: translateY(0) scale(0.96);
+}
+
+.teacher-action-btn.active {
+  background: var(--color-primary);
+  color: #ffffff;
+  border-color: var(--color-primary);
+  box-shadow: 0 4px 16px var(--color-primary-glow);
+}
+
+/* Audio Player Floating Mini-Widget */
+.tts-controls-group {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--bg-secondary);
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+}
+
+.tts-mini-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 0.38rem;
+  border-radius: var(--radius-full);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all var(--transition-fast);
+}
+
+.tts-mini-btn:hover {
+  color: var(--color-primary-light);
+  transform: scale(1.2);
+}
+
+/* ==========================================================================
+   FOLLOW-UP TUTOR CHAT BAR
+   ========================================================================== */
+.card-followup-chat {
+  border: 1px solid var(--border-color);
+  background: var(--bg-card);
+}
+
+.followup-suggestions-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.followup-suggestion-chip {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 0.45rem 0.88rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.followup-suggestion-chip:hover {
+  background: var(--color-primary-glow);
+  color: var(--color-primary-light);
+  border-color: var(--color-primary-light);
+  transform: translateY(-1.5px);
+  box-shadow: 0 3px 12px var(--color-primary-glow);
+}
+
+.followup-input-wrapper {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.followup-input {
+  flex: 1;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 0.65rem 1.25rem;
+  font-size: 0.92rem;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.followup-input:focus {
+  border-color: var(--color-primary-light);
+}
+
+.followup-send-btn {
+  padding: 0.65rem 1.25rem;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: #ffffff;
+  border: none;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: background var(--transition-fast);
+}
+
+.followup-send-btn:hover {
+  background: var(--color-primary-hover);
+}
+
+.followup-messages-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-top: 1.25rem;
+}
+
+.followup-msg-bubble {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.followup-msg-query {
+  font-weight: 700;
+  color: var(--color-primary-light);
+  font-size: 0.94rem;
+}
+
+.followup-msg-answer {
+  color: var(--text-secondary);
+  font-size: 0.92rem;
+  line-height: 1.6;
+}
+
+/* ==========================================================================
+   SAVED BOOKMARKS & HISTORY DRAWER
+   ========================================================================== */
+.teacher-vault-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.vault-filter-bar {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.vault-search-input {
+  flex: 1;
+  min-width: 240px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-full);
+  padding: 0.6rem 1.15rem;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+
+.vault-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1rem;
+}
+
+.vault-item-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  cursor: pointer;
+  transition: all var(--transition-normal);
+  position: relative;
+}
+
+.vault-item-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--color-primary-light);
+  box-shadow: var(--shadow-md);
+}
+
+.vault-item-title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--text-primary);
+  line-height: 1.4;
+}
+
+.vault-item-preview {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.vault-item-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border-color);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+/* Fullscreen Modal for Diagrams */
+.diagram-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(12px);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.diagram-fullscreen-box {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  padding: 2rem;
+  max-width: 900px;
+  width: 100%;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.diagram-fullscreen-close {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 0.5rem;
+}

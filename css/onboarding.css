@@ -1,0 +1,378 @@
+/* ==========================================================================
+   HAMSA VIDYA (हंस विद्या) — Onboarding: Education List
+   ==========================================================================
+
+   Styles the repeatable education section that replaced the old fixed trio of
+   "10th %", "12th %" and a single "Highest Qualification" dropdown.
+
+   WHY A SEPARATE FILE
+   The rest of the onboarding modal is styled in css/exam-alerts.css. These rules
+   are new, they need to win over that file's generic
+   `.onboarding-input-group input/select` styling, and keeping them together
+   makes the section reviewable on its own. Linked after exam-alerts.css and
+   before responsive.css.
+
+   THE LAYOUT PROBLEM THIS SOLVES
+   The section can hold one row or eight. A plain stack of four inputs per row
+   reads as a wall of boxes, so each row is a card with its own number and title,
+   and the four fields inside it are sized by importance: the qualification
+   selector is the widest, the year and marks the narrowest.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. SECTION CHROME
+   ========================================================================== */
+
+/* Live count beside the section heading, so the user can see their entries
+   register as they add them. */
+.ob-section-badge {
+  margin-left: auto;
+  padding: 0.16rem 0.6rem;
+  border-radius: var(--radius-full);
+  background: rgba(var(--color-primary-rgb), 0.12);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.3);
+  color: var(--color-primary-light);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.ob-section-note {
+  margin: 0 0 1rem;
+  font-size: 0.78rem;
+  line-height: 1.6;
+  color: var(--text-muted);
+  max-width: 70ch;
+}
+
+.ob-education-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-bottom: 0.85rem;
+}
+
+
+/* ==========================================================================
+   2. ONE QUALIFICATION = ONE CARD
+   ========================================================================== */
+
+.ob-edu-row {
+  position: relative;
+  padding: 0.9rem 1rem 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  /* A left rail ties the row to its number and makes the stack scannable. */
+  border-left: 3px solid rgba(var(--color-primary-rgb), 0.45);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  animation: obRowEnter 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.ob-edu-row:hover,
+.ob-edu-row:focus-within {
+  border-color: var(--border-medium);
+  border-left-color: var(--color-primary);
+  box-shadow: 0 4px 14px -6px rgba(var(--color-primary-rgb), 0.45);
+}
+
+/* New rows are appended, so a short rise reads as "this was just added"
+   without moving the rows above it. */
+@keyframes obRowEnter {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.ob-edu-row-head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.75rem;
+}
+
+.ob-edu-num {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--gradient-brand);
+  color: #FFF;
+  font-size: 0.7rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Echoes the chosen qualification back, so a collapsed-looking stack of rows is
+   still readable at a glance. */
+.ob-edu-row-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ob-edu-remove {
+  flex-shrink: 0;
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ob-edu-remove:hover {
+  background: var(--color-error-bg);
+  border-color: var(--color-error-border);
+  color: var(--color-error);
+}
+
+
+/* ==========================================================================
+   3. FIELDS INSIDE A ROW
+
+   Four fields, sized by how much they matter: the qualification is the only
+   required one and gets the most room; the year and the marks are compact.
+   ========================================================================== */
+
+.ob-edu-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.3fr) minmax(0, 0.7fr) minmax(0, 1fr);
+  gap: 0.7rem;
+}
+
+.ob-edu-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.ob-edu-field label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Restated rather than inherited: exam-alerts.css styles
+   `.onboarding-input-group input/select`, and these inputs sit in
+   `.ob-edu-field` instead, so they would otherwise fall back to browser
+   defaults and look nothing like the rest of the form. */
+.ob-edu-field input,
+.ob-edu-field select {
+  width: 100%;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-main);
+  font-family: inherit;
+  font-size: 0.85rem;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.ob-edu-field input::placeholder {
+  color: var(--text-muted);
+  opacity: 0.7;
+}
+
+.ob-edu-field input:focus,
+.ob-edu-field select:focus {
+  outline: none;
+  background: var(--bg-input-focus);
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--color-primary-glow);
+}
+
+/* The one required field in the row — marked so an empty row is obvious. */
+.ob-edu-field-level select {
+  font-weight: 650;
+}
+
+.ob-edu-field-level select:invalid,
+.ob-edu-field-level select option[value=""] {
+  color: var(--text-muted);
+}
+
+/* An already-added qualification stays listed but unselectable, which explains
+   why it cannot be picked again instead of silently omitting it. */
+.ob-edu-field-level option:disabled {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Marks: a narrow unit selector welded to the number input. */
+.ob-edu-score-split {
+  display: flex;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.ob-edu-score-split select {
+  width: 72px;
+  flex-shrink: 0;
+  padding-inline: 0.45rem;
+  font-size: 0.8rem;
+}
+
+.ob-edu-score-split input {
+  flex: 1;
+  min-width: 0;
+}
+
+
+/* ==========================================================================
+   4. THE ADD BUTTON
+
+   The primary action of the section, so it is a full-width dashed target rather
+   than a small link — it should read as "there is room for more here".
+   ========================================================================== */
+
+.ob-add-education {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius-lg);
+  background: rgba(var(--color-primary-rgb), 0.05);
+  border: 1.5px dashed rgba(var(--color-primary-rgb), 0.45);
+  color: var(--color-primary-light);
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.ob-add-education:hover:not(:disabled) {
+  background: rgba(var(--color-primary-rgb), 0.12);
+  border-color: var(--color-primary);
+  border-style: solid;
+  transform: translateY(-1px);
+}
+
+.ob-add-education:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ob-add-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-full);
+  background: var(--color-primary);
+  color: #FFF;
+  font-size: 0.95rem;
+  font-weight: 800;
+  line-height: 1;
+  /* The glyph sits slightly high in most faces at this size. */
+  padding-bottom: 2px;
+  transition: transform var(--transition-spring);
+}
+
+.ob-add-education:hover:not(:disabled) .ob-add-icon {
+  transform: rotate(90deg) scale(1.1);
+}
+
+
+/* ==========================================================================
+   5. ERROR STATE
+
+   The section reports through one message rather than per field, because the
+   rules that can fail are about the set of rows (none added, a duplicate) as
+   much as about a single input.
+   ========================================================================== */
+
+#ob-group-education.has-error {
+  border-color: var(--color-error-border);
+}
+
+#ob-group-education.has-error .ob-edu-row {
+  border-left-color: var(--color-error);
+}
+
+#ob-err-education:not(:empty) {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-error-bg);
+  border: 1px solid var(--color-error-border);
+  color: var(--color-error);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+
+/* ==========================================================================
+   6. RESPONSIVE
+
+   Four columns become two, then one. The qualification selector spans the full
+   width at the two-column step because it is the field that actually matters.
+   ========================================================================== */
+
+@media (max-width: 900px) {
+  .ob-edu-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .ob-edu-field-level {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 560px) {
+  .ob-edu-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ob-edu-row {
+    padding: 0.8rem 0.85rem 0.9rem;
+  }
+
+  .ob-section-badge {
+    margin-left: 0;
+  }
+}
+
+
+/* ==========================================================================
+   7. REDUCED MOTION
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .ob-edu-row {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  .ob-add-education:hover:not(:disabled) {
+    transform: none;
+  }
+
+  .ob-add-education:hover:not(:disabled) .ob-add-icon {
+    transform: none;
+  }
+}

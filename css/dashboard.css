@@ -1,0 +1,2108 @@
+/* ==========================================================================
+   HAMSA VIDYA (हंस विद्या) — Dashboard / Command Centre
+   ==========================================================================
+
+   Paired with js/views/dashboard.js. Every class here is namespaced `.dash-*`
+   so it cannot collide with the legacy dashboard rules still living in
+   css/components/02-dashboard.css (which that file's byte-identity check
+   forbids us from editing).
+
+   LAYOUT INTENT
+   The old dashboard rendered eight identically sized metric cards and nine
+   identical action chips. Nothing was emphasised, so the page read as a flat
+   wall of numbers with large dead gutters. This stylesheet establishes a
+   deliberate visual hierarchy:
+
+     hero        two columns — one decision on the left, live pulse on the right
+     launchpad   three intent columns, each with its own accent
+     consistency full-bleed heatmap, the widest element on the page
+     metrics     4 ringed primaries, then 8 compact secondaries
+     charts      existing .charts-grid, unchanged
+
+   MOTION
+   All motion is additive. Counters, rings and scroll reveals each degrade to a
+   fully readable static page, and every animation is switched off under
+   prefers-reduced-motion. Decorative layers are aria-hidden in the markup.
+
+   LOAD ORDER
+   Linked after css/components/10-tools.css and before css/quiz.css.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   0. SHELL
+   ========================================================================== */
+
+.dash {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.5rem, 3vw, 2.5rem);
+  max-width: 1480px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+/* Section wrappers.
+   The hero, launchpad and consistency blocks are cards in their own right, so
+   they carry their own surface further down. These four are plain containers —
+   they exist to group a heading with its content and to give the flex gap on
+   `.dash` something to space out. */
+.dash-metrics,
+.dash-charts,
+.dash-modules,
+.dash-recent {
+  display: block;
+  min-width: 0;
+}
+
+/* The onboarding path is a card, because on a first run it is the only
+   substantial thing on the page and needs a visible frame. */
+.dash-onboard {
+  padding: clamp(1.1rem, 2.4vw, 1.6rem);
+  border-radius: var(--radius-xl);
+  background: var(--glass-card);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.2);
+  box-shadow: var(--shadow-md);
+}
+
+/* Section heading pattern, shared by every block below the hero. */
+.dash-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1.15rem;
+}
+
+.dash-section-title {
+  font-family: var(--font-family-display);
+  font-size: clamp(1.12rem, 2.2vw, 1.4rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.dash-section-sub {
+  font-size: 0.84rem;
+  color: var(--text-muted);
+  margin: 0.2rem 0 0;
+  max-width: 62ch;
+  line-height: 1.5;
+}
+
+/* Shared "live" indicator. A tiny pulsing dot reads as realtime far more
+   cheaply than a spinner, and it never implies work is pending. */
+.live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--color-success);
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6);
+  animation: dashLiveDot 2.2s infinite cubic-bezier(0, 0, 0.2, 1);
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+@keyframes dashLiveDot {
+  0%   { transform: scale(0.88); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+  70%  { transform: scale(1.12); box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.88); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.dash-live-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.8rem;
+  border-radius: var(--radius-full);
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
+  font-size: 0.7rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+/* Delta pill — only rendered when a prior period exists to compare against. */
+.dash-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  padding: 0.08rem 0.4rem;
+  border-radius: var(--radius-full);
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.dash-delta.up {
+  color: var(--color-success);
+  background: var(--color-success-bg);
+}
+
+.dash-delta.down {
+  color: var(--color-error);
+  background: var(--color-error-bg);
+}
+
+
+/* ==========================================================================
+   1. SCROLL REVEAL
+
+   Sections start slightly low and transparent; the IntersectionObserver in
+   dashboard.js adds .is-visible. If JS never runs, or motion is reduced, the
+   fallback below keeps everything visible — content must never depend on
+   a script to be readable.
+   ========================================================================== */
+
+.reveal {
+  opacity: 0;
+  transform: translateY(20px);
+  transition:
+    opacity 620ms cubic-bezier(0.16, 1, 0.3, 1),
+    transform 620ms cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.reveal.is-visible {
+  opacity: 1;
+  transform: none;
+  will-change: auto;
+}
+
+/* Failsafe: no JS, no IntersectionObserver, no reveal. */
+@media (scripting: none) {
+  .reveal { opacity: 1; transform: none; }
+}
+
+
+/* ==========================================================================
+   2. BRAND MASTHEAD
+
+   The product name is the largest thing on the page and the first thing on
+   screen. It is intentionally not a `.reveal` — that class starts at opacity 0
+   and would leave the masthead blank if the observer never ran. It uses a
+   one-shot entrance animation instead, so the worst case is "appears instantly"
+   rather than "never appears".
+
+   The colour comes from three stacked layers, all GPU-cheap:
+     dm-rays   a slowly rotating conic sweep
+     dm-orb    three blurred breathing orbs
+     ::after   a light band sweeping across the letterforms
+
+   background-clip:text can only be used once per element, so the shine is a
+   second copy of the text drawn from `data-text` and overlaid.
+   ========================================================================== */
+
+.dash-masthead {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: var(--radius-2xl);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.22);
+  background:
+    radial-gradient(ellipse 120% 90% at 50% -20%,
+      rgba(var(--color-primary-rgb), 0.22) 0%,
+      transparent 62%),
+    radial-gradient(ellipse 90% 70% at 50% 120%,
+      rgba(245, 158, 11, 0.12) 0%,
+      transparent 60%),
+    var(--glass-card);
+  backdrop-filter: blur(24px) saturate(190%);
+  -webkit-backdrop-filter: blur(24px) saturate(190%);
+  box-shadow: var(--shadow-xl), var(--specular-highlight);
+  padding: clamp(1.9rem, 5vw, 3.4rem) clamp(1.25rem, 4vw, 2.5rem);
+  text-align: center;
+  animation: dashMastEnter 900ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes dashMastEnter {
+  from { opacity: 0; transform: translateY(-14px) scale(0.985); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* ------------------------------------------------------------ Aurora layers */
+.dash-mast-aurora {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+/* Rotating conic sweep. Masked to a soft ellipse so the hard conic seam never
+   shows as a visible edge. */
+.dm-rays {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 150%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(var(--color-primary-rgb), 0.16) 24deg,
+    transparent 60deg,
+    rgba(245, 158, 11, 0.13) 130deg,
+    transparent 170deg,
+    rgba(var(--color-accent-rgb), 0.15) 250deg,
+    transparent 300deg,
+    transparent 360deg
+  );
+  mask-image: radial-gradient(ellipse 55% 55% at 50% 50%, #000 10%, transparent 72%);
+  -webkit-mask-image: radial-gradient(ellipse 55% 55% at 50% 50%, #000 10%, transparent 72%);
+  animation: dashRaysSpin 44s linear infinite;
+}
+
+@keyframes dashRaysSpin {
+  to { transform: translate(-50%, -50%) rotate(360deg); }
+}
+
+.dm-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(64px);
+}
+
+.dm-orb-1 {
+  width: 340px;
+  height: 340px;
+  top: -180px;
+  left: 8%;
+  background: var(--color-primary);
+  opacity: 0.32;
+  animation: dashOrbBreathe 15s ease-in-out infinite;
+}
+
+.dm-orb-2 {
+  width: 280px;
+  height: 280px;
+  bottom: -160px;
+  right: 10%;
+  background: var(--color-accent);
+  opacity: 0.26;
+  animation: dashOrbBreathe 19s ease-in-out infinite reverse;
+}
+
+.dm-orb-3 {
+  width: 230px;
+  height: 230px;
+  top: 30%;
+  left: 50%;
+  margin-left: -115px;
+  background: var(--color-gold);
+  opacity: 0.16;
+  animation: dashOrbBreathe 23s ease-in-out infinite;
+}
+
+@keyframes dashOrbBreathe {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(18px, -14px, 0) scale(1.16); }
+}
+
+/* ------------------------------------------------------------------- Content */
+.dash-mast-inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.dash-mast-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.34rem 1rem;
+  border-radius: var(--radius-full);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.3);
+  color: var(--color-primary-light);
+  font-size: clamp(0.62rem, 1.5vw, 0.73rem);
+  font-weight: 800;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  animation: dashMastRise 800ms cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
+}
+
+.dash-mast-title {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1em;
+  line-height: 1;
+}
+
+/* Shared by both scripts. `position: relative` anchors the ::after shine. */
+.dash-mast-en,
+.dash-mast-hi {
+  position: relative;
+  display: block;
+  /* Colour first, so the text is still legible anywhere
+     background-clip: text is unsupported — otherwise it renders invisible. */
+  color: var(--color-primary-light);
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation:
+    dashMastRise 900ms cubic-bezier(0.16, 1, 0.3, 1) both,
+    dashNameFlow 11s ease-in-out infinite alternate;
+}
+
+/* The light band. A second copy of the same glyphs, clipped to the text and
+   swept across — this is what reads as "premium" rather than just colourful. */
+.dash-mast-en::after,
+.dash-mast-hi::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.85) 50%,
+    transparent 62%
+  );
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  pointer-events: none;
+  animation: dashNameShine 6.5s ease-in-out infinite;
+}
+
+/* Light themes need a darker sheen — white on near-white is invisible. */
+[data-theme="LIGHT"] .dash-mast-en::after,
+[data-theme="LIGHT"] .dash-mast-hi::after,
+[data-theme="SOFT_WHITE"] .dash-mast-en::after,
+[data-theme="SOFT_WHITE"] .dash-mast-hi::after,
+[data-theme="WARM_GOLD"] .dash-mast-en::after,
+[data-theme="WARM_GOLD"] .dash-mast-hi::after,
+[data-theme="SAGE_GREEN"] .dash-mast-en::after,
+[data-theme="SAGE_GREEN"] .dash-mast-hi::after,
+[data-theme="SEPIA"] .dash-mast-en::after,
+[data-theme="SEPIA"] .dash-mast-hi::after {
+  background: linear-gradient(
+    100deg,
+    transparent 38%,
+    rgba(255, 255, 255, 0.95) 46%,
+    rgba(var(--color-primary-rgb), 0.55) 50%,
+    rgba(255, 255, 255, 0.95) 54%,
+    transparent 62%
+  );
+  background-size: 260% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* The English wordmark — the single largest element on the dashboard. */
+.dash-mast-en {
+  font-family: var(--font-family-display);
+  font-size: clamp(2.5rem, 9vw, 5.75rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+  text-transform: uppercase;
+  background-image: linear-gradient(
+    100deg,
+    var(--color-primary) 0%,
+    var(--color-accent) 22%,
+    var(--color-gold) 46%,
+    var(--color-primary-light) 70%,
+    var(--color-accent) 88%,
+    var(--color-primary) 100%
+  );
+  animation-delay: 180ms, 0s;
+}
+
+/* Devanagari needs more line box and less negative tracking than Latin, or the
+   matras collide with the line above. */
+.dash-mast-hi {
+  font-family: var(--font-family-hindi), var(--font-family-display), sans-serif;
+  font-size: clamp(1.7rem, 6vw, 3.9rem);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.5;
+  padding-bottom: 0.08em;
+  background-image: linear-gradient(
+    100deg,
+    var(--color-gold) 0%,
+    var(--color-primary-light) 26%,
+    var(--color-accent) 52%,
+    var(--color-gold-light) 76%,
+    var(--color-gold) 100%
+  );
+  animation-delay: 300ms, 1.2s;
+}
+
+@keyframes dashMastRise {
+  from { opacity: 0; transform: translateY(18px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes dashNameFlow {
+  from { background-position: 0% center; }
+  to   { background-position: 100% center; }
+}
+
+@keyframes dashNameShine {
+  0%        { background-position: -140% center; }
+  45%, 100% { background-position: 240% center; }
+}
+
+/* --------------------------------------------------------- Ornamental rule */
+.dash-mast-rule {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: min(360px, 70%);
+  animation: dashMastRise 900ms cubic-bezier(0.16, 1, 0.3, 1) 420ms both;
+}
+
+.dash-mast-rule-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-gold), transparent);
+}
+
+.dash-mast-rule-gem {
+  width: 7px;
+  height: 7px;
+  flex-shrink: 0;
+  background: var(--color-gold);
+  /* A rotated square reads as a diamond without needing an icon font. */
+  transform: rotate(45deg);
+  box-shadow: 0 0 10px var(--color-gold-glow);
+  animation: dashGemPulse 3.4s ease-in-out infinite;
+}
+
+@keyframes dashGemPulse {
+  0%, 100% { transform: rotate(45deg) scale(1);    opacity: 0.85; }
+  50%      { transform: rotate(45deg) scale(1.35); opacity: 1; }
+}
+
+.dash-mast-tagline {
+  margin: 0;
+  max-width: 54ch;
+  font-size: clamp(0.8rem, 1.9vw, 0.96rem);
+  font-weight: 550;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  animation: dashMastRise 900ms cubic-bezier(0.16, 1, 0.3, 1) 520ms both;
+}
+
+
+/* ==========================================================================
+   3. SHLOKA BANNER — scale-up + sheen
+
+   The banner itself, including its per-theme gradients, is styled in
+   css/components/02-dashboard.css, which is byte-frozen by
+   scratch/verify-css-split.js. So this only adds: a larger type size, more
+   breathing room, and a light sweep on a pseudo-element.
+
+   The theme rules in that file are `[data-theme=X] .dashboard-top-shloka-banner`
+   (specificity 0,2,0). Anything that has to beat them is written as
+   `.dash-shloka.dashboard-top-shloka-banner` — equal specificity, later source
+   order, so it wins without !important. Properties they do not set are
+   overridden with the single class.
+   ========================================================================== */
+
+.dash-shloka {
+  padding: clamp(1.1rem, 2.8vw, 1.75rem) clamp(1.1rem, 4vw, 2.5rem);
+  margin-bottom: 0;
+  border-radius: var(--radius-xl);
+}
+
+/* The wordmark and the verse are one opening statement, so they sit tighter
+   than the standard section rhythm on `.dash`. */
+.dash-masthead + .dash-shloka {
+  margin-top: -0.9rem;
+}
+
+/* Scaled up from 1.68rem, and fluid so it does not overflow on a phone. */
+.dash-shloka .shloka-sanskrit-live-text {
+  font-size: clamp(1.28rem, 3.6vw, 2.25rem);
+  line-height: 1.75;
+  letter-spacing: 0.015em;
+  /* Faster than the original 10s, so the colour flow is perceptible without
+     being distracting. */
+  animation-duration: 7s;
+}
+
+/* Light sweep across the banner. Skewed so it reads as a specular highlight
+   rather than a loading bar, and transform-only so it stays cheap. */
+.dash-shloka-sheen {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 42%;
+  z-index: 1;
+  pointer-events: none;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.1) 45%,
+    rgba(var(--color-primary-rgb), 0.16) 50%,
+    rgba(255, 255, 255, 0.1) 55%,
+    transparent 100%
+  );
+  transform: translateX(-130%) skewX(-14deg);
+  animation: dashShlokaSheen 9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes dashShlokaSheen {
+  0%        { transform: translateX(-130%) skewX(-14deg); }
+  55%, 100% { transform: translateX(340%)  skewX(-14deg); }
+}
+
+/* Breathing halo, on a pseudo-element so it never fights the theme rules for
+   the banner's own box-shadow. */
+.dash-shloka::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 26px -12px rgba(var(--color-primary-rgb), 0.55),
+    0 0 0 1px rgba(245, 158, 11, 0.16);
+  animation: dashShlokaHalo 6s ease-in-out infinite alternate;
+}
+
+@keyframes dashShlokaHalo {
+  from { opacity: 0.45; }
+  to   { opacity: 1; }
+}
+
+
+/* ==========================================================================
+   4. HERO / COMMAND CENTRE
+   ========================================================================== */
+
+.dash-hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--border-medium);
+  background:
+    linear-gradient(155deg,
+      rgba(var(--color-primary-rgb), 0.13) 0%,
+      rgba(var(--color-accent-rgb), 0.07) 38%,
+      transparent 70%),
+    var(--glass-card);
+  backdrop-filter: blur(22px) saturate(180%);
+  -webkit-backdrop-filter: blur(22px) saturate(180%);
+  box-shadow: var(--shadow-xl), var(--specular-highlight);
+  padding: clamp(1.4rem, 3vw, 2.15rem) clamp(1.25rem, 3vw, 2.35rem);
+}
+
+/* Two slow-drifting blurred orbs. Kept behind the content with a negative
+   z-index inside the hero's own isolation context, so they never intercept
+   clicks and never bleed over neighbouring sections. */
+.dash-hero-glow {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: inherit;
+}
+
+.dg-orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(70px);
+}
+
+.dg-orb-1 {
+  width: 380px;
+  height: 380px;
+  top: -190px;
+  left: -110px;
+  background: var(--color-primary);
+  opacity: 0.3;
+  animation: dashOrbDrift 20s ease-in-out infinite;
+}
+
+.dg-orb-2 {
+  width: 300px;
+  height: 300px;
+  bottom: -170px;
+  right: -80px;
+  background: var(--color-accent);
+  opacity: 0.22;
+  animation: dashOrbDrift 26s ease-in-out infinite reverse;
+}
+
+@keyframes dashOrbDrift {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(26px, 22px, 0) scale(1.1); }
+}
+
+/* ----------------------------------------------------- Hero top: identity */
+.dash-hero-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: clamp(1.25rem, 2.5vw, 1.75rem);
+}
+
+.dash-greet {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.dash-greet-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 750;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--color-primary-light);
+}
+
+.dash-greet-name {
+  font-family: var(--font-family-display);
+  font-size: clamp(1.85rem, 4.6vw, 2.85rem);
+  font-weight: 800;
+  line-height: 1.03;
+  letter-spacing: -0.035em;
+  margin: 0;
+  /* Gradient text needs an explicit colour first: without it the text renders
+     fully transparent wherever background-clip:text is unsupported. */
+  color: var(--text-main);
+  background: var(--gradient-brand);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.dash-identity {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.dash-id-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.38rem 0.85rem;
+  border-radius: var(--radius-full);
+  background: rgba(var(--color-primary-rgb), 0.09);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.24);
+  color: var(--color-primary-light);
+  font-family: inherit;
+  font-size: 0.77rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.dash-id-chip:hover {
+  background: rgba(var(--color-primary-rgb), 0.17);
+  border-color: var(--color-primary);
+  transform: translateY(-1px);
+}
+
+.dash-id-chip i {
+  width: 14px;
+  height: 14px;
+}
+
+/* Profile not yet filled in — worth a nudge, so this one is dashed. */
+.dash-id-chip-action {
+  border-style: dashed;
+  border-color: rgba(var(--color-primary-rgb), 0.5);
+}
+
+.dash-id-rank {
+  font-family: var(--font-family-hindi);
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.28);
+  color: var(--color-gold-dark);
+}
+
+[data-theme="DARK"] .dash-id-rank,
+[data-theme="MIDNIGHT_BLUE"] .dash-id-rank,
+[data-theme="CHARCOAL"] .dash-id-rank {
+  color: var(--color-gold-light);
+}
+
+.dash-id-rank:hover {
+  background: rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.5);
+}
+
+/* ------------------------------------------------- Hero body: focus + pulse */
+.dash-hero-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(260px, 0.85fr);
+  gap: clamp(1rem, 2.4vw, 1.75rem);
+  align-items: stretch;
+}
+
+@media (max-width: 1020px) {
+  .dash-hero-body { grid-template-columns: 1fr; }
+}
+
+/* ============================ TODAY'S FOCUS ============================
+   One recommendation, chosen in JS by urgency. The tone classes below only
+   swap the accent, so the card's structure is identical in every state and
+   the eye lands in the same place each visit. */
+
+.dash-focus {
+  --focus-accent: var(--color-primary);
+  --focus-accent-rgb: var(--color-primary-rgb);
+
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: clamp(0.85rem, 2vw, 1.25rem);
+  padding: clamp(1.1rem, 2.4vw, 1.5rem);
+  border-radius: var(--radius-xl);
+  background: var(--bg-card);
+  border: 1px solid rgba(var(--focus-accent-rgb), 0.28);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+}
+
+/* Accent rail — a 4px edge is enough to signal tone without tinting the
+   whole card and hurting text contrast. */
+.dash-focus::before {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 4px;
+  background: var(--focus-accent);
+}
+
+.dash-focus-urgent  { --focus-accent: #F97316; --focus-accent-rgb: 249, 115, 22; }
+.dash-focus-start   { --focus-accent: var(--color-primary); --focus-accent-rgb: var(--color-primary-rgb); }
+.dash-focus-improve { --focus-accent: #F59E0B; --focus-accent-rgb: 245, 158, 11; }
+.dash-focus-steady  { --focus-accent: #10B981; --focus-accent-rgb: 16, 185, 129; }
+
+.dash-focus-icon {
+  flex-shrink: 0;
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-lg);
+  background: rgba(var(--focus-accent-rgb), 0.13);
+  border: 1px solid rgba(var(--focus-accent-rgb), 0.3);
+  color: var(--focus-accent);
+}
+
+.dash-focus-icon i {
+  width: 22px;
+  height: 22px;
+}
+
+/* The urgent state is the only one that animates — it is genuinely
+   time-sensitive (memory decays), so drawing the eye is justified. */
+.dash-focus-urgent .dash-focus-icon {
+  animation: dashFocusPulse 2.4s ease-in-out infinite;
+}
+
+@keyframes dashFocusPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.42); }
+  55%      { box-shadow: 0 0 0 10px rgba(249, 115, 22, 0); }
+}
+
+.dash-focus-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.dash-focus-eyebrow {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--focus-accent);
+}
+
+.dash-focus-title {
+  font-family: var(--font-family-display);
+  font-size: clamp(1.05rem, 2.3vw, 1.35rem);
+  font-weight: 800;
+  line-height: 1.25;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.dash-focus-body {
+  font-size: 0.855rem;
+  line-height: 1.58;
+  color: var(--text-secondary);
+  margin: 0;
+  max-width: 58ch;
+}
+
+.dash-focus-cta {
+  align-self: flex-start;
+  margin-top: 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 1.15rem;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--focus-accent);
+  color: #FFF;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 750;
+  cursor: pointer;
+  box-shadow: 0 4px 14px -4px rgba(var(--focus-accent-rgb), 0.7);
+  transition: all var(--transition-fast);
+}
+
+.dash-focus-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 20px -4px rgba(var(--focus-accent-rgb), 0.8);
+}
+
+.dash-focus-cta i {
+  width: 16px;
+  height: 16px;
+  transition: transform var(--transition-fast);
+}
+
+.dash-focus-cta:hover i {
+  transform: translateX(3px);
+}
+
+/* ============================ PULSE PANEL ============================ */
+
+.dash-pulse {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: clamp(1rem, 2.2vw, 1.35rem);
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.dash-ring-wrap {
+  position: relative;
+  width: 132px;
+  height: 132px;
+  margin: 0 auto;
+  flex-shrink: 0;
+}
+
+.dash-ring {
+  width: 100%;
+  height: 100%;
+  display: block;
+  /* Rotate the whole ring so 0% starts at 12 o'clock. */
+  transform: rotate(-90deg);
+}
+
+/* Shared by the hero ring and the four metric rings. */
+.dash-ring-track {
+  fill: none;
+  stroke: var(--border-medium);
+  stroke-width: 8;
+}
+
+.dash-ring-fill {
+  fill: none;
+  stroke: var(--color-primary-light);
+  stroke-width: 8;
+  stroke-linecap: round;
+  /* stroke-dasharray / -dashoffset are set from JS once the real radius is
+     known, so one rule serves both the 52r hero ring and the 36r stat rings. */
+  transition: stroke-dashoffset 1.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dash-ring-centre {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.05rem;
+  pointer-events: none;
+}
+
+.dash-ring-flame {
+  font-size: 1.1rem;
+  line-height: 1;
+  animation: dashFlameFlicker 2.8s ease-in-out infinite;
+}
+
+@keyframes dashFlameFlicker {
+  0%, 100% { transform: scale(1) translateY(0); opacity: 0.92; }
+  50%      { transform: scale(1.12) translateY(-2px); opacity: 1; }
+}
+
+.dash-ring-value {
+  font-family: var(--font-family-display);
+  font-size: 1.85rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-ring-label {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+/* ------------------------------------------------------- This week block */
+.dash-week {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.dash-week-title {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.dash-week-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.82rem;
+}
+
+.dash-week-label {
+  color: var(--text-secondary);
+}
+
+.dash-week-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 750;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+
+/* ==========================================================================
+   5. ONBOARDING PATH (first-run only)
+
+   Replaces the several scattered "nothing here yet" boxes a new user used to
+   meet with one ordered route through the product.
+   ========================================================================== */
+
+.dash-onboard-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.7rem;
+}
+
+.dash-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 0.85rem 1.1rem;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition-fast);
+}
+
+.dash-step:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.4);
+  transform: translateX(4px);
+  box-shadow: var(--shadow-md);
+}
+
+.dash-step-num {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: var(--gradient-brand);
+  color: #FFF;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.dash-step-icon {
+  flex-shrink: 0;
+  color: var(--color-primary-light);
+  display: grid;
+  place-items: center;
+}
+
+.dash-step-icon i {
+  width: 19px;
+  height: 19px;
+}
+
+.dash-step-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dash-step-text strong {
+  font-size: 0.9rem;
+  font-weight: 750;
+  color: var(--text-main);
+}
+
+.dash-step-text span {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+
+.dash-step-cta {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.42rem 0.85rem;
+  border-radius: var(--radius-full);
+  background: rgba(var(--color-primary-rgb), 0.1);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.28);
+  color: var(--color-primary-light);
+  font-family: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all var(--transition-fast);
+}
+
+.dash-step-cta:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #FFF;
+}
+
+.dash-step-cta i {
+  width: 14px;
+  height: 14px;
+}
+
+@media (max-width: 620px) {
+  .dash-step { flex-wrap: wrap; }
+  .dash-step-cta { width: 100%; justify-content: center; }
+}
+
+
+/* ==========================================================================
+   6. LAUNCHPAD — actions grouped by intent
+
+   Nine equal chips gave no clue where to start. Grouping by Learn / Practise /
+   Track lets a student scan by what they want to do, not by feature name.
+   ========================================================================== */
+
+.dash-launchpad {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(0.85rem, 2vw, 1.35rem);
+}
+
+@media (max-width: 1100px) {
+  .dash-launchpad { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 700px) {
+  .dash-launchpad { grid-template-columns: 1fr; }
+}
+
+.dash-lp-group {
+  --lp-accent: var(--color-primary);
+  --lp-accent-rgb: var(--color-primary-rgb);
+
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 1rem;
+  border-radius: var(--radius-xl);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+}
+
+.dash-lp-violet  { --lp-accent: #8B5CF6; --lp-accent-rgb: 139, 92, 246; }
+.dash-lp-emerald { --lp-accent: #10B981; --lp-accent-rgb: 16, 185, 129; }
+.dash-lp-amber   { --lp-accent: #F59E0B; --lp-accent-rgb: 245, 158, 11; }
+
+.dash-lp-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--lp-accent);
+  padding-left: 0.15rem;
+}
+
+.dash-lp-label::before {
+  content: "";
+  width: 18px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--lp-accent);
+}
+
+.dash-lp-items {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dash-lp-card {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  width: 100%;
+  padding: 0.75rem 0.85rem;
+  border-radius: var(--radius-lg);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+/* Accent wash that sweeps in on hover. Transform-only so it stays cheap. */
+.dash-lp-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg,
+    rgba(var(--lp-accent-rgb), 0.16) 0%,
+    rgba(var(--lp-accent-rgb), 0) 75%);
+  opacity: 0;
+  transition: opacity var(--transition-normal);
+  pointer-events: none;
+}
+
+.dash-lp-card:hover {
+  border-color: rgba(var(--lp-accent-rgb), 0.5);
+  transform: translateY(-3px);
+  box-shadow: 0 10px 22px -10px rgba(var(--lp-accent-rgb), 0.55);
+}
+
+.dash-lp-card:hover::before { opacity: 1; }
+
+/* The single highest-value action in the whole launchpad. */
+.dash-lp-card.is-primary {
+  background: linear-gradient(135deg,
+    rgba(var(--lp-accent-rgb), 0.16) 0%,
+    rgba(var(--lp-accent-rgb), 0.05) 100%);
+  border-color: rgba(var(--lp-accent-rgb), 0.45);
+}
+
+.dash-lp-icon {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-md);
+  background: rgba(var(--lp-accent-rgb), 0.13);
+  color: var(--lp-accent);
+  transition: transform var(--transition-spring);
+}
+
+.dash-lp-card:hover .dash-lp-icon {
+  transform: scale(1.1) rotate(-6deg);
+}
+
+.dash-lp-icon i {
+  width: 18px;
+  height: 18px;
+}
+
+.dash-lp-text {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+}
+
+.dash-lp-text strong {
+  font-size: 0.88rem;
+  font-weight: 750;
+  color: var(--text-main);
+  line-height: 1.25;
+}
+
+.dash-lp-text small {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+  line-height: 1.35;
+}
+
+.dash-lp-badge {
+  position: relative;
+  flex-shrink: 0;
+  min-width: 21px;
+  height: 21px;
+  padding: 0 0.35rem;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-full);
+  background: #F97316;
+  color: #FFF;
+  font-size: 0.7rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  animation: dashBadgePop 2.6s ease-in-out infinite;
+}
+
+@keyframes dashBadgePop {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.55); }
+  60%      { box-shadow: 0 0 0 8px rgba(249, 115, 22, 0); }
+}
+
+.dash-lp-arrow {
+  position: relative;
+  flex-shrink: 0;
+  width: 15px;
+  height: 15px;
+  color: var(--text-muted);
+  opacity: 0;
+  transform: translate(-4px, 4px);
+  transition: all var(--transition-fast);
+}
+
+.dash-lp-card:hover .dash-lp-arrow {
+  opacity: 1;
+  transform: none;
+  color: var(--lp-accent);
+}
+
+/* Touch devices never hover, so the affordance must be visible by default. */
+@media (hover: none) {
+  .dash-lp-arrow { opacity: 0.55; transform: none; }
+}
+
+
+/* ==========================================================================
+   7. CONSISTENCY HEATMAP
+
+   The widest, most horizontal element on the page — it fills the dead space
+   the old layout left, and it rewards the behaviour that actually matters
+   (showing up daily) rather than a single score.
+   ========================================================================== */
+
+.dash-consistency {
+  padding: clamp(1.1rem, 2.4vw, 1.6rem);
+  border-radius: var(--radius-xl);
+  background: var(--glass-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-md);
+}
+
+.dash-consistency-stats {
+  display: flex;
+  align-items: center;
+  gap: clamp(1rem, 3vw, 2rem);
+  flex-wrap: wrap;
+}
+
+.dcs-item {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.1;
+}
+
+.dcs-item strong {
+  font-family: var(--font-family-display);
+  font-size: 1.5rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--color-primary-light);
+  font-variant-numeric: tabular-nums;
+}
+
+.dcs-item span {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 0.2rem;
+}
+
+/* Horizontal scroll rather than shrinking cells — a 12-week grid stays
+   readable on a phone only if the squares keep their size. */
+.dash-heatmap-scroll {
+  overflow-x: auto;
+  padding-bottom: 0.4rem;
+  scrollbar-width: thin;
+}
+
+.dash-heatmap {
+  display: flex;
+  gap: 0.5rem;
+  min-width: max-content;
+}
+
+.dash-hm-daylabels {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0.9rem 0 0;
+  font-size: 0.62rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  line-height: 1;
+}
+
+.dash-hm-weeks {
+  display: flex;
+  gap: 4px;
+}
+
+.dash-hm-week {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dash-hm-cell {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--border-subtle);
+  display: block;
+  flex-shrink: 0;
+  transition: transform var(--transition-fast), outline-color var(--transition-fast);
+  outline: 1px solid transparent;
+}
+
+.dash-hm-cell:hover {
+  transform: scale(1.35);
+  outline-color: var(--text-muted);
+  z-index: 2;
+  position: relative;
+}
+
+/* Padding squares keep weekdays aligned to their row but carry no meaning. */
+.dash-hm-cell.is-pad {
+  background: transparent;
+  pointer-events: none;
+}
+
+/* Four intensity steps, scaled in JS against the student's own busiest day so
+   the grid stays legible whether they average 2 actions or 50. */
+.dash-hm-cell.lvl-0 { background: rgba(var(--color-primary-rgb), 0.07); }
+.dash-hm-cell.lvl-1 { background: rgba(var(--color-primary-rgb), 0.3); }
+.dash-hm-cell.lvl-2 { background: rgba(var(--color-primary-rgb), 0.52); }
+.dash-hm-cell.lvl-3 { background: rgba(var(--color-primary-rgb), 0.75); }
+.dash-hm-cell.lvl-4 {
+  background: var(--color-primary);
+  box-shadow: 0 0 8px -1px var(--color-primary-glow);
+}
+
+.dash-hm-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.3rem;
+  margin-top: 0.85rem;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.dash-hm-legend > span:first-child { margin-right: 0.2rem; }
+.dash-hm-legend > span:last-child  { margin-left: 0.2rem; }
+
+.dash-hm-legend .dash-hm-cell {
+  width: 11px;
+  height: 11px;
+}
+
+.dash-hm-legend .dash-hm-cell:hover { transform: none; }
+
+
+/* ==========================================================================
+   8. METRICS
+
+   ACCENT TOKENS
+   Each .dash-accent-* only sets --acc / --acc-rgb, so the same eight colours
+   drive stat rings, mini tiles and SRS row icons without duplicating rules.
+   ========================================================================== */
+
+.dash-accent-violet  { --acc: #8B5CF6; --acc-rgb: 139, 92, 246; }
+.dash-accent-pink    { --acc: #EC4899; --acc-rgb: 236, 72, 153; }
+.dash-accent-indigo  { --acc: #6366F1; --acc-rgb: 99, 102, 241; }
+.dash-accent-cyan    { --acc: #06B6D4; --acc-rgb: 6, 182, 212; }
+.dash-accent-amber   { --acc: #F59E0B; --acc-rgb: 245, 158, 11; }
+.dash-accent-emerald { --acc: #10B981; --acc-rgb: 16, 185, 129; }
+.dash-accent-orange  { --acc: #F97316; --acc-rgb: 249, 115, 22; }
+.dash-accent-slate   { --acc: #64748B; --acc-rgb: 100, 116, 139; }
+
+/* ------------------------------------------------ Primary (ringed) metrics */
+.dash-primary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(0.75rem, 1.8vw, 1.15rem);
+  margin-bottom: clamp(0.75rem, 1.8vw, 1.15rem);
+}
+
+@media (max-width: 1100px) {
+  .dash-primary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .dash-primary-grid { grid-template-columns: 1fr; }
+}
+
+.dash-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  padding: 1rem;
+  border-radius: var(--radius-xl);
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-normal);
+}
+
+.dash-stat:hover {
+  border-color: rgba(var(--acc-rgb), 0.45);
+  transform: translateY(-3px);
+  box-shadow: 0 12px 26px -12px rgba(var(--acc-rgb), 0.55);
+}
+
+.dash-stat-ring-wrap {
+  position: relative;
+  width: 68px;
+  height: 68px;
+  flex-shrink: 0;
+}
+
+.dash-stat-ring {
+  width: 100%;
+  height: 100%;
+  display: block;
+  transform: rotate(-90deg);
+}
+
+.dash-stat-ring .dash-ring-track { stroke-width: 7; }
+
+.dash-stat-ring .dash-ring-fill {
+  stroke: var(--acc, var(--color-primary-light));
+  stroke-width: 7;
+}
+
+.dash-stat-icon {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 22px;
+  color: var(--acc, var(--color-primary-light));
+  pointer-events: none;
+}
+
+.dash-stat-body {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dash-stat-value {
+  font-family: var(--font-family-display);
+  font-size: clamp(1.45rem, 3vw, 1.85rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.035em;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-stat-label {
+  font-size: 0.82rem;
+  font-weight: 750;
+  color: var(--text-secondary);
+}
+
+.dash-stat-caption {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+/* --------------------------------------------- Secondary (compact) metrics */
+.dash-secondary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: clamp(0.6rem, 1.5vw, 0.9rem);
+}
+
+@media (max-width: 900px) {
+  .dash-secondary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.dash-mini {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.85rem 0.95rem;
+  border-radius: var(--radius-lg);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.dash-mini:hover {
+  background: var(--bg-card-hover);
+  border-color: rgba(var(--acc-rgb), 0.45);
+  transform: translateY(-2px);
+}
+
+.dash-mini-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  background: rgba(var(--acc-rgb), 0.13);
+  color: var(--acc);
+  margin-bottom: 0.3rem;
+  transition: transform var(--transition-spring);
+}
+
+.dash-mini:hover .dash-mini-icon {
+  transform: scale(1.12) rotate(-6deg);
+}
+
+.dash-mini-icon i {
+  width: 15px;
+  height: 15px;
+}
+
+.dash-mini-value {
+  font-family: var(--font-family-display);
+  font-size: 1.32rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+.dash-mini-label {
+  font-size: 0.72rem;
+  font-weight: 650;
+  color: var(--text-muted);
+}
+
+
+/* ==========================================================================
+   9. CHARTS — the existing .charts-grid / .chart-card pattern is reused, so
+   only the full-width subject card needs an adjustment here.
+   ========================================================================== */
+
+.dash-charts .charts-grid {
+  margin-bottom: clamp(0.85rem, 2vw, 1.35rem);
+}
+
+.dash-subject-card {
+  width: 100%;
+}
+
+/* Recent quizzes reuses .quiz-cards-list; only the rhythm needs adjusting so
+   it matches the gaps used everywhere else on this page. */
+.dash-recent .quiz-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+
+/* ==========================================================================
+   10. MODULE ACTIVITY (notes + spaced repetition)
+   ========================================================================== */
+
+.dash-note-list,
+.dash-srs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.dash-note-row,
+.dash-srs-row {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: var(--radius-md);
+  background: var(--bg-surface-elevated);
+  border: 1px solid var(--border-subtle);
+  transition: all var(--transition-fast);
+}
+
+.dash-note-row:hover {
+  border-color: rgba(var(--color-primary-rgb), 0.35);
+  transform: translateX(3px);
+}
+
+.dash-note-icon,
+.dash-srs-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: rgba(var(--acc-rgb, var(--color-primary-rgb)), 0.13);
+  color: var(--acc, var(--color-primary-light));
+}
+
+.dash-note-icon i,
+.dash-srs-icon i {
+  width: 16px;
+  height: 16px;
+}
+
+.dash-note-text,
+.dash-srs-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.dash-note-text strong {
+  font-size: 0.87rem;
+  font-weight: 700;
+  color: var(--text-main);
+  /* Long note titles must not push the Open button off the card. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dash-note-text small,
+.dash-srs-text small {
+  font-size: 0.74rem;
+  color: var(--text-muted);
+}
+
+.dash-srs-text strong {
+  font-family: var(--font-family-display);
+  font-size: 1.15rem;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  color: var(--text-main);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Due-cards call to action — deliberately the loudest thing in this card. */
+.dash-due-cta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  margin-top: 0.85rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid rgba(249, 115, 22, 0.4);
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, rgba(249, 115, 22, 0.16), rgba(249, 115, 22, 0.05));
+  color: #C2410C;
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 750;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+[data-theme="DARK"] .dash-due-cta,
+[data-theme="MIDNIGHT_BLUE"] .dash-due-cta,
+[data-theme="CHARCOAL"] .dash-due-cta {
+  color: #FDBA74;
+}
+
+.dash-due-cta:hover {
+  border-color: #F97316;
+  transform: translateY(-2px);
+  box-shadow: 0 8px 18px -8px rgba(249, 115, 22, 0.6);
+}
+
+.dash-due-cta i {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.dash-due-cta span { flex: 1; text-align: left; }
+
+.dash-allclear {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+  padding: 0.7rem 1rem;
+  border-radius: var(--radius-lg);
+  background: var(--color-success-bg);
+  border: 1px solid var(--color-success-border);
+  color: var(--color-success);
+  font-size: 0.83rem;
+  font-weight: 700;
+}
+
+.dash-allclear i {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+
+/* ==========================================================================
+   11. EMPTY STATES
+   ========================================================================== */
+
+.dash-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.35rem;
+  padding: 2rem 1.25rem;
+  border-radius: var(--radius-lg);
+  border: 1px dashed var(--border-medium);
+  background: rgba(var(--color-primary-rgb), 0.03);
+}
+
+.dash-empty > i {
+  width: 30px;
+  height: 30px;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.dash-empty-lg {
+  padding: 3rem 1.5rem;
+}
+
+.dash-empty-lg > i {
+  width: 40px;
+  height: 40px;
+}
+
+.dash-empty-title {
+  font-family: var(--font-family-display);
+  font-size: 1rem;
+  font-weight: 750;
+  color: var(--text-main);
+  margin: 0;
+}
+
+.dash-empty-body {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+  max-width: 46ch;
+  margin: 0 0 0.75rem;
+}
+
+
+/* ==========================================================================
+   12. RESPONSIVE
+   ========================================================================== */
+
+@media (max-width: 760px) {
+  /* The eyebrow is a single nowrap line; below this width it needs to break. */
+  .dash-mast-eyebrow {
+    white-space: normal;
+    text-align: center;
+    letter-spacing: 0.1em;
+    line-height: 1.5;
+  }
+
+  .dash-mast-rule {
+    width: min(240px, 80%);
+  }
+
+  /* Blurred orbs at 340px are wider than the viewport and read as flat wash. */
+  .dm-orb-1 { width: 220px; height: 220px; top: -120px; }
+  .dm-orb-2 { width: 200px; height: 200px; bottom: -110px; }
+  .dm-orb-3 { display: none; }
+
+  .dash-hero {
+    padding: 1.25rem 1.1rem;
+  }
+
+  .dash-hero-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .dash-focus {
+    flex-direction: column;
+  }
+
+  .dash-focus-cta {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .dash-section-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dash-consistency-stats {
+    gap: 1.25rem;
+  }
+
+  .dcs-item strong { font-size: 1.25rem; }
+
+  .dash-stat {
+    gap: 0.75rem;
+  }
+
+  .dash-stat-ring-wrap {
+    width: 58px;
+    height: 58px;
+  }
+}
+
+@media (max-width: 420px) {
+  .dash-secondary-grid { grid-template-columns: 1fr; }
+  .dash-hm-cell { width: 12px; height: 12px; }
+}
+
+
+/* ==========================================================================
+   13. REDUCED MOTION
+
+   Decorative animation is removed entirely. The JS counterpart also checks
+   this query and writes final values straight into the DOM, so nothing here
+   needs to reveal hidden content — but .reveal is reset anyway as a safety
+   net in case the observer never runs.
+   ========================================================================== */
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .dg-orb,
+  .live-dot,
+  .dash-ring-flame,
+  .dash-lp-badge,
+  .dash-focus-urgent .dash-focus-icon,
+  .dm-rays,
+  .dm-orb,
+  .dash-mast-rule-gem,
+  .dash-shloka-sheen,
+  .dash-shloka::after,
+  .dash-shloka .shloka-sanskrit-live-text {
+    animation: none;
+  }
+
+  /* The masthead's entrance and the flowing gradients are removed, but the
+     text must still be painted — these all animate `both`, so without an
+     explicit reset the elements would keep their 0-opacity `from` state. */
+  .dash-masthead,
+  .dash-mast-eyebrow,
+  .dash-mast-en,
+  .dash-mast-hi,
+  .dash-mast-rule,
+  .dash-mast-tagline {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  /* The sweeping shine copy is decoration only; hide it rather than freeze it
+     mid-sweep across the letterforms. */
+  .dash-mast-en::after,
+  .dash-mast-hi::after {
+    display: none;
+  }
+
+  .dash-shloka-sheen {
+    display: none;
+  }
+
+  .dash-ring-fill {
+    transition: none;
+  }
+
+  .dash-step:hover,
+  .dash-note-row:hover,
+  .dash-stat:hover,
+  .dash-mini:hover,
+  .dash-lp-card:hover,
+  .dash-focus-cta:hover,
+  .dash-due-cta:hover,
+  .dash-hm-cell:hover {
+    transform: none;
+  }
+
+  .dash-lp-card:hover .dash-lp-icon,
+  .dash-mini:hover .dash-mini-icon,
+  .dash-focus-cta:hover i {
+    transform: none;
+  }
+}
+
+
+/* ==========================================================================
+   14. PRINT
+
+   A printed dashboard is a progress report. Drop the interactive furniture
+   and keep the numbers.
+   ========================================================================== */
+
+@media print {
+  .dash {
+    gap: 1rem;
+  }
+
+  .dash-mast-aurora,
+  .dash-shloka-sheen,
+  .dash-hero-glow,
+  .dash-launchpad,
+  .dash-step-cta,
+  .dash-focus-cta,
+  .dash-due-cta,
+  .dash-lp-arrow,
+  .dash-live-pill {
+    display: none !important;
+  }
+
+  .reveal {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .dash-hero,
+  .dash-consistency,
+  .dash-stat,
+  .dash-mini,
+  .dash-focus,
+  .dash-pulse {
+    background: #FFF !important;
+    box-shadow: none !important;
+    border: 1px solid #CBD5E1 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  /* Gradient-clipped text prints as nothing, so every such element has to fall
+     back to solid ink. */
+  .dash-greet-name,
+  .dash-mast-en,
+  .dash-mast-hi,
+  .dash-shloka .shloka-sanskrit-live-text {
+    -webkit-text-fill-color: currentColor;
+    background: none;
+    animation: none;
+    color: #0B0F19 !important;
+  }
+
+  .dash-mast-en::after,
+  .dash-mast-hi::after {
+    display: none;
+  }
+
+  .dash-masthead,
+  .dash-shloka {
+    animation: none;
+    opacity: 1;
+    background: #FFF !important;
+    box-shadow: none !important;
+    border: 1px solid #CBD5E1 !important;
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+  }
+
+  .dash-masthead {
+    padding: 1.25rem;
+  }
+
+  .dash-mast-en { font-size: 2.25rem; }
+  .dash-mast-hi { font-size: 1.6rem; }
+
+  .dash-primary-grid,
+  .dash-secondary-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .dash-hm-cell {
+    outline: 1px solid #E2E8F0;
+  }
+}

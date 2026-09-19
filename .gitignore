@@ -1,0 +1,39 @@
+# Dependencies — restored via `npm install`
+node_modules/
+
+# Editor & OS
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local secrets & environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+
+# Logs & runtime
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs (none today, but reserved)
+dist/
+build/
+
+# Test coverage / temp
+coverage/
+.nyc_output/
+tmp/
+temp/
+
+# Scratch backups & anything a contributor experiments with locally
+scratch/_local/
+scratch/*.local.js

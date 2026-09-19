@@ -1,0 +1,359 @@
+/* HAMSA VIDYA (हंस विद्या) — Responsive Breakpoints & Mobile Navigation */
+
+/* ==========================================================================
+   MOBILE BOTTOM NAVIGATION BAR
+   ========================================================================== */
+.mobile-bottom-nav {
+  display: none;
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 64px;
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border-top: 1px solid var(--border-subtle);
+  z-index: 990;
+  justify-content: space-around;
+  align-items: center;
+  padding: 0 0.5rem;
+}
+
+.mobile-nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0.4rem 0.75rem;
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+  flex: 1;
+}
+
+.mobile-nav-item.active {
+  color: var(--color-primary-light);
+}
+
+.mobile-nav-item i, .mobile-nav-item svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* ==========================================================================
+   BREAKPOINTS & RESPONSIVE BEHAVIOR
+   ========================================================================== */
+@media (max-width: 820px) {
+  /* Header & Logo Mobile Scaling */
+  .header-inner {
+    padding: 0.65rem 1.25rem;
+  }
+  .logo-halo-wrapper {
+    width: 54px;
+    height: 54px;
+  }
+  .brand-title {
+    font-size: 1.18rem;
+  }
+  .brand-tagline {
+    display: none;
+  }
+
+  /* Hide Desktop Header Nav Links & Subnav */
+  .nav-links,
+  .module-subnav-bar {
+    display: none;
+  }
+
+  /* Show Mobile Bottom Navigation */
+  .mobile-bottom-nav {
+    display: flex;
+    padding: 0 0.25rem;
+  }
+
+  .mobile-nav-item {
+    padding: 0.35rem 0.2rem;
+    font-size: 0.66rem;
+    min-width: 0;
+    gap: 0.15rem;
+  }
+
+  .mobile-nav-item i, .mobile-nav-item svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  /* Add extra padding at bottom of main content so bottom nav does not overlap */
+  .main-content {
+    padding: 1.25rem 1.25rem 6.5rem 1.25rem;
+  }
+
+  .hero-card,
+  .hero-card.hero-stacked-layout {
+    padding: 1.25rem 1rem;
+    gap: 1rem;
+  }
+
+  .hero-top-ribbon {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.85rem;
+  }
+
+  .dashboard-top-shloka-banner {
+    padding: 0.7rem 1rem;
+    margin-bottom: 0.85rem;
+  }
+
+  .shloka-sanskrit-live-text {
+    font-size: 1.35rem;
+    line-height: 1.45;
+  }
+
+  .ai-advisor-card {
+    padding: 1.15rem 1rem;
+  }
+
+  .ai-advisor-header-bar {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+
+  .hero-title {
+    font-size: 1.85rem;
+  }
+
+  .hero-card::before {
+    display: none;
+  }
+
+  .quiz-nav-card {
+    padding: 1rem;
+  }
+
+  .question-card {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .option-card {
+    padding: 1rem;
+  }
+
+  .quiz-bottom-bar {
+    flex-direction: column-reverse;
+    gap: 0.75rem;
+  }
+
+  .quiz-left-actions, .quiz-right-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .quiz-left-actions .btn, .quiz-right-actions .btn {
+    flex: 1;
+  }
+
+  .export-pdf-banner {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .export-pdf-banner .btn {
+    width: 100%;
+  }
+
+  #toast-container {
+    bottom: 5rem;
+    left: 1rem;
+    right: 1rem;
+  }
+
+  .toast {
+    max-width: 100%;
+  }
+}
+
+/* ==========================================================================
+   ELASTIC & TRUNCATION SAFETY UTILITIES
+   ========================================================================== */
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-break {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+/* Button height safety */
+button, .btn {
+  min-height: 44px;
+}
+
+/* ==========================================================================
+   PRINT MEDIA (Native Browser Print Fallback)
+   ========================================================================== */
+@media print {
+  .site-header, .mobile-bottom-nav, #toast-container, .quiz-bottom-bar, .modal-overlay, .btn {
+    display: none !important;
+  }
+
+  body {
+    background: #FFFFFF !important;
+    color: #000000 !important;
+  }
+
+  .main-content {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .question-card, .review-item-card {
+    border: 1px solid #CCCCCC !important;
+    box-shadow: none !important;
+    page-break-inside: avoid;
+  }
+}
+/* ==========================================================================
+   PERFORMANCE: Disable heavy animations on mobile & reduced-motion
+   ========================================================================== */
+@media (max-width: 820px) {
+  .aurora-orb,
+  .logo-3d-orbital-ring {
+    display: none !important;
+  }
+
+  /* Disable spotlight tracking on mobile (no mouse hover) */
+  .metric-card::before,
+  .hero-card::before,
+  .quiz-list-item::before,
+  .glass-panel::before,
+  .spotlight-card::before {
+    display: none !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-orb,
+  .logo-3d-orbital-ring,
+  .brand-sparkle-dot {
+    animation: none !important;
+    display: none !important;
+  }
+
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Flashcards Engine Responsive Refinements */
+@media (max-width: 768px) {
+  .flashcard-hud-bar {
+    flex-direction: column;
+    align-items: stretch !important;
+    gap: 0.75rem;
+  }
+  .flashcard-hud-left, .flashcard-hud-right {
+    justify-content: space-between;
+  }
+  .flashcard-controls-bar {
+    flex-direction: column-reverse;
+    gap: 1rem;
+  }
+  .flashcard-nav-buttons-row {
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+  }
+}
+
+/* AI Advisor & Target Exam Spotlight Responsive Enhancements */
+@media (max-width: 768px) {
+  .target-exam-spotlight-banner {
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    padding: 1.25rem 1.15rem;
+  }
+  .target-exam-title-big {
+    font-size: 1.5rem;
+  }
+  .ai-study-audit-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  .benefits-grid {
+    grid-template-columns: 1fr;
+  }
+  .target-exam-empty-banner {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1rem;
+    padding: 1.15rem;
+  }
+  .empty-banner-right {
+    width: 100%;
+  }
+  .empty-banner-right button {
+    width: 100%;
+    justify-content: center;
+  }
+}
+
+@media (max-width: 520px) {
+  .dashboard-top-shloka-banner {
+    padding: 0.6rem 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .shloka-sanskrit-live-text {
+    font-size: 1.15rem;
+    line-height: 1.45;
+    letter-spacing: 0.01em;
+  }
+  .target-exam-title-big {
+    font-size: 1.3rem;
+  }
+  .countdown-number-giant {
+    font-size: 2.6rem;
+  }
+  .time-metrics-row {
+    flex-direction: row;
+    gap: 0.5rem;
+  }
+  .time-stat-num {
+    font-size: 1.15rem;
+  }
+  .exam-selector-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+  }
+  .card-action-right {
+    width: 100%;
+  }
+  .card-action-right button {
+    width: 100%;
+    justify-content: center;
+  }
+  .target-exam-dialog {
+    max-height: 94vh;
+  }
+  .target-exam-modal-toolbar {
+    padding: 0.75rem 1rem;
+  }
+  .target-exam-modal-body {
+    padding: 0.75rem 1rem;
+  }
+}
+

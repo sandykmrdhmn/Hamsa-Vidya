@@ -1,0 +1,929 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="DARK" data-palette="INDIGO" data-font-scale="DEFAULT" data-font-family="DEFAULT">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HAMSA VIDYA (हंस विद्या) — AI Wisdom & Quiz Companion</title>
+  <meta name="description"
+    content="AI-powered MCQ question generator and exam study companion. Ingest PDFs with precise page range boundaries or notes, practice with instant explanations, and export print-ready A4 question papers.">
+  <meta name="keywords"
+    content="AI quiz generator, MCQ maker, PDF to quiz, UPSC preparation, study companion, flashcards, spaced repetition, Indian exams">
+  <meta name="author" content="Hamsa Vidya">
+  <meta name="theme-color" content="#4F46E5">
+  <link rel="icon" type="image/svg+xml" href="assets/icons/hamsa-logo.svg">
+  <link rel="apple-touch-icon" href="assets/icons/hamsa-logo-3d.png">
+  <link rel="manifest" href="manifest.webmanifest">
+
+  <!-- Open Graph (Social Sharing: Facebook, WhatsApp, LinkedIn)
+
+       NOTE FOR DEPLOYMENT: og:image and og:url must be ABSOLUTE URLs. Social
+       scrapers do not resolve relative paths, so the preview image will not
+       render until these are changed to e.g.
+         https://your-domain.example/assets/icons/hamsa-logo-3d.png
+       Left relative here because the app currently runs from localhost and
+       there is no canonical domain to point at. -->
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Hamsa Vidya">
+  <meta property="og:title" content="HAMSA VIDYA — AI Quiz Generator & Study Companion">
+  <meta property="og:description"
+    content="Generate MCQ quizzes from PDFs & notes using Google Gemini AI. Practice, review & export A4 question papers. 100% free, offline-capable.">
+  <meta property="og:image" content="assets/icons/hamsa-logo-3d.png">
+  <meta property="og:image:alt" content="Hamsa Vidya celestial swan logo">
+  <meta property="og:locale" content="en_IN">
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="HAMSA VIDYA — AI Quiz Generator & Study Companion">
+  <meta name="twitter:description"
+    content="Generate MCQ quizzes from PDFs using AI. Free, offline-capable study tool for UPSC & competitive exams.">
+
+  <!-- Schema.org Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "EducationalApplication",
+    "name": "HAMSA VIDYA (हंस विद्या)",
+    "description": "AI-powered MCQ quiz generator and study companion. Ingest PDFs, generate quizzes, practice with explanations, and export A4 question papers.",
+    "applicationCategory": "EducationalApplication",
+    "operatingSystem": "Web Browser",
+    "offers": { "@type": "Offer", "price": "0", "priceCurrency": "INR" },
+    "inLanguage": ["en", "hi"]
+  }
+  </script>
+
+  <!-- Google Fonts Preconnect -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <!-- ======================================================================
+       Modular CSS Architecture
+
+       ORDER IS SIGNIFICANT — later rules intentionally override earlier ones.
+       components/ and ai-teacher/ are numbered splits of what used to be two
+       very large files (8132 and 4225 lines). Keep them in numeric order.
+       ====================================================================== -->
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/main.css">
+
+  <!-- Shared components (split from components.css) -->
+  <link rel="stylesheet" href="css/components/01-base-and-header.css">
+  <link rel="stylesheet" href="css/components/02-dashboard.css">
+  <link rel="stylesheet" href="css/components/03-create-quiz.css">
+  <link rel="stylesheet" href="css/components/04-motion.css">
+  <link rel="stylesheet" href="css/components/05-study-notes.css">
+  <link rel="stylesheet" href="css/components/06-flashcards.css">
+  <link rel="stylesheet" href="css/components/07-global-search.css">
+  <link rel="stylesheet" href="css/components/08-doubt-solver.css">
+  <link rel="stylesheet" href="css/components/09-reading-themes.css">
+  <link rel="stylesheet" href="css/components/10-tools.css">
+
+  <!-- Dashboard command centre. A separate top-level file rather than an
+       11th components/ part, because components/ is byte-verified against
+       the original components.css by scratch/verify-css-split.js. -->
+  <link rel="stylesheet" href="css/dashboard.css">
+
+  <link rel="stylesheet" href="css/quiz.css">
+  <link rel="stylesheet" href="css/exam-alerts.css">
+  <link rel="stylesheet" href="css/answer-writing.css">
+
+  <!-- AI Teacher (split from ai-teacher.css) -->
+  <link rel="stylesheet" href="css/ai-teacher/01-hero-and-input.css">
+  <link rel="stylesheet" href="css/ai-teacher/02-controls.css">
+  <link rel="stylesheet" href="css/ai-teacher/03-loading.css">
+  <link rel="stylesheet" href="css/ai-teacher/04-folio.css">
+  <link rel="stylesheet" href="css/ai-teacher/05-toolbar-and-chat.css">
+  <link rel="stylesheet" href="css/ai-teacher/06-manuscript.css">
+  <link rel="stylesheet" href="css/ai-teacher/07-print-and-responsive.css">
+
+  <!-- Shared hero banner for every tab. Linked after all per-view stylesheets
+       so a hero always wins over the one-off header rules it replaces. -->
+  <link rel="stylesheet" href="css/view-hero.css">
+
+  <!-- Onboarding education list. After exam-alerts.css, whose generic
+       .onboarding-input-group rules these must win over. -->
+  <link rel="stylesheet" href="css/onboarding.css">
+
+  <!-- Auth gate (pre-app login screen) + persistent site footer. Uses the
+       dashboard's masthead classes for the wordmark, so it must come after
+       css/dashboard.css. -->
+  <link rel="stylesheet" href="css/auth-gate.css">
+
+  <!-- Two-tier site header. After components/01-base-and-header.css, whose
+       single-row rules it replaces; before layout.css, which stays the only
+       place page width is decided. -->
+  <link rel="stylesheet" href="css/header.css">
+
+  <!-- One shared page width for every view. Must come after all per-view
+       stylesheets (it releases their individual max-widths) and before
+       responsive.css (whose mobile padding still needs to win). -->
+  <link rel="stylesheet" href="css/layout.css">
+
+  <link rel="stylesheet" href="css/responsive.css">
+  <!-- Loaded last so focus styles win over component rules -->
+  <link rel="stylesheet" href="css/a11y.css">
+
+  <!-- Offline-Ready Vendor Libraries -->
+  <script src="assets/vendor/dexie.min.js"></script>
+  <script src="assets/vendor/lucide.min.js"></script>
+  <script src="assets/vendor/pdf.min.js"></script>
+  <script src="assets/vendor/pdf-lib.min.js"></script>
+  <script src="assets/vendor/jspdf.umd.min.js"></script>
+  <script src="assets/vendor/jspdf.plugin.autotable.min.js"></script>
+  <script src="assets/vendor/html2pdf.bundle.min.js"></script>
+  <script src="assets/vendor/marked.min.js"></script>
+</head>
+
+<body>
+  <!-- First tab stop: lets keyboard users bypass the 9-item primary nav -->
+  <a href="#main-content" class="skip-to-content">Skip to main content</a>
+
+  <!-- ======================================================================
+       AUTH GATE (login screen, shown before the SPA)
+
+       Hidden by default via the `hidden` attribute so it never flashes on top
+       of the app for a returning user. js/auth-gate.js reveals it on first
+       visit (no `hamsa_auth_mode` in localStorage) and hides #app-root behind
+       it until the visitor chooses Guest or Google.
+
+       The wordmark reuses the dashboard masthead classes (dash-mast-*) so the
+       two screens stay visually in sync automatically.
+       ====================================================================== -->
+  <div id="auth-gate" class="auth-gate" role="dialog" aria-modal="true"
+    aria-labelledby="auth-gate-title" hidden>
+
+    <div class="dash-mast-aurora" aria-hidden="true">
+      <span class="dm-rays"></span>
+      <span class="dm-orb dm-orb-1"></span>
+      <span class="dm-orb dm-orb-2"></span>
+      <span class="dm-orb dm-orb-3"></span>
+    </div>
+
+    <div class="dash-mast-inner">
+      <span class="dash-mast-eyebrow">
+        <span class="live-dot" aria-hidden="true"></span>
+        AI Gurukul · UPSC · SSC · Banking
+      </span>
+
+      <h1 id="auth-gate-title" class="dash-mast-title">
+        <span class="dash-mast-en" data-text="HAMSA VIDYA">HAMSA VIDYA</span>
+        <span class="dash-mast-hi" lang="hi" data-text="हंस विद्या">हंस विद्या</span>
+      </h1>
+
+      <div class="dash-mast-rule" aria-hidden="true">
+        <span class="dash-mast-rule-line"></span>
+        <span class="dash-mast-rule-gem"></span>
+        <span class="dash-mast-rule-line"></span>
+      </div>
+
+      <p class="dash-mast-tagline">
+        Your personal AI Gurukul — quizzes, notes and answer writing that learn with you.
+      </p>
+    </div>
+
+    <div class="auth-card" role="group" aria-label="Sign in options">
+      <!-- Google button is present so the affordance is in place, but the OAuth
+           backend is not wired yet. Clicking it surfaces a "coming soon"
+           notice — it does NOT set the storage key, so no one enters the app
+           through it while it is inert. -->
+      <button type="button" id="auth-google-btn" class="auth-btn auth-btn-google"
+        aria-label="Continue with Google (coming soon)">
+        <svg class="auth-btn-icon" viewBox="0 0 48 48" aria-hidden="true" focusable="false">
+          <path fill="#EA4335"
+            d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"/>
+          <path fill="#4285F4"
+            d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"/>
+          <path fill="#FBBC05"
+            d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"/>
+          <path fill="#34A853"
+            d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"/>
+          <path fill="none" d="M0 0h48v48H0z"/>
+        </svg>
+        <span>Continue with Google</span>
+        <span class="auth-btn-badge">Soon</span>
+      </button>
+
+      <div class="auth-separator" aria-hidden="true">or</div>
+
+      <button type="button" id="auth-guest-btn" class="auth-btn auth-btn-guest">
+        <svg class="auth-btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+          <path d="M5 12h14"/>
+          <path d="M13 6l6 6-6 6"/>
+        </svg>
+        <span>Continue as Guest</span>
+      </button>
+
+      <p class="auth-footnote">
+        Your quizzes, notes and progress stay on this device.
+        No account required to start.
+      </p>
+
+      <!-- Inline notice slot for the "coming soon" message when app.showToast
+           is not yet available (auth-gate.js runs before app.js has parsed). -->
+      <p id="auth-inline-notice" class="auth-footnote" hidden role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="auth-social-row" aria-label="Follow us">
+      <a class="hv-social-link" href="#" data-social="instagram"
+        aria-label="Instagram (coming soon)"
+        onclick="window.authGate.handleSocialClick(event, 'instagram')">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M12 2.2c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23-.22.56-.48.96-.9 1.38-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.7 3.7 0 0 1-1.38-.9 3.7 3.7 0 0 1-.9-1.38c-.16-.42-.36-1.06-.41-2.23C2.21 15.58 2.2 15.2 2.2 12s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.21 8.8 2.2 12 2.2Zm0 1.8c-3.15 0-3.5.01-4.74.07-1.02.05-1.57.22-1.94.36-.49.19-.83.42-1.2.79-.37.37-.6.71-.79 1.2-.14.37-.31.92-.36 1.94C3 8.5 3 8.85 3 12s0 3.5.07 4.74c.05 1.02.22 1.57.36 1.94.19.49.42.83.79 1.2.37.37.71.6 1.2.79.37.14.92.31 1.94.36 1.24.06 1.59.07 4.74.07s3.5-.01 4.74-.07c1.02-.05 1.57-.22 1.94-.36.49-.19.83-.42 1.2-.79.37-.37.6-.71.79-1.2.14-.37.31-.92.36-1.94.06-1.24.07-1.59.07-4.74s-.01-3.5-.07-4.74c-.05-1.02-.22-1.57-.36-1.94a3.2 3.2 0 0 0-.79-1.2 3.2 3.2 0 0 0-1.2-.79c-.37-.14-.92-.31-1.94-.36C15.5 4 15.15 4 12 4Zm0 3.05a4.95 4.95 0 1 1 0 9.9 4.95 4.95 0 0 1 0-9.9Zm0 1.8a3.15 3.15 0 1 0 0 6.3 3.15 3.15 0 0 0 0-6.3Zm5.15-2.03a1.16 1.16 0 1 1 0 2.32 1.16 1.16 0 0 1 0-2.32Z"/>
+        </svg>
+      </a>
+      <a class="hv-social-link" href="#" data-social="x"
+        aria-label="X, formerly Twitter (coming soon)"
+        onclick="window.authGate.handleSocialClick(event, 'x')">
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.834L1.254 2.25H8.08l4.713 6.231L18.244 2.25Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+
+  <div id="app-root" hidden>
+    <!-- Ambient Background Live Aurora Glows -->
+    <div class="ambient-aurora-canvas" aria-hidden="true">
+      <div class="aurora-orb aurora-orb-1"></div>
+      <div class="aurora-orb aurora-orb-2"></div>
+      <div class="aurora-orb aurora-orb-3"></div>
+    </div>
+
+    <!-- Top Navigation Header -->
+    <header class="site-header">
+      <!-- Two-tier header. Nine module tabs plus search, streak, two toggles and
+           the profile pill cannot share one row inside the page column — the
+           tabs after "Settings" used to run off the edge. Row 1 carries the
+           brand and the utilities; row 2 is the module tab rail. -->
+      <div class="header-inner">
+        <div class="header-top">
+        <!-- Logo & Brand Title -->
+        <div class="brand-container" onclick="app.navigate('dashboard')">
+          <div class="logo-halo-wrapper" id="brand-logo-wrapper">
+            <div class="logo-3d-orbital-ring ring-1"></div>
+            <div class="logo-3d-orbital-ring ring-2"></div>
+            <img src="assets/icons/hamsa-logo-3d.png" alt="Hamsa Swan 3D" class="hamsa-3d-logo" id="site-brand-logo"
+              onerror="this.src='assets/icons/hamsa-logo.svg'">
+          </div>
+          <div class="brand-text">
+            <div class="brand-title">
+              <span class="brand-title-text">HAMSA VIDYA</span>
+              <span class="brand-sparkle-dot" aria-hidden="true"></span>
+              <span class="brand-devanagari">(हंस विद्या)</span>
+            </div>
+            <span class="brand-tagline">AI Wisdom & Quiz Companion • Sharpen Your Intellect</span>
+          </div>
+        </div>
+
+        <!-- Header Actions: Search, Streak, Sound, Theme Toggle & Student Profile -->
+        <div class="header-actions">
+          <button id="global-search-btn" class="global-search-trigger" title="Global Search (Ctrl+K)"
+            onclick="app.openGlobalSearch()">
+            <i data-lucide="search" style="width:16px;height:16px;color:var(--color-primary-light);"></i>
+            <span class="search-trigger-text">Search...</span>
+            <kbd class="search-kbd">Ctrl K</kbd>
+          </button>
+
+          <div id="header-streak-badge" class="streak-badge" title="Daily study streak active!">
+            <span>🔥</span>
+            <span>1d Streak</span>
+          </div>
+
+          <button id="sound-toggle-btn" class="icon-btn sound-btn-pulse" title="Toggle Sound Effects (Mute / Unmute)"
+            onclick="audioEngine.toggleMute()">
+            <i data-lucide="volume-2" style="width:20px;height:20px;color:var(--color-primary-light);"></i>
+          </button>
+
+          <button id="theme-toggle-btn" class="icon-btn" title="Toggle Light / Dark Mode" onclick="app.toggleTheme()">
+            <i data-lucide="sun" style="width:20px;height:20px;"></i>
+          </button>
+
+          <!-- Student Profile Pill (Reflects Name & Initials Universally) -->
+          <div id="header-user-profile" class="header-user-pill" title="Student Profile & Academic Details"
+            onclick="app.openProfileManagerModal()">
+            <div class="user-avatar-circle" id="header-user-avatar">HV</div>
+            <div class="user-name-wrapper">
+              <span class="user-name-label" id="header-user-name">Scholar</span>
+              <span class="user-role-micro" id="header-user-badge">Student</span>
+            </div>
+          </div>
+        </div>
+        </div><!-- /.header-top -->
+
+        <!-- Row 2: Primary Top-Level Navigation Modules -->
+        <nav class="header-nav-row" aria-label="Primary modules">
+        <ul class="nav-links primary-nav-links" role="list">
+          <li>
+            <button class="nav-link primary-module-btn active" data-module="dashboard"
+              onclick="app.setModule('dashboard')" title="Full Website Dashboard & Analytics">
+              <i data-lucide="layout-dashboard" style="width:17px;height:17px;"></i>
+              <span>Dashboard</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="ai-teacher" onclick="app.setModule('ai-teacher')"
+              title="AI Teacher — Understand anything, step by step">
+              <i data-lucide="graduation-cap" style="width:17px;height:17px;"></i>
+              <span>AI Teacher</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="quiz" onclick="app.setModule('quiz')">
+              <i data-lucide="help-circle" style="width:17px;height:17px;"></i>
+              <span>Quiz</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="study-notes" onclick="app.setModule('study-hub')"
+              title="Personal Study Notes Vault & AI Tools">
+              <i data-lucide="book-open" style="width:17px;height:17px;"></i>
+              <span>Study Notes</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="flashcards" onclick="app.setModule('flashcards')"
+              title="Interactive 3D Flashcards & Active Recall">
+              <i data-lucide="zap" style="width:17px;height:17px;"></i>
+              <span>Flashcards</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="answer-writing" onclick="app.setModule('answer-writing')"
+              title="UPSC & Competitive Exams Descriptive Answer Writing & AI Evaluation">
+              <i data-lucide="pen-tool" style="width:17px;height:17px;"></i>
+              <span>Answer Writing</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="exam-alerts" onclick="app.setModule('exam-alerts')"
+              title="Exam Alerts & Eligibility Checker">
+              <i data-lucide="bell-ring" style="width:17px;height:17px;"></i>
+              <span>Exams</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="tools" onclick="app.setModule('tools')"
+              title="Study & Document Utilities Studio (Image & PDF Tools)">
+              <i data-lucide="wrench" style="width:17px;height:17px;"></i>
+              <span>Tools</span>
+            </button>
+          </li>
+          <li>
+            <button class="nav-link primary-module-btn" data-module="settings" onclick="app.setModule('settings')"
+              title="Global Website Settings, API Key & Full Backups">
+              <i data-lucide="settings" style="width:17px;height:17px;"></i>
+              <span>Settings</span>
+            </button>
+          </li>
+        </ul>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Module Sub-Navigation Bar (Active in Quiz Module) -->
+    <nav id="module-subnav-quiz" class="module-subnav-bar">
+      <div class="subnav-container">
+        <div class="subnav-indicator-label">
+          <span class="subnav-module-title">
+            <i data-lucide="sparkles" style="width:14px;height:14px;color:var(--color-primary-light);"></i>
+            <span>Quiz Module</span>
+          </span>
+        </div>
+        <div class="subnav-items">
+          <button class="subnav-pill active" data-subview="create-quiz" onclick="app.navigate('create-quiz')">
+            <i data-lucide="plus-circle"></i>
+            <span>Create Quiz</span>
+          </button>
+          <button class="subnav-pill" data-subview="library" onclick="app.navigate('library')">
+            <i data-lucide="library"></i>
+            <span>Library</span>
+          </button>
+          <button class="subnav-pill" data-subview="quiz-history" onclick="app.navigate('quiz-history')">
+            <i data-lucide="history"></i>
+            <span>History</span>
+          </button>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content Views Container -->
+    <main class="main-content" id="main-content" tabindex="-1">
+      <!-- Feature 0.5: AI Teacher View (Understand Anything Step by Step) -->
+      <section id="view-ai-teacher" class="view-section"></section>
+
+      <!-- Feature 1: Dashboard View -->
+      <section id="view-dashboard" class="view-section active"></section>
+
+      <!-- Feature 2: Create Quiz View (PDF & Text Ingestion) -->
+      <section id="view-create-quiz" class="view-section"></section>
+
+      <!-- Feature 3: Study Notes & Knowledge Vault -->
+      <section id="view-study-notes" class="view-section"></section>
+
+      <!-- Feature 3.5: Interactive 3D Flashcards Vault -->
+      <section id="view-flashcards" class="view-section"></section>
+
+      <!-- Feature 3.8: Answer Writing & AI Evaluation Studio -->
+      <section id="view-answer-writing" class="view-section"></section>
+
+      <!-- Feature 4: Active Quiz Playback Interface -->
+      <section id="view-quiz-player" class="view-section"></section>
+
+      <!-- Feature 5: Quiz Results & Detailed Review -->
+      <section id="view-quiz-result" class="view-section"></section>
+
+      <!-- Feature 7: Library & Bookmarks -->
+      <section id="view-library" class="view-section"></section>
+
+      <!-- Feature 7.5: Quiz History -->
+      <section id="view-quiz-history" class="view-section"></section>
+
+      <!-- Feature 7.8: Tools Studio (Fully Functional PDF & Image Utilities) -->
+      <section id="view-tools" class="view-section"></section>
+
+      <!-- Feature 8: Exam Alerts & Eligibility -->
+      <section id="view-exam-alerts" class="view-section"></section>
+
+      <!-- Feature 9: Settings & Customization -->
+      <section id="view-settings" class="view-section"></section>
+    </main>
+
+    <!-- Mobile Bottom Navigation Bar -->
+    <nav class="mobile-bottom-nav" aria-label="Main navigation">
+      <button class="mobile-nav-item active" data-view="dashboard" onclick="app.navigate('dashboard')">
+        <i data-lucide="layout-dashboard"></i>
+        <span>Home</span>
+      </button>
+      <button class="mobile-nav-item" data-view="ai-teacher" onclick="app.navigate('ai-teacher')">
+        <i data-lucide="graduation-cap"></i>
+        <span>Teacher</span>
+      </button>
+      <button class="mobile-nav-item" data-view="create-quiz" onclick="app.navigate('create-quiz')">
+        <i data-lucide="sparkles"></i>
+        <span>Create</span>
+      </button>
+      <button class="mobile-nav-item" data-view="flashcards" onclick="app.navigate('flashcards')">
+        <i data-lucide="zap"></i>
+        <span>Cards</span>
+      </button>
+      <button class="mobile-nav-item" data-view="answer-writing" onclick="app.navigate('answer-writing')">
+        <i data-lucide="pen-tool"></i>
+        <span>Writing</span>
+      </button>
+      <button class="mobile-nav-item" data-view="study-notes" onclick="app.navigate('study-notes')">
+        <i data-lucide="book-open"></i>
+        <span>Notes</span>
+      </button>
+      <button class="mobile-nav-item" data-view="exam-alerts" onclick="app.navigate('exam-alerts')">
+        <i data-lucide="bell-ring"></i>
+        <span>Exams</span>
+      </button>
+      <button class="mobile-nav-item" data-view="tools" onclick="app.navigate('tools')">
+        <i data-lucide="wrench"></i>
+        <span>Tools</span>
+      </button>
+      <button class="mobile-nav-item" data-view="settings" onclick="app.navigate('settings')">
+        <i data-lucide="settings"></i>
+        <span>Settings</span>
+      </button>
+    </nav>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container"></div>
+
+    <!-- Reusable Confirmation Modal -->
+    <div id="confirmation-modal" class="modal-overlay">
+      <div class="modal-content" role="dialog" aria-modal="true" aria-labelledby="modal-confirm-title"
+        aria-describedby="modal-confirm-message">
+        <h3 id="modal-confirm-title" style="margin-bottom:0.75rem; font-size:1.25rem;">Confirm Action</h3>
+        <p id="modal-confirm-message" style="margin-bottom:1.5rem; color:var(--text-secondary); line-height:1.5;">
+          Are you sure you want to proceed?
+        </p>
+        <div style="display:flex; justify-content:flex-end; gap:0.75rem;">
+          <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
+          <button id="modal-confirm-btn" class="btn btn-danger">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Animated Multi-Step Generating Modal (Universal) -->
+    <div id="generating-overlay" class="generating-overlay">
+      <div class="generating-box">
+        <!-- Holographic Laser Scanner Beam -->
+        <div class="scanner-laser-beam"></div>
+
+        <!-- Floating Wisdom Sparks Particles -->
+        <div class="wisdom-spark-particles">
+          <div class="wisdom-spark"></div>
+          <div class="wisdom-spark"></div>
+          <div class="wisdom-spark"></div>
+          <div class="wisdom-spark"></div>
+        </div>
+
+        <!-- Triple Celestial Orbital Rings with 3D Hamsa Logo -->
+        <div class="cosmic-rings-wrapper">
+          <div class="cosmic-orbital-ring cosmic-ring-1"></div>
+          <div class="cosmic-orbital-ring cosmic-ring-2"></div>
+          <div class="cosmic-orbital-ring cosmic-ring-3"></div>
+          <div class="spinner-hamsa">
+            <img src="assets/icons/hamsa-logo-3d.png" alt="Hamsa" onerror="this.src='assets/icons/hamsa-logo.svg'"
+              style="width:100%;height:100%;object-fit:contain;">
+          </div>
+        </div>
+
+        <h3 id="generating-title" style="font-size:1.25rem;">Hamsa AI Ingestion in Progress...</h3>
+
+        <!-- Live Batch Tracking Card -->
+        <div id="batch-progress-card" class="batch-progress-card" style="display:none;">
+          <div class="batch-progress-header">
+            <span id="batch-status-badge" class="badge badge-primary">Batch 1 of 1</span>
+            <span id="batch-questions-count" class="batch-questions-count">0 / 10 MCQs Ready</span>
+          </div>
+          <div class="batch-progress-bar">
+            <div id="batch-progress-fill" class="batch-progress-fill" style="width: 0%;"></div>
+          </div>
+          <div id="batch-pills-container" class="batch-pills-row"></div>
+        </div>
+
+        <div class="step-progress-list">
+          <div class="step-progress-item" id="step-reading">
+            <i data-lucide="circle-dot"></i>
+            <span>Reading study material & scope...</span>
+          </div>
+          <div class="step-progress-item" id="step-extracting">
+            <i data-lucide="circle-dot"></i>
+            <span>Extracting study concepts...</span>
+          </div>
+          <div class="step-progress-item" id="step-formulating">
+            <i data-lucide="circle-dot"></i>
+            <span>Formulating high-yield MCQs...</span>
+          </div>
+          <div class="step-progress-item" id="step-crafting">
+            <i data-lucide="circle-dot"></i>
+            <span>Crafting answer key & explanations...</span>
+          </div>
+        </div>
+
+        <!-- Lets the user abandon a long or stuck AI request instead of
+             waiting out the full timeout with no way back. -->
+        <button id="generating-cancel-btn" class="btn btn-secondary btn-sm"
+          style="margin-top:1.25rem;" onclick="app.cancelGeneration()">
+          <i data-lucide="x-circle" style="width:14px;height:14px;"></i>
+          <span>Cancel generation</span>
+        </button>
+      </div>
+    </div>
+    <!-- Global Search Command Palette Modal -->
+    <div id="global-search-modal" class="global-search-backdrop" style="display:none;"
+      onclick="app.handleSearchBackdropClick(event)">
+      <div class="global-search-palette" onclick="event.stopPropagation()">
+        <div class="search-palette-header">
+          <div class="search-input-wrap">
+            <i data-lucide="search" class="search-palette-icon"></i>
+            <input type="text" id="global-search-input" placeholder="Search quizzes, questions, study notes, topics..."
+              autocomplete="off" spellcheck="false" oninput="app.handleSearchInput(event)"
+              onkeydown="app.handleSearchKeydown(event)">
+            <button id="search-clear-btn" class="search-clear-btn" onclick="app.clearGlobalSearch()"
+              style="display:none;" title="Clear search">
+              <i data-lucide="x" style="width:16px;height:16px;"></i>
+            </button>
+          </div>
+          <kbd class="palette-esc-badge" onclick="app.closeGlobalSearch()">ESC</kbd>
+        </div>
+
+        <!-- Filter Category Tabs -->
+        <div class="search-category-tabs" id="search-category-tabs">
+          <button class="search-tab-pill active" data-filter="ALL" onclick="app.setSearchCategoryFilter('ALL')">
+            <span>All Results</span>
+            <span class="search-tab-count" id="count-all">0</span>
+          </button>
+          <button class="search-tab-pill" data-filter="QUIZZES" onclick="app.setSearchCategoryFilter('QUIZZES')">
+            <i data-lucide="help-circle" style="width:13px;height:13px;"></i>
+            <span>Quizzes</span>
+            <span class="search-tab-count" id="count-quizzes">0</span>
+          </button>
+          <button class="search-tab-pill" data-filter="QUESTIONS" onclick="app.setSearchCategoryFilter('QUESTIONS')">
+            <i data-lucide="check-square" style="width:13px;height:13px;"></i>
+            <span>Questions</span>
+            <span class="search-tab-count" id="count-questions">0</span>
+          </button>
+          <button class="search-tab-pill" data-filter="NOTES" onclick="app.setSearchCategoryFilter('NOTES')">
+            <i data-lucide="book-open" style="width:13px;height:13px;"></i>
+            <span>Study Notes</span>
+            <span class="search-tab-count" id="count-notes">0</span>
+          </button>
+        </div>
+
+        <!-- Search Results List -->
+        <div class="search-palette-results" id="global-search-results">
+          <div class="search-empty-state">
+            <i data-lucide="compass" style="width:36px;height:36px;color:var(--color-primary-light);opacity:0.7;"></i>
+            <p style="font-weight:600;margin-top:0.5rem;color:var(--text-main);">Type to search across everything</p>
+            <span style="font-size:0.85rem;color:var(--text-muted);">Quizzes, questions, options, digital textbook notes
+              & chapters</span>
+          </div>
+        </div>
+
+        <!-- Search Palette Footer -->
+        <div class="search-palette-footer">
+          <div class="footer-key-hints">
+            <span><kbd>↑</kbd> <kbd>↓</kbd> Navigate</span>
+            <span><kbd>↵</kbd> Open</span>
+            <span><kbd>ESC</kbd> Close</span>
+          </div>
+          <div class="search-brand-credit">
+            <span style="font-weight:600; color:var(--color-primary-light);">Hamsa Vidya Instant Search</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====================================================================
+         MANDATORY FIRST-TIME STUDENT PROFILE GATEWAY MODAL
+         Non-dismissible until student provides complete academic & personal details.
+         ==================================================================== -->
+    <div id="mandatory-onboarding-modal" class="onboarding-modal-overlay" style="display:none;" role="dialog"
+      aria-modal="true" aria-labelledby="onboarding-modal-title">
+      <div class="onboarding-modal-container glass-panel">
+        <div class="onboarding-modal-header">
+          <div class="onboarding-brand-badge">
+            <span class="onboarding-dot-pulse"></span>
+            <span>MANDATORY STUDENT ONBOARDING</span>
+          </div>
+          <h2 id="onboarding-modal-title" class="onboarding-title">
+            Welcome to <span class="gradient-text">Hamsa Vidya</span>
+          </h2>
+          <p class="onboarding-subtitle">
+            To unlock your personal Learning Command Center and access real-time Central & State Government Exam Alerts
+            with 100% accurate eligibility matching, please initialize your student academic profile.
+          </p>
+        </div>
+
+        <form id="onboarding-profile-form" onsubmit="app.handleOnboardingSubmit(event)" novalidate>
+          <div class="onboarding-form-scroll">
+
+            <!-- SECTION 1: Personal & Category Details -->
+            <div class="onboarding-section-card">
+              <div class="section-card-title">
+                <i data-lucide="user-check" style="width:18px;height:18px;color:var(--color-primary-light);"></i>
+                <span>1. Personal Identity & Reservation Quota</span>
+              </div>
+              <div class="onboarding-grid-2">
+                <div class="onboarding-input-group" id="ob-group-name">
+                  <label for="ob-fullName">Full Name <span class="ob-required">*</span></label>
+                  <input type="text" id="ob-fullName" name="fullName" placeholder="e.g. Aditi Sharma" required
+                    autocomplete="name" oninput="app.validateOnboardingField('fullName')">
+                  <span class="ob-field-hint">This name will reflect across the entire website & report cards</span>
+                  <span class="ob-error-msg" id="ob-err-fullName"></span>
+                </div>
+
+                <div class="onboarding-input-group" id="ob-group-gender">
+                  <label for="ob-gender">Gender <span class="ob-required">*</span></label>
+                  <select id="ob-gender" name="gender" required>
+                    <option value="FEMALE">Female (Govt Fee Exemption applicable)</option>
+                    <option value="MALE" selected>Male</option>
+                    <option value="OTHER">Other</option>
+                  </select>
+                </div>
+
+                <div class="onboarding-input-group" id="ob-group-dob">
+                  <label for="ob-dob">Date of Birth <span class="ob-required">*</span></label>
+                  <input type="date" id="ob-dob" name="dateOfBirth" required
+                    onchange="app.validateOnboardingField('dateOfBirth')">
+                  <span class="ob-field-hint" id="ob-dob-age-calc">Age will be verified against official exam cutoff
+                    dates</span>
+                  <span class="ob-error-msg" id="ob-err-dateOfBirth"></span>
+                </div>
+
+                <div class="onboarding-input-group" id="ob-group-category">
+                  <label for="ob-category">Social Category <span class="ob-required">*</span></label>
+                  <select id="ob-category" name="category" required onchange="app.validateOnboardingField('category')">
+                    <option value="">-- Select Category --</option>
+                    <option value="GENERAL">General (UR - Unreserved)</option>
+                    <option value="OBC">OBC (Other Backward Classes — 3 Yrs Relaxation)</option>
+                    <option value="SC">SC (Scheduled Caste — 5 Yrs Relaxation + Fee Exemption)</option>
+                    <option value="ST">ST (Scheduled Tribe — 5 Yrs Relaxation + Fee Exemption)</option>
+                    <option value="EWS">EWS (Economically Weaker Section)</option>
+                  </select>
+                  <span class="ob-error-msg" id="ob-err-category"></span>
+                </div>
+
+                <div class="onboarding-input-group full-width" id="ob-group-domicile">
+                  <label for="ob-domicile">Home State / Domicile <span class="ob-required">*</span></label>
+                  <select id="ob-domicile" name="domicile" required onchange="app.validateOnboardingField('domicile')">
+                    <option value="">-- Select State for State Govt Exams & Quota --</option>
+                  </select>
+                  <span class="ob-field-hint">Filters State Govt jobs (UPPSC, BPSC, MPSC, DSSSB, KPSC, etc.)</span>
+                  <span class="ob-error-msg" id="ob-err-domicile"></span>
+                </div>
+              </div>
+            </div>
+
+            <!-- =============================================================
+                 SECTION 2: Education list
+
+                 One repeatable row per qualification instead of the old fixed
+                 trio of "10th %", "12th %" and a single "Highest Qualification"
+                 dropdown. That layout could not describe a real candidate: a
+                 10th-pass-only applicant had no way to finish the form, because
+                 both percentages were mandatory.
+
+                 Rows are rendered by app._renderEducationRows() into the list
+                 below. The engine's fields (tenthPercentage, twelfthPercentage,
+                 qualificationId, score) are DERIVED from these rows on save, so
+                 eligibility checking is unchanged.
+                 ============================================================= -->
+            <div class="onboarding-section-card" id="ob-group-education">
+              <div class="section-card-title">
+                <i data-lucide="graduation-cap" style="width:18px;height:18px;color:#FBBF24;"></i>
+                <span>2. Education &amp; Qualifications</span>
+                <span class="ob-section-badge" id="ob-education-count">0 added</span>
+              </div>
+
+              <p class="ob-section-note">
+                Add every qualification you have completed — 10th, 12th, ITI, Diploma, degree, post-graduation.
+                Exam eligibility is matched against the highest one, and 10th / 12th marks are read from
+                these rows when a notification asks for them.
+              </p>
+
+              <div class="ob-education-list" id="ob-education-list"></div>
+
+              <button type="button" class="ob-add-education" id="ob-add-education"
+                onclick="app.addEducationRow()">
+                <span class="ob-add-icon" aria-hidden="true">+</span>
+                <span>Add a qualification</span>
+              </button>
+
+              <span class="ob-error-msg" id="ob-err-education"></span>
+            </div>
+
+            <!-- SECTION 3: Special eligibility flags -->
+            <div class="onboarding-section-card">
+              <div class="section-card-title">
+                <i data-lucide="shield-check" style="width:18px;height:18px;color:var(--color-success);"></i>
+                <span>3. Special Eligibility Flags</span>
+              </div>
+
+              <div class="onboarding-special-checks">
+                <label class="ob-checkbox-card">
+                  <input type="checkbox" id="ob-hasBEd" name="hasBEd">
+                  <div class="ob-checkbox-content">
+                    <span class="ob-checkbox-title">B.Ed / D.El.Ed / Teaching Certified</span>
+                    <span class="ob-checkbox-sub">Unlocks Teacher recruitment exams (CTET, KVS, REET, SuperTET)</span>
+                  </div>
+                </label>
+                <label class="ob-checkbox-card">
+                  <input type="checkbox" id="ob-physicalFitness" name="physicalFitnessReady" checked>
+                  <div class="ob-checkbox-content">
+                    <span class="ob-checkbox-title">Physically Fit for Uniform Services</span>
+                    <span class="ob-checkbox-sub">Qualifies for Police, Defense, CRPF, CAPF & Railway RPF posts</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+          </div>
+
+          <!-- Onboarding Footer Actions -->
+          <div class="onboarding-modal-footer">
+            <div class="onboarding-trust-badge">
+              <i data-lucide="shield-check" style="width:16px;height:16px;color:var(--color-success);"></i>
+              <span>Saved locally in browser. 100% private & secure.</span>
+            </div>
+            <button type="submit" id="ob-submit-btn" class="btn btn-primary btn-lg onboarding-submit-btn">
+              <span>Save Academic Profile & Enter Dashboard</span>
+              <i data-lucide="arrow-right" style="width:18px;height:18px;"></i>
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Target Exam Selector Modal (आगामी सरकारी परीक्षाओं की लाइव सूची) -->
+    <div id="target-exam-modal" class="modal-overlay target-exam-modal-overlay" style="display:none;" onclick="if(event.target===this) window.aiAdvisorEngine.closeExamSelectorModal()">
+      <div class="target-exam-dialog glass-panel animate-scale-up" role="dialog" aria-modal="true" aria-labelledby="target-exam-modal-title">
+        <!-- Modal Header -->
+        <div class="target-exam-modal-header">
+          <div class="target-exam-header-left">
+            <div class="target-exam-header-icon">🎯</div>
+            <div>
+              <h3 id="target-exam-modal-title" class="target-exam-modal-heading">अपनी लक्ष्य परीक्षा चुनें (Select Your Target Exam)</h3>
+              <p class="target-exam-modal-subtext">Exam Tab से प्राप्त आगामी सरकारी परीक्षाओं की सूची (FreeJobAlert — Government Jobs)</p>
+            </div>
+          </div>
+          <button class="modal-close-btn" onclick="window.aiAdvisorEngine.closeExamSelectorModal()" title="Close (ESC)">
+            <i data-lucide="x" style="width:18px;height:18px;"></i>
+          </button>
+        </div>
+
+        <!-- Filter & Search Controls -->
+        <div class="target-exam-modal-toolbar">
+          <div class="exam-search-box">
+            <i data-lucide="search" style="width:16px;height:16px;color:var(--text-muted);"></i>
+            <input type="text" id="target-exam-search-input" placeholder="परीक्षा, विभाग या पद खोजें (Search UPSC, SSC, Railway, AIIMS, Banking...)" oninput="window.aiAdvisorEngine.filterExamModal(this.value)">
+          </div>
+          <div class="target-exam-category-chips" id="target-exam-category-chips">
+            <button class="target-cat-chip active" data-cat="ALL" onclick="window.aiAdvisorEngine.setCategoryFilter('ALL')">सभी (All)</button>
+            <button class="target-cat-chip" data-cat="CENTRAL" onclick="window.aiAdvisorEngine.setCategoryFilter('CENTRAL')">केंद्र सरकार (Central)</button>
+            <button class="target-cat-chip" data-cat="STATE" onclick="window.aiAdvisorEngine.setCategoryFilter('STATE')">राज्य सरकार (State)</button>
+            <button class="target-cat-chip" data-cat="BANK_RAIL" onclick="window.aiAdvisorEngine.setCategoryFilter('BANK_RAIL')">बैंकिंग व रेलवे</button>
+            <button class="target-cat-chip" data-cat="CIVIL_DEFENCE" onclick="window.aiAdvisorEngine.setCategoryFilter('CIVIL_DEFENCE')">UPSC व डिफेंस</button>
+          </div>
+        </div>
+
+        <!-- Scrollable Cards Grid Container -->
+        <div class="target-exam-modal-body" id="target-exam-modal-list">
+          <div class="exam-modal-loading-state">
+            <div class="spinner"></div>
+            <span>आगामी परीक्षाओं की लाइव सूची लोड हो रही है...</span>
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="target-exam-modal-footer">
+          <span class="target-exam-footer-count" id="target-exam-count-label">परीक्षाएं उपलब्ध</span>
+          <button class="btn btn-secondary btn-sm" onclick="window.aiAdvisorEngine.closeExamSelectorModal()">
+            <span>बंद करें (Close)</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Celebration Confetti Overlay Canvas -->
+    <canvas id="confetti-canvas" class="confetti-overlay"></canvas>
+
+    <!-- ==================================================================
+         PERSISTENT SITE FOOTER
+
+         Present in the app itself (after every view) so the social links live
+         alongside the product, not only on the login screen. Backends for
+         Instagram and X are not connected yet — clicks route through
+         authGate.handleSocialClick() and surface a toast rather than a broken
+         navigation.
+         ================================================================== -->
+    <footer id="hv-footer" class="hv-footer" aria-labelledby="hv-footer-label">
+      <span id="hv-footer-label" class="sr-only">Site footer</span>
+      <div class="hv-footer-social" aria-label="Follow Hamsa Vidya">
+        <a class="hv-social-link" href="#" data-social="instagram"
+          aria-label="Instagram (coming soon)"
+          onclick="window.authGate?.handleSocialClick(event, 'instagram')">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M12 2.2c3.2 0 3.58.01 4.85.07 1.17.05 1.8.25 2.23.41.56.22.96.48 1.38.9.42.42.68.82.9 1.38.16.42.36 1.06.41 2.23.06 1.27.07 1.65.07 4.85s-.01 3.58-.07 4.85c-.05 1.17-.25 1.8-.41 2.23-.22.56-.48.96-.9 1.38-.42.42-.82.68-1.38.9-.42.16-1.06.36-2.23.41-1.27.06-1.65.07-4.85.07s-3.58-.01-4.85-.07c-1.17-.05-1.8-.25-2.23-.41a3.7 3.7 0 0 1-1.38-.9 3.7 3.7 0 0 1-.9-1.38c-.16-.42-.36-1.06-.41-2.23C2.21 15.58 2.2 15.2 2.2 12s.01-3.58.07-4.85c.05-1.17.25-1.8.41-2.23.22-.56.48-.96.9-1.38.42-.42.82-.68 1.38-.9.42-.16 1.06-.36 2.23-.41C8.42 2.21 8.8 2.2 12 2.2Zm0 1.8c-3.15 0-3.5.01-4.74.07-1.02.05-1.57.22-1.94.36-.49.19-.83.42-1.2.79-.37.37-.6.71-.79 1.2-.14.37-.31.92-.36 1.94C3 8.5 3 8.85 3 12s0 3.5.07 4.74c.05 1.02.22 1.57.36 1.94.19.49.42.83.79 1.2.37.37.71.6 1.2.79.37.14.92.31 1.94.36 1.24.06 1.59.07 4.74.07s3.5-.01 4.74-.07c1.02-.05 1.57-.22 1.94-.36.49-.19.83-.42 1.2-.79.37-.37.6-.71.79-1.2.14-.37.31-.92.36-1.94.06-1.24.07-1.59.07-4.74s-.01-3.5-.07-4.74c-.05-1.02-.22-1.57-.36-1.94a3.2 3.2 0 0 0-.79-1.2 3.2 3.2 0 0 0-1.2-.79c-.37-.14-.92-.31-1.94-.36C15.5 4 15.15 4 12 4Zm0 3.05a4.95 4.95 0 1 1 0 9.9 4.95 4.95 0 0 1 0-9.9Zm0 1.8a3.15 3.15 0 1 0 0 6.3 3.15 3.15 0 0 0 0-6.3Zm5.15-2.03a1.16 1.16 0 1 1 0 2.32 1.16 1.16 0 0 1 0-2.32Z"/>
+          </svg>
+        </a>
+        <a class="hv-social-link" href="#" data-social="x"
+          aria-label="X, formerly Twitter (coming soon)"
+          onclick="window.authGate?.handleSocialClick(event, 'x')">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.834L1.254 2.25H8.08l4.713 6.231L18.244 2.25Zm-1.161 17.52h1.833L7.084 4.126H5.117L17.083 19.77Z"/>
+          </svg>
+        </a>
+      </div>
+      <p class="hv-footer-copy">
+        <strong>Hamsa Vidya</strong> — AI Wisdom &amp; Quiz Companion.
+        Your progress stays on this device.
+      </p>
+    </footer>
+  </div>
+
+  <!-- Application Modules -->
+  <script src="js/sanitizer.js"></script>
+  <script src="js/ui-utils.js"></script>
+  <script src="js/ai-client.js"></script>
+  <script src="js/audio-engine.js"></script>
+  <script src="js/db.js"></script>
+  <script src="js/pdf-extractor.js"></script>
+  <script src="js/pdf-generator.js"></script>
+  <script src="js/gemini-service.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/gurukul-wisdom.js"></script>
+  <script src="js/views/dashboard.js"></script>
+  <script src="js/views/create-quiz.js"></script>
+  <script src="js/views/study-notes.js"></script>
+  <script src="js/views/flashcards.js"></script>
+  <script src="js/views/quiz-player.js"></script>
+  <script src="js/views/quiz-result.js"></script>
+  <script src="js/views/library.js"></script>
+  <script src="js/views/quiz-history.js"></script>
+  <script src="js/views/tools.js"></script>
+  <script src="js/views/settings.js"></script>
+  <script src="js/exam-profile.js"></script>
+  <script src="js/eligibility-engine.js"></script>
+  <script src="js/exam-service.js"></script>
+  <script src="js/notification-summary-service.js"></script>
+  <script src="js/views/exam-alerts.js"></script>
+  <script src="js/answer-writing-service.js"></script>
+  <script src="js/views/answer-writing.js"></script>
+  <script src="js/ai-advisor.js"></script>
+  <script src="js/ai-teacher-service.js"></script>
+  <script src="js/views/ai-teacher.js"></script>
+
+  <!-- Auth gate MUST be parsed before app.js — the last line of app.js checks
+       `window.authGate` to decide whether to run `init()` immediately or wait
+       behind the login screen. -->
+  <script src="js/auth-gate.js"></script>
+  <script src="js/app.js"></script>
+</body>
+
+</html>

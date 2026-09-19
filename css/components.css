@@ -1,0 +1,19 @@
+/* ==========================================================================
+   components.css has been split into css/components/ for maintainability.
+
+   This file is intentionally empty. Do not add rules here — they would not
+   be loaded. index.html links the parts directly, in this order:
+
+     <link rel="stylesheet" href="css/components/01-base-and-header.css">
+     <link rel="stylesheet" href="css/components/02-dashboard.css">
+     <link rel="stylesheet" href="css/components/03-create-quiz.css">
+     <link rel="stylesheet" href="css/components/04-motion.css">
+     <link rel="stylesheet" href="css/components/05-study-notes.css">
+     <link rel="stylesheet" href="css/components/06-flashcards.css">
+     <link rel="stylesheet" href="css/components/07-global-search.css">
+     <link rel="stylesheet" href="css/components/08-doubt-solver.css">
+     <link rel="stylesheet" href="css/components/09-reading-themes.css">
+     <link rel="stylesheet" href="css/components/10-tools.css">
+
+   Order is significant: later parts override earlier ones.
+   ========================================================================== */

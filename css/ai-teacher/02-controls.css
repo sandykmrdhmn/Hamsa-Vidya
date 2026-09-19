@@ -1,0 +1,505 @@
+/* ==========================================================================
+   ai-teacher.css — part 02-controls.css
+   Controls matrix & action toolbar
+
+   Extracted from the original 4868-line ai-teacher.css
+   (source lines 624-1118).
+
+   ORDER MATTERS: these parts must stay linked in numeric order in
+   index.html. Later rules intentionally override earlier ones.
+   ========================================================================== */
+
+/* ==========================================================================
+/* ==========================================================================
+   CONTROLS MATRIX (Symmetrical 3-Card Balanced Grid with Distinct Boxed Buttons)
+   ========================================================================== */
+.teacher-controls-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.25rem;
+  margin-top: 1.35rem;
+  padding-top: 1.35rem;
+  border-top: 1px solid var(--border-color, #E2E8F0);
+}
+
+.control-box {
+  background: var(--bg-card, #FFFFFF);
+  border: 1.5px solid var(--border-color, #E2E8F0);
+  border-radius: var(--radius-xl, 16px);
+  padding: 1.15rem 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.03);
+  transition: all var(--transition-normal);
+}
+
+.control-box:hover {
+  border-color: var(--color-primary-light, #10B981);
+  box-shadow: 0 6px 22px rgba(16, 185, 129, 0.08);
+}
+
+.control-box-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px dashed var(--border-color, #E2E8F0);
+  padding-bottom: 0.55rem;
+}
+
+.control-box-title {
+  font-size: 0.82rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-primary, #0F172A);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.control-box-hint {
+  font-size: 0.74rem;
+  color: var(--text-muted, #64748B);
+  font-weight: 600;
+}
+
+/* 2x2 Grid for Language & Depth Options */
+.option-boxes-grid-2x2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+}
+
+/* Mode Grid: 2 Full-Width Stacked Option Boxes */
+.option-boxes-grid-mode {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
+}
+
+/* Individual Option Box Button (Tactile Box for Both Inactive & Active) */
+.option-box-btn {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  border: 1.5px solid #CBD5E1;
+  background: #FFFFFF;
+  color: #334155;
+  font-family: inherit;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+/* Dark mode styling for inactive box */
+[data-theme="dark"] .option-box-btn {
+  background: rgba(30, 41, 59, 0.65);
+  border-color: #334155;
+  color: #CBD5E1;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Hover state on inactive box */
+.option-box-btn:hover {
+  border-color: #10B981;
+  background: #F0FDF4;
+  color: #065F46;
+  transform: translateY(-1.5px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.14);
+}
+
+[data-theme="dark"] .option-box-btn:hover {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: #10B981;
+  color: #6EE7B7;
+}
+
+.opt-icon {
+  font-size: 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.opt-label {
+  letter-spacing: 0.01em;
+}
+
+/* ACTIVE (SELECTED) STATE: FULL 100% HIGHLIGHT COLOR COVERAGE */
+.option-box-btn.active {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%) !important;
+  border: 1.5px solid #047857 !important;
+  color: #FFFFFF !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4) !important;
+  transform: translateY(-1px);
+}
+
+.option-box-btn.active .opt-icon,
+.option-box-btn.active .opt-label,
+.option-box-btn.active strong,
+.option-box-btn.active small,
+.option-box-btn.active i {
+  color: #FFFFFF !important;
+}
+
+/* Active Exam Mode Box (Royal Indigo) */
+.option-box-btn.mode-exam-box.active {
+  background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%) !important;
+  border: 1.5px solid #4338CA !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4) !important;
+}
+
+/* Mode Button Inner Layout */
+.option-boxes-grid-mode .option-box-btn {
+  justify-content: flex-start;
+  padding: 0.6rem 1rem;
+}
+
+.mode-info {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex: 1;
+}
+
+.mode-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.mode-sub {
+  font-size: 0.72rem;
+  opacity: 0.85;
+  font-weight: 500;
+}
+
+/* Legacy Fallbacks if any code relies on old classnames */
+.segmented-control {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.6rem;
+}
+
+.segment-btn {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  border: 1.5px solid #CBD5E1;
+  background: #FFFFFF;
+  color: #334155;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.segment-btn:hover {
+  border-color: #10B981;
+  background: #F0FDF4;
+  color: #065F46;
+  transform: translateY(-1.5px);
+}
+
+.segment-btn.active {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%) !important;
+  border: 1.5px solid #047857 !important;
+  color: #FFFFFF !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4) !important;
+}
+
+.mode-toggle-pill {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.6rem;
+}
+
+.mode-pill-btn {
+  width: 100%;
+  min-height: 42px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 0.65rem;
+  padding: 0.6rem 1rem;
+  border-radius: 10px;
+  border: 1.5px solid #CBD5E1;
+  background: #FFFFFF;
+  color: #334155;
+  font-size: 0.86rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mode-pill-btn:hover {
+  border-color: #10B981;
+  background: #F0FDF4;
+  color: #065F46;
+  transform: translateY(-1.5px);
+}
+
+.mode-pill-btn.mode-student.active {
+  background: linear-gradient(135deg, #10B981 0%, #059669 100%) !important;
+  border: 1.5px solid #047857 !important;
+  color: #FFFFFF !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.4) !important;
+}
+
+.mode-pill-btn.mode-exam.active {
+  background: linear-gradient(135deg, #6366F1 0%, #4F46E5 100%) !important;
+  border: 1.5px solid #4338CA !important;
+  color: #FFFFFF !important;
+  font-weight: 700 !important;
+  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.4) !important;
+}
+
+@media (max-width: 980px) {
+  .teacher-controls-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ==========================================================================
+   INPUT ACTION TOOLBAR WITH TACTILE BOXED PILLS
+   ========================================================================== */
+.teacher-input-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 1.25rem;
+  padding-top: 1.15rem;
+  border-top: 1px solid var(--border-color, #E2E8F0);
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.input-media-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.media-upload-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.58rem 1rem;
+  border-radius: 10px;
+  border: 1.5px solid #CBD5E1;
+  background: #FFFFFF;
+  color: #334155;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+[data-theme="dark"] .media-upload-pill {
+  background: rgba(30, 41, 59, 0.7);
+  border-color: #334155;
+  color: #CBD5E1;
+}
+
+.media-upload-pill:hover {
+  background: #F0FDF4;
+  color: #047857;
+  border-color: #10B981;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.15);
+  transform: translateY(-2px);
+}
+
+[data-theme="dark"] .media-upload-pill:hover {
+  background: rgba(16, 185, 129, 0.15);
+  border-color: #10B981;
+  color: #6EE7B7;
+}
+
+.media-upload-pill:hover i {
+  transform: rotate(-12deg) scale(1.15);
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.media-upload-pill:active {
+  transform: translateY(0) scale(0.96);
+}
+
+.media-upload-pill.pill-clear:hover {
+  color: #DC2626;
+  background: #FEF2F2;
+  border-color: #EF4444;
+  box-shadow: 0 4px 14px rgba(239, 68, 68, 0.2);
+}
+
+.media-upload-pill.active-recording {
+  background: #FEF2F2 !important;
+  border-color: #EF4444 !important;
+  color: #DC2626 !important;
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.4) !important;
+  animation: voiceRecordingPulse 1.4s infinite;
+}
+
+@keyframes voiceRecordingPulse {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 10px rgba(239, 68, 68, 0.3); }
+  50% { transform: scale(1.04); box-shadow: 0 0 20px rgba(239, 68, 68, 0.6); }
+}
+
+.input-submit-buttons {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.submit-shortcut-hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.submit-shortcut-hint kbd {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-family-mono);
+  font-size: 0.76rem;
+  color: var(--text-secondary);
+}
+
+/* Primary Submit Button with Live Laser Sweep & Ambient Aura */
+.explain-submit-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.78rem 1.95rem;
+  border-radius: var(--radius-full);
+  background: linear-gradient(135deg, #059669 0%, #10B981 35%, #4F46E5 100%);
+  color: #ffffff;
+  font-size: 0.96rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  border: none;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 18px var(--color-primary-glow);
+  animation: submitBreathingPulse 3.5s ease-in-out infinite alternate;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+@keyframes submitBreathingPulse {
+  0% { box-shadow: 0 4px 18px rgba(16, 185, 129, 0.45); }
+  100% { box-shadow: 0 6px 24px rgba(79, 70, 229, 0.6); }
+}
+
+/* Continuous live diagonal laser beam sweep */
+.explain-submit-btn::before {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -100%;
+  width: 50%;
+  height: 200%;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+  transform: rotate(25deg);
+  animation: submitLaserSweep 2.8s infinite ease-in-out;
+  pointer-events: none;
+}
+
+@keyframes submitLaserSweep {
+  0% { left: -100%; }
+  45% { left: 150%; }
+  100% { left: 150%; }
+}
+
+.explain-submit-btn:hover:not(:disabled) {
+  transform: translateY(-3px) scale(1.025);
+  box-shadow: 0 10px 30px rgba(16, 185, 129, 0.55), 0 0 20px rgba(99, 102, 241, 0.4);
+}
+
+.explain-submit-btn:hover:not(:disabled) i {
+  transform: rotate(25deg) scale(1.2);
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.explain-submit-btn:active:not(:disabled) {
+  transform: translateY(0) scale(0.97);
+}
+
+.explain-submit-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Quick Question Inspiration Chips */
+.quick-inspiration-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.inspiration-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.inspiration-chips-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.inspiration-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.48rem 0.95rem;
+  border-radius: var(--radius-full);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  font-size: 0.83rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  transition: all var(--transition-fast);
+}
+
+.inspiration-chip:hover {
+  background: var(--bg-card);
+  color: var(--color-primary-light);
+  border-color: var(--color-primary-light);
+  box-shadow: 0 4px 14px var(--color-primary-glow);
+  transform: translateY(-2px);
+}

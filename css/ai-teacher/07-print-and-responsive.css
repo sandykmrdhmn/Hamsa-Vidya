@@ -1,0 +1,184 @@
+/* ==========================================================================
+   ai-teacher.css — part 07-print-and-responsive.css
+   Print styles & responsive rules
+
+   Extracted from the original 4868-line ai-teacher.css
+   (source lines 4695-4868).
+
+   ORDER MATTERS: these parts must stay linked in numeric order in
+   index.html. Later rules intentionally override earlier ones.
+   ========================================================================== */
+
+/* ==========================================================================
+   PRINT STYLES (Clean, Compact, No 10-Page Bloat, Natural Flow)
+   ========================================================================== */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 10mm 12mm 10mm 12mm;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  .site-header,
+  .teacher-hero,
+  .teacher-tabs-nav,
+  .teacher-input-card,
+  .quick-inspiration-section,
+  .teacher-actions-bar,
+  .mobile-bottom-nav,
+  .book-mini-tool-btn,
+  .pq-show-answer-btn,
+  .followup-book-card,
+  .diagram-toolbar {
+    display: none !important;
+  }
+
+  #view-ai-teacher,
+  #view-ai-teacher .teacher-response-view,
+  #view-ai-teacher .teacher-book-folio,
+  #view-ai-teacher .teacher-book-folio * {
+    visibility: visible;
+  }
+
+  #view-ai-teacher {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #FFFFFF !important;
+  }
+
+  .teacher-book-folio {
+    box-shadow: none !important;
+    border: none !important;
+    border-left: 3px solid #D97706 !important;
+    background: #FFFFFF !important;
+    color: #1A1A1A !important;
+    padding: 0 !important;
+    width: 100% !important;
+  }
+
+  .book-spine-ribbon {
+    display: none !important;
+  }
+
+  .book-query-banner {
+    background: #F8FAFC !important;
+    color: #0F172A !important;
+    border: 1px solid #CBD5E1 !important;
+    box-shadow: none !important;
+    padding: 10px 14px !important;
+    margin-bottom: 14px !important;
+  }
+
+  .query-banner-title {
+    color: #0F172A !important;
+    font-size: 13pt !important;
+  }
+
+  .book-chapter {
+    page-break-inside: auto;
+    margin-bottom: 16px !important;
+  }
+
+  /* Avoid page breaks inside small atomic blocks */
+  .teacher-takeaway-box,
+  .math-board-block,
+  .mnemonic-badge,
+  .flowchart-book-card,
+  .diagram-book-card,
+  .comparison-book-card {
+    page-break-inside: avoid;
+  }
+
+  .practice-question-item {
+    page-break-inside: avoid;
+    margin-bottom: 8px !important;
+  }
+
+  .pq-answer-box {
+    display: block !important;
+    background: #F0FDF4 !important;
+    border: 1px solid #BBF7D0 !important;
+    color: #166534 !important;
+    padding: 6px 10px !important;
+  }
+
+  .math-board-block {
+    background: #F8FAFC !important;
+    color: #0F172A !important;
+    border: 1px solid #CBD5E1 !important;
+    box-shadow: none !important;
+  }
+
+  .math-formula-callout {
+    background: #F1F5F9 !important;
+    border: 1px solid #CBD5E1 !important;
+    color: #0F172A !important;
+  }
+
+  .math-formula-display {
+    color: #0F172A !important;
+  }
+
+  .math-steps-table td {
+    border-bottom: 1px solid #E2E8F0 !important;
+    color: #1E293B !important;
+  }
+
+  .math-step-col {
+    color: #0F172A !important;
+  }
+
+  .math-final-banner {
+    background: #F0FDF4 !important;
+    border: 1px solid #86EFAC !important;
+  }
+
+  .math-final-val {
+    color: #166534 !important;
+  }
+}
+
+/* ==========================================================================
+   RESPONSIVE DESIGN (Mobile First)
+   ========================================================================== */
+@media (max-width: 768px) {
+  .ai-teacher-container {
+    padding: 1rem 0.75rem 5rem;
+    gap: 1.25rem;
+  }
+  .teacher-book-folio {
+    padding: 1.5rem 1.25rem 2.25rem 1.5rem;
+  }
+  .teacher-hero-title {
+    font-size: 1.75rem;
+  }
+  .teacher-input-card {
+    padding: 1.25rem;
+  }
+  .teacher-controls-grid {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+  .teacher-actions-bar {
+    border-radius: var(--radius-lg);
+    bottom: 4.5rem; /* above mobile nav */
+    padding: 0.5rem 0.75rem;
+  }
+  .math-given-find-grid {
+    grid-template-columns: 1fr;
+  }
+  .flowchart-container {
+    flex-direction: column;
+  }
+  .flowchart-arrow {
+    transform: rotate(90deg);
+  }
+}
+

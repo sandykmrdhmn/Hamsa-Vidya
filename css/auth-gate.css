@@ -1,0 +1,446 @@
+/* ==========================================================================
+   HAMSA VIDYA — Auth Gate (login screen shown before the app boots)
+   ==========================================================================
+
+   WHY THIS FILE EXISTS
+   The app must not render for an unauthenticated visitor. A user should see a
+   welcome screen, choose Google (backend not wired yet, so it just tells them
+   so) or Guest, and only then enter the SPA. Doing that inside a view section
+   would flash the dashboard on first paint and inherit the module tab rail
+   we do not want to show yet.
+
+   SO THE GATE IS A SEPARATE LAYER
+   `#auth-gate` is `position: fixed; inset: 0` and sits OUTSIDE `#app-root`,
+   above every other layer (`z-index: 100000`). `#app-root` is hidden until the
+   user chooses, so no view is instantiated behind the gate. Once dismissed, it
+   is `display: none` and never seen again in this session.
+
+   RE-USE OF DASHBOARD MASTHEAD CLASSES
+   The wordmark reuses `.dash-mast-title`, `.dash-mast-en`, `.dash-mast-hi`,
+   `.dash-mast-aurora`, `.dm-rays`, `.dm-orb-*` from css/dashboard.css. Those
+   selectors are unscoped, so they work anywhere in the document. Rewriting the
+   whole animation stack here would duplicate ~140 lines and drift the moment
+   the dashboard version was touched.
+
+   The rules below only:
+     — size the wordmark bigger than the dashboard's (this is the largest thing
+       on the screen)
+     — hold the ambient orbs against a full-viewport panel instead of a card
+     — style the two call-to-action buttons
+     — style the persistent social footer
+
+   LOAD ORDER
+   After css/dashboard.css (whose classes we override sizing on) and
+   css/onboarding.css (so the gate's own overlay can outrank the onboarding
+   modal's if both were ever shown together), before css/header.css and
+   css/layout.css.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. THE GATE PANEL
+   ========================================================================== */
+
+.auth-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: clamp(1.5rem, 4vh, 2.5rem);
+  padding: clamp(1.5rem, 4vh, 3rem) clamp(1rem, 4vw, 2.5rem);
+
+  /* Own aurora backdrop so the ambient layer beneath is fully covered. */
+  background:
+    radial-gradient(ellipse 90% 60% at 50% 0%,
+      rgba(var(--color-primary-rgb), 0.28) 0%, transparent 60%),
+    radial-gradient(ellipse 90% 60% at 50% 100%,
+      rgba(245, 158, 11, 0.14) 0%, transparent 62%),
+    var(--bg-surface, #060814);
+
+  /* Aurora, rays and orbs all use `position: absolute` with `z-index: -1`, so
+     the panel must be its own stacking context or they punch through. */
+  isolation: isolate;
+  overflow: hidden;
+
+  /* Entrance. Held with `both` only for the fade — the transform final state
+     is identical to the natural state, matching the pattern layout.css enforces
+     for `.view-section.active`. */
+  animation: authGateFadeIn 500ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+@keyframes authGateFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+/* Applied by JS when the user chooses guest or Google. Not a `display: none`
+   toggle — that would kill the exit transition. */
+.auth-gate.is-leaving {
+  animation: authGateFadeOut 260ms ease-out forwards;
+  pointer-events: none;
+}
+
+@keyframes authGateFadeOut {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(1.02); }
+}
+
+/* The permanent hide, set once the transition finishes. `display: none` also
+   drops the whole subtree from the accessibility tree and the tab order. */
+.auth-gate[hidden] {
+  display: none;
+}
+
+
+/* ==========================================================================
+   2. WORDMARK OVERRIDES
+
+   Reused classes: keep the shine, the aurora and the animation stack from
+   css/dashboard.css. Only override what has to change on a login screen, which
+   is size (this is now the single largest thing on the visible page) and
+   spacing (no shloka below, so the tagline sits tighter).
+   ========================================================================== */
+
+.auth-gate .dash-mast-inner {
+  position: relative;
+  z-index: 1;
+  max-width: min(920px, 92vw);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+}
+
+.auth-gate .dash-mast-en {
+  font-size: clamp(2.75rem, 11vw, 7.5rem);
+}
+
+.auth-gate .dash-mast-hi {
+  font-size: clamp(1.85rem, 7.2vw, 5rem);
+}
+
+.auth-gate .dash-mast-tagline {
+  max-width: 46ch;
+  font-size: clamp(0.9rem, 2vw, 1.05rem);
+}
+
+
+/* ==========================================================================
+   3. LOGIN CARD
+
+   Two vertically stacked buttons — Google (disabled visual, backend not wired)
+   and Guest (the real path). Big enough to be the primary target below the
+   wordmark; not so big that it competes with the wordmark for attention.
+   ========================================================================== */
+
+.auth-card {
+  position: relative;
+  z-index: 1;
+  width: min(420px, 92vw);
+  padding: clamp(1.4rem, 3vw, 2rem);
+  border-radius: var(--radius-2xl);
+  border: 1px solid rgba(var(--color-primary-rgb), 0.22);
+  background: var(--glass-card);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  box-shadow: var(--shadow-xl), var(--specular-highlight, 0 0 0 0 transparent);
+
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+
+  /* Same entrance envelope as the wordmark lines, offset so it lands after
+     the name has landed. */
+  animation: authGateRise 700ms cubic-bezier(0.16, 1, 0.3, 1) 380ms both;
+}
+
+@keyframes authGateRise {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.auth-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.65rem;
+  width: 100%;
+  padding: 0.9rem 1.1rem;
+  border-radius: var(--radius-lg);
+  font-size: 0.98rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+  min-height: 48px;                          /* WCAG 2.5.5 comfortable target */
+  border: 1px solid transparent;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+}
+
+.auth-btn:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+/* Google button — no backend behind it yet. Styled to look accurate (white
+   surface, real logo) so it is credible when the wiring lands, but a badge
+   makes it obvious this path is not live. Click routes to a toast, never a
+   redirect that would 404. */
+.auth-btn-google {
+  background: #FFFFFF;
+  color: #1F1F1F;
+  border-color: rgba(0, 0, 0, 0.14);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.auth-btn-google:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.22);
+}
+
+.auth-btn-google:active {
+  transform: translateY(0);
+}
+
+.auth-btn-google .auth-btn-icon {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.auth-btn-badge {
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  border-radius: var(--radius-full);
+  background: rgba(245, 158, 11, 0.18);
+  color: #B45309;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+/* Guest button — this is the primary CTA today. */
+.auth-btn-guest {
+  background: linear-gradient(100deg,
+    var(--color-primary) 0%,
+    var(--color-primary-light) 100%);
+  color: #FFFFFF;
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    0 6px 20px rgba(var(--color-primary-rgb), 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.auth-btn-guest:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 28px rgba(var(--color-primary-rgb), 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24);
+}
+
+.auth-btn-guest:active {
+  transform: translateY(0);
+}
+
+.auth-btn-guest .auth-btn-icon {
+  width: 18px;
+  height: 18px;
+}
+
+.auth-separator {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin: 0.15rem 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.auth-separator::before,
+.auth-separator::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    var(--border-subtle) 40%,
+    var(--border-subtle) 60%,
+    transparent 100%);
+}
+
+.auth-footnote {
+  margin: 0.35rem 0 0;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.auth-footnote a {
+  color: var(--color-primary-light);
+  text-decoration: none;
+  border-bottom: 1px dashed rgba(var(--color-primary-rgb), 0.5);
+}
+
+.auth-footnote a:hover {
+  border-bottom-style: solid;
+}
+
+
+/* ==========================================================================
+   4. SOCIAL FOOTER
+
+   Present in two places: pinned at the bottom of the auth gate as a small
+   `.auth-social-row`, and as a full-width `<footer id="hv-footer">` after
+   `.main-content` in the app. Both use `.hv-social-link` for the icon styling
+   so the two hosts stay visually in sync.
+
+   The icons are `data-social` attributes rather than files: two inline SVGs
+   are 400 bytes each and avoid an extra network round-trip on first paint. If
+   backends are wired later the `href` becomes the profile URL — until then it
+   is `#` and a click surfaces a toast.
+   ========================================================================== */
+
+.auth-social-row {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+  animation: authGateRise 700ms cubic-bezier(0.16, 1, 0.3, 1) 560ms both;
+}
+
+.hv-footer {
+  border-top: 1px solid var(--border-subtle);
+  padding: 1.75rem clamp(1rem, 4vw, 2.5rem) 2rem;
+  margin-top: 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.9rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.hv-footer-social {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.hv-footer-copy {
+  text-align: center;
+  line-height: 1.55;
+  max-width: 60ch;
+}
+
+.hv-footer-copy strong {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+
+.hv-social-link {
+  --dot: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--dot);
+  height: var(--dot);
+  border-radius: 50%;
+  border: 1px solid rgba(var(--color-primary-rgb), 0.22);
+  background: var(--glass-card);
+  color: var(--text-secondary);
+  text-decoration: none;
+  transition: transform 0.2s ease, background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+
+.hv-social-link:hover,
+.hv-social-link:focus-visible {
+  transform: translateY(-2px) scale(1.05);
+  color: #FFFFFF;
+  border-color: rgba(var(--color-primary-rgb), 0.55);
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.14), transparent 60%),
+    linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%);
+}
+
+.hv-social-link:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 3px;
+}
+
+.hv-social-link svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+  pointer-events: none;
+}
+
+/* Instagram has a signature gradient. On hover we adopt it so the button
+   reads as "Instagram" even in a small row. */
+.hv-social-link[data-social="instagram"]:hover,
+.hv-social-link[data-social="instagram"]:focus-visible {
+  background: linear-gradient(45deg,
+    #F58529 0%,
+    #DD2A7B 45%,
+    #8134AF 75%,
+    #515BD4 100%);
+  border-color: rgba(255, 255, 255, 0.35);
+}
+
+
+/* ==========================================================================
+   5. RESPONSIVE + MOTION
+
+   The dashboard wordmark's own responsive rules kick in below 720px
+   (css/dashboard.css:2085+), and reused classes inherit them. Only the parts
+   unique to the gate need their own breakpoint.
+   ========================================================================== */
+
+@media (max-width: 560px) {
+  .auth-gate {
+    justify-content: flex-start;
+    padding-top: 3rem;
+    gap: 1.25rem;
+  }
+
+  .auth-card {
+    padding: 1.25rem;
+  }
+
+  .auth-btn {
+    padding: 0.8rem 1rem;
+    font-size: 0.92rem;
+  }
+
+  .hv-footer {
+    padding: 1.25rem 1rem 1.5rem;
+    margin-top: 2rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-gate,
+  .auth-gate.is-leaving,
+  .auth-card,
+  .auth-social-row,
+  .auth-btn {
+    animation: none;
+    transition: none;
+  }
+}

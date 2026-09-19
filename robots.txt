@@ -1,0 +1,15 @@
+# HAMSA VIDYA (हंस विद्या) — Robots.txt
+User-agent: *
+Allow: /
+
+# Application internals — no value to crawlers.
+Disallow: /assets/vendor/
+Disallow: /js/
+Disallow: /css/
+Disallow: /api/
+
+# NOTE FOR DEPLOYMENT: the Sitemap directive must be an ABSOLUTE URL per the
+# robots.txt spec — crawlers ignore a relative path. Replace the host below with
+# the real domain when this is deployed:
+#   Sitemap: https://your-domain.example/sitemap.xml
+Sitemap: /sitemap.xml

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  HAMSA VIDYA (हंस विद्या) — Sitemap
+
+  This is a single-page application that routes with hash fragments
+  (#create-quiz, #ai-teacher, ...). Search engines treat a URL fragment as part
+  of the same document, so listing them here would add no indexable pages.
+  Only the application entry point is listed.
+
+  FOR DEPLOYMENT: <loc> must be an absolute URL. Replace the placeholder host
+  with the real domain, and update <lastmod> on release.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url>
+    <loc>https://your-domain.example/</loc>
+    <lastmod>2026-09-19</lastmod>
+    <changefreq>weekly</changefreq>
+    <priority>1.0</priority>
+  </url>
+</urlset>

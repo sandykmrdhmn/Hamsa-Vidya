@@ -1,0 +1,236 @@
+/* ==========================================================================
+   HAMSA VIDYA (हंस विद्या) — Page Width System
+   ==========================================================================
+
+   THE PROBLEM THIS FIXES
+   Zooming out made some tabs stretch edge to edge while others stayed put,
+   because every view had invented its own width:
+
+     .dash                    1480px   centred
+     .aw-container            1720px   centred
+     .ai-teacher-container    1200px   centred
+     .tools-studio-wrapper    1440px   centred
+     .create-quiz-container    100%    full bleed
+     .study-vault-container    100%    full bleed
+     .settings-container       100%    full bleed
+     .quiz-player-container    100%    full bleed
+     library / history /
+     flashcards               inline `max-width:100%`
+     exam-alerts              no wrapper at all
+
+   So four views had gutters at four different widths, five ran to the window
+   edge, and one had nothing holding it at all. Zooming out widens the viewport
+   in CSS pixels, so the full-bleed views kept growing — auto-fit grids spawned
+   more and more columns and cards stretched — while the capped ones did not.
+   That difference is what read as "stretching".
+
+   THE FIX
+   One number, `--page-max`, for the whole app. It is applied to `.main-content`
+   so it covers even a view with no wrapper of its own, and then every per-view
+   wrapper is released to 100% so it fills that shared column instead of
+   competing with it. The header and sub-nav are aligned to the same column, so
+   the top chrome lines up with the page content the way it does on any ordinary
+   site.
+
+   DELIBERATE EXCEPTIONS
+   Narrow, single-purpose reading columns keep their own measure. They are not
+   part of the bug — they never stretched, and widening them would make long
+   text harder to read:
+
+     .teacher-book-folio   generated lesson prose
+     .result-container     the quiz report
+
+   Both are centred inside the shared column, so they still feel like the same
+   page, just with a tighter measure.
+
+   LOAD ORDER
+   After every per-view stylesheet, so these rules win over the widths above.
+   Before responsive.css, so the mobile padding overrides there still apply.
+   ========================================================================== */
+
+
+/* ==========================================================================
+   1. THE SHARED COLUMN
+   ========================================================================== */
+
+:root {
+  /* Wide enough for the dashboard's four-up grids and the exam tables, narrow
+     enough that a 4K window or a zoomed-out viewport does not turn every row
+     into an unreadable line. */
+  --page-max: 1560px;
+
+  /* Fluid gutter. Scales with the viewport instead of holding a fixed 2.5rem,
+     which is what makes zooming feel proportional rather than abrupt. */
+  --page-gutter: clamp(1rem, 2.5vw, 2.5rem);
+}
+
+/* The single constraint. Everything a view renders lives inside this, so a view
+   that forgets to wrap its own markup is still held. */
+.main-content {
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
+}
+
+/* Top chrome aligned to the same column so the logo and tabs sit above the
+   content rather than floating out at the window edges. */
+.header-inner,
+.subnav-container {
+  max-width: var(--page-max);
+  margin-inline: auto;
+  padding-inline: var(--page-gutter);
+}
+
+
+/* ==========================================================================
+   2. RELEASE THE PER-VIEW WIDTHS
+
+   These selectors are the top-level wrapper of each view. Most of them live in
+   byte-frozen stylesheets (css/components/*), which is why they are overridden
+   here rather than edited in place.
+
+   `width: 100%` matters as much as `max-width`: several of these are flex or
+   grid children, which shrink-to-fit without it.
+   ========================================================================== */
+
+.dash,                      /* was 1480px — css/dashboard.css */
+.ai-teacher-container,      /* was 1200px — css/ai-teacher/01-hero-and-input.css */
+.aw-container,              /* was 1720px — css/answer-writing.css */
+.tools-studio-wrapper,      /* was 1440px — css/components/10-tools.css */
+.create-quiz-container,     /* was 100%   — css/components/03-create-quiz.css */
+.study-vault-container,     /* was 100%   — css/components/05-study-notes.css */
+.settings-container,        /* was 100%   — css/quiz.css */
+.quiz-player-container,     /* was 100%   — css/quiz.css */
+.page-column {              /* new: replaces three inline max-width wrappers */
+  width: 100%;
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+/* The generic wrapper the three previously inline-styled views now use. Their
+   old inline `style="max-width:100%"` could not be overridden from a
+   stylesheet at all, which is why it had to become a class. */
+.page-column {
+  display: flex;
+  flex-direction: column;
+  gap: 1.75rem;
+}
+
+
+/* ==========================================================================
+   3. READING MEASURES
+
+   Long-form text needs a tighter column than the page does. Without this, the
+   AI Teacher lesson would inherit the full 1560px and run ~180 characters per
+   line; it previously got its measure by accident, from the 1200px container
+   that section 2 has now released.
+   ========================================================================== */
+
+.teacher-book-folio {
+  max-width: 1100px;
+  margin-inline: auto;
+}
+
+/* The quiz report keeps its own narrow column (css/quiz.css:491). Restated here
+   only so the next person sees it is intentional and not an oversight. */
+.result-container {
+  margin-inline: auto;
+}
+
+
+/* ==========================================================================
+   4. OVERFLOW GUARDS
+   (section 5 covers fixed-position overlays, section 6 wide viewports)
+
+   A single element wider than the column reintroduces a horizontal scrollbar at
+   any zoom level, which looks exactly like the stretching this file fixes.
+   ========================================================================== */
+
+/* Wide data tables already scroll inside their own box (css/exam-alerts.css:411,
+   css/ai-teacher/04-folio.css:958). They only needed a width cap: without one,
+   `overflow-x: auto` on a shrink-to-fit box never actually triggers, and the
+   table pushes the page instead. */
+.ea-table-wrapper,
+.comparison-table-wrapper {
+  max-width: 100%;
+}
+
+/* Media and embedded SVG never exceed their container. */
+.main-content img,
+.main-content svg,
+.main-content canvas,
+.main-content video {
+  max-width: 100%;
+}
+
+/* Grid and flex children default to min-content width, which lets a long
+   unbroken string (a URL, a PDF filename) force the whole track wider. */
+.dash-primary-grid > *,
+.dash-secondary-grid > *,
+.dash-launchpad > *,
+.charts-grid > *,
+.vhero-inner > * {
+  min-width: 0;
+}
+
+
+/* ==========================================================================
+   5. FIXED-POSITION ESCAPES
+
+   `css/components/04-motion.css` gives every view its entrance animation:
+
+     .view-section.active { animation: viewEntranceFade 0.42s ... both; }
+
+   `both` is `animation-fill-mode: both`, so the final keyframe — which includes
+   `transform: translateY(0) scale(1)` — is retained forever after the 0.42s
+   animation ends. A non-`none` transform makes the element the containing block
+   for every `position: fixed` descendant, and a stacking context besides. So
+   inside any view, `position: fixed` silently stopped meaning "the viewport"
+   and started meaning "this view's padding box".
+
+   That was invisible while `.main-content` ran the full width of the window.
+   Section 1 capped it at `--page-max`, and from then on the two differed by the
+   centring margin — which is exactly how the quiz Question Palette, parked at
+   `right: -420px`, ended up visible in the right-hand gutter as a stray empty
+   panel. Six other overlays had the quieter version of the same bug: an
+   `inset: 0` backdrop that covered the content column but not the header, and
+   `z-index: 1050` drawers trapped under a `z-index: 100` header because their
+   stacking context was the view section rather than the root.
+
+   The fix is to stop retaining the transform. The animation's end state is
+   identical to the element's natural state (opacity 1, no transform), so
+   dropping the fill mode changes nothing visually — it only releases the
+   containing block once the entrance has finished.
+   ========================================================================== */
+
+.view-section.active {
+  animation-fill-mode: none;
+}
+
+
+/* ==========================================================================
+   6. WIDE VIEWPORTS
+
+   Beyond the column width the page is already centred, so all that is left is
+   to stop the gutter growing without limit.
+   ========================================================================== */
+
+@media (min-width: 1700px) {
+  :root {
+    --page-gutter: 2.5rem;
+  }
+}
+
+/* Print: no column, no gutter — the paper defines the measure. */
+@media print {
+  .main-content,
+  .header-inner,
+  .subnav-container {
+    max-width: none;
+    padding-inline: 0;
+  }
+
+  .teacher-book-folio {
+    max-width: none;
+  }
+}

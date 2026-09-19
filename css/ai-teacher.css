@@ -1,0 +1,16 @@
+/* ==========================================================================
+   ai-teacher.css has been split into css/ai-teacher/ for maintainability.
+
+   This file is intentionally empty. Do not add rules here — they would not
+   be loaded. index.html links the parts directly, in this order:
+
+     <link rel="stylesheet" href="css/ai-teacher/01-hero-and-input.css">
+     <link rel="stylesheet" href="css/ai-teacher/02-controls.css">
+     <link rel="stylesheet" href="css/ai-teacher/03-loading.css">
+     <link rel="stylesheet" href="css/ai-teacher/04-folio.css">
+     <link rel="stylesheet" href="css/ai-teacher/05-toolbar-and-chat.css">
+     <link rel="stylesheet" href="css/ai-teacher/06-manuscript.css">
+     <link rel="stylesheet" href="css/ai-teacher/07-print-and-responsive.css">
+
+   Order is significant: later parts override earlier ones.
+   ========================================================================== */

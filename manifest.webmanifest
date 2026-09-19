@@ -1,0 +1,56 @@
+{
+  "name": "HAMSA VIDYA (हंस विद्या) — AI Wisdom & Quiz Companion",
+  "short_name": "Hamsa Vidya",
+  "description": "AI-powered MCQ quiz generator and study companion for UPSC, SSC, Banking and state exams. Generate quizzes from PDFs, practise with negative marking, and revise with spaced-repetition flashcards.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#07090E",
+  "theme_color": "#4F46E5",
+  "lang": "en-IN",
+  "dir": "ltr",
+  "categories": ["education", "productivity"],
+  "icons": [
+    {
+      "src": "assets/icons/hamsa-logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/hamsa-logo-3d.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/icons/logo-royal-oled.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Create Quiz",
+      "short_name": "Create",
+      "url": "./index.html#create-quiz"
+    },
+    {
+      "name": "AI Teacher",
+      "short_name": "Teacher",
+      "url": "./index.html#ai-teacher"
+    },
+    {
+      "name": "Flashcards",
+      "short_name": "Cards",
+      "url": "./index.html#flashcards"
+    },
+    {
+      "name": "Exam Alerts",
+      "short_name": "Exams",
+      "url": "./index.html#exam-alerts"
+    }
+  ]
+}

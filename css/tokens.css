@@ -1,0 +1,449 @@
+/* HAMSA VIDYA (हंस विद्या) — Luxury Design Tokens & Dynamic Themes */
+
+:root {
+  /* Default Font Scale */
+  --font-scale: 1.0;
+
+  /* Interactive Spotlight Cursor Coordinates */
+  --mouse-x: 50%;
+  --mouse-y: 50%;
+
+  /* Typography Defaults */
+  --font-family-display: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-body: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-family-hindi: 'Noto Sans Devanagari', 'Inter', sans-serif;
+  --font-family-mono: 'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Wisdom Gold Accents (Luxury Divine Knowledge) */
+  --color-gold: #F59E0B;
+  --color-gold-light: #FDE68A;
+  --color-gold-dark: #B45309;
+  --color-gold-glow: rgba(245, 158, 11, 0.45);
+  --gradient-gold: linear-gradient(135deg, #F59E0B 0%, #FBBF24 50%, #D97706 100%);
+  --gradient-gold-metallic: linear-gradient(110deg, #F59E0B 0%, #FEF08A 30%, #F59E0B 60%, #D97706 100%);
+
+  /* Universal Feedback Colors */
+  --color-success: #10B981;
+  --color-success-bg: rgba(16, 185, 129, 0.12);
+  --color-success-border: rgba(16, 185, 129, 0.35);
+
+  --color-error: #EF4444;
+  --color-error-bg: rgba(239, 68, 68, 0.12);
+  --color-error-border: rgba(239, 68, 68, 0.35);
+
+  --color-warning: #F59E0B;
+  --color-warning-bg: rgba(245, 158, 11, 0.12);
+  --color-warning-border: rgba(245, 158, 11, 0.35);
+
+  --color-info: #3B82F6;
+  --color-info-bg: rgba(59, 130, 246, 0.12);
+  --color-info-border: rgba(59, 130, 246, 0.35);
+
+  /* Elevation Shadows (Multi-layered Depth) */
+  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.15), 0 2px 6px -1px rgba(0, 0, 0, 0.1);
+  --shadow-lg: 0 12px 24px -4px rgba(0, 0, 0, 0.22), 0 4px 10px -2px rgba(0, 0, 0, 0.15);
+  --shadow-xl: 0 24px 48px -8px rgba(0, 0, 0, 0.35), 0 8px 16px -4px rgba(0, 0, 0, 0.2);
+  --shadow-2xl: 0 32px 64px -12px rgba(0, 0, 0, 0.45);
+  --shadow-glow: 0 0 24px -2px var(--color-primary-glow);
+  --shadow-gold-glow: 0 0 24px -2px var(--color-gold-glow);
+
+  /* Radius Tokens */
+  --radius-xs: 6px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 22px;
+  --radius-2xl: 28px;
+  --radius-full: 9999px;
+
+  /* Transitions */
+  --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
+  --transition-smooth: 350ms cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-spring: 400ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ==========================================================================
+   PALETTES (Dynamic Color Identity)
+   ========================================================================== */
+
+/* 1. INDIGO (Default - Deep Indigo & Electric Violet) */
+[data-palette="INDIGO"] {
+  --color-primary: #4F46E5;
+  --color-primary-rgb: 79, 70, 229;
+  --color-primary-hover: #4338CA;
+  --color-primary-light: #6366F1;
+  --color-primary-glow: rgba(79, 70, 229, 0.38);
+  --color-accent: #9333EA;
+  --color-accent-rgb: 147, 51, 234;
+  --color-accent-hover: #7E22CE;
+  --gradient-brand: linear-gradient(135deg, #4F46E5 0%, #7C3AED 50%, #9333EA 100%);
+  --gradient-card: linear-gradient(135deg, rgba(79, 70, 229, 0.09) 0%, rgba(147, 51, 234, 0.06) 100%);
+  --gradient-accent: linear-gradient(135deg, #6366F1 0%, #A855F7 100%);
+  --spotlight-color: rgba(99, 102, 241, 0.14);
+}
+
+/* 2. TEAL (Emerald Teal & Oceanic Jade) */
+[data-palette="TEAL"] {
+  --color-primary: #059669;
+  --color-primary-rgb: 5, 150, 105;
+  --color-primary-hover: #047857;
+  --color-primary-light: #10B981;
+  --color-primary-glow: rgba(5, 150, 105, 0.38);
+  --color-accent: #0D9488;
+  --color-accent-rgb: 13, 148, 136;
+  --color-accent-hover: #0F766E;
+  --gradient-brand: linear-gradient(135deg, #059669 0%, #0D9488 50%, #14B8A6 100%);
+  --gradient-card: linear-gradient(135deg, rgba(5, 150, 105, 0.09) 0%, rgba(13, 148, 136, 0.06) 100%);
+  --gradient-accent: linear-gradient(135deg, #10B981 0%, #14B8A6 100%);
+  --spotlight-color: rgba(16, 185, 129, 0.14);
+}
+
+/* 3. AMBER (Radiant Amber & Warm Orange) */
+[data-palette="AMBER"] {
+  --color-primary: #D97706;
+  --color-primary-rgb: 217, 119, 6;
+  --color-primary-hover: #B45309;
+  --color-primary-light: #F59E0B;
+  --color-primary-glow: rgba(217, 119, 6, 0.38);
+  --color-accent: #EA580C;
+  --color-accent-rgb: 234, 88, 12;
+  --color-accent-hover: #C2410C;
+  --gradient-brand: linear-gradient(135deg, #D97706 0%, #EA580C 50%, #F97316 100%);
+  --gradient-card: linear-gradient(135deg, rgba(217, 119, 6, 0.09) 0%, rgba(234, 88, 12, 0.06) 100%);
+  --gradient-accent: linear-gradient(135deg, #F59E0B 0%, #F97316 100%);
+  --spotlight-color: rgba(245, 158, 11, 0.14);
+}
+
+/* 4. ROSE (Vivid Rose & Crimson Bloom) */
+[data-palette="ROSE"] {
+  --color-primary: #E11D48;
+  --color-primary-rgb: 225, 29, 72;
+  --color-primary-hover: #BE123C;
+  --color-primary-light: #F43F5E;
+  --color-primary-glow: rgba(225, 29, 72, 0.38);
+  --color-accent: #BE123C;
+  --color-accent-rgb: 190, 18, 60;
+  --color-accent-hover: #9F1239;
+  --gradient-brand: linear-gradient(135deg, #E11D48 0%, #BE123C 50%, #FB7185 100%);
+  --gradient-card: linear-gradient(135deg, rgba(225, 29, 72, 0.09) 0%, rgba(190, 18, 60, 0.06) 100%);
+  --gradient-accent: linear-gradient(135deg, #F43F5E 0%, #FB7185 100%);
+  --spotlight-color: rgba(244, 63, 94, 0.14);
+}
+
+/* 5. CYAN (Ocean Cyan & Electric Sky) */
+[data-palette="CYAN"] {
+  --color-primary: #0891B2;
+  --color-primary-rgb: 8, 145, 178;
+  --color-primary-hover: #0E7490;
+  --color-primary-light: #06B6D4;
+  --color-primary-glow: rgba(8, 145, 178, 0.38);
+  --color-accent: #0284C7;
+  --color-accent-rgb: 2, 132, 199;
+  --color-accent-hover: #0369A1;
+  --gradient-brand: linear-gradient(135deg, #0891B2 0%, #0284C7 50%, #38BDF8 100%);
+  --gradient-card: linear-gradient(135deg, rgba(8, 145, 178, 0.09) 0%, rgba(2, 132, 199, 0.06) 100%);
+  --gradient-accent: linear-gradient(135deg, #06B6D4 0%, #38BDF8 100%);
+  --spotlight-color: rgba(6, 182, 212, 0.14);
+}
+
+/* 6. SLATE (Executive Slate & Nordic Carbon) */
+[data-palette="SLATE"] {
+  --color-primary: #475569;
+  --color-primary-rgb: 71, 85, 105;
+  --color-primary-hover: #334155;
+  --color-primary-light: #64748B;
+  --color-primary-glow: rgba(71, 85, 105, 0.38);
+  --color-accent: #64748B;
+  --color-accent-rgb: 100, 116, 139;
+  --color-accent-hover: #475569;
+  --gradient-brand: linear-gradient(135deg, #334155 0%, #64748B 50%, #94A3B8 100%);
+  --gradient-card: linear-gradient(135deg, rgba(71, 85, 105, 0.09) 0%, rgba(100, 116, 139, 0.06) 100%);
+  --gradient-accent: linear-gradient(135deg, #64748B 0%, #94A3B8 100%);
+  --spotlight-color: rgba(100, 116, 139, 0.14);
+}
+
+/* ==========================================================================
+   LIGHT MODE TOKENS (Editorial Silk & Platinum Glass)
+   ========================================================================== */
+[data-theme="LIGHT"] {
+  color-scheme: light;
+  --bg-app: #F8FAFC;
+  --bg-surface: #FFFFFF;
+  --bg-surface-elevated: #F1F5F9;
+  --bg-card: #FFFFFF;
+  --bg-card-hover: #F8FAFC;
+  --bg-input: #F8FAFC;
+  --bg-input-focus: #FFFFFF;
+
+  --border-subtle: rgba(15, 23, 42, 0.07);
+  --border-medium: rgba(15, 23, 42, 0.14);
+  --border-focus: var(--color-primary);
+  --border-specular: rgba(255, 255, 255, 0.9);
+
+  --text-main: #0B0F19;
+  --text-secondary: #334155;
+  --text-muted: #64748B;
+  --text-inverse: #FFFFFF;
+
+  --glass-bg: rgba(255, 255, 255, 0.85);
+  --glass-border: rgba(15, 23, 42, 0.08);
+  --glass-card: rgba(255, 255, 255, 0.92);
+  --specular-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.95);
+
+  --scrollbar-track: #F1F5F9;
+  --scrollbar-thumb: #CBD5E1;
+}
+
+/* ==========================================================================
+   DARK MODE TOKENS (Ultra-Luxury Obsidian Void & Celestial Glass)
+   ========================================================================== */
+[data-theme="DARK"] {
+  color-scheme: dark;
+  --bg-app: #07090E;
+  --bg-surface: #0B0F19;
+  --bg-surface-elevated: #111728;
+  --bg-card: #0E1424;
+  --bg-card-hover: #151D33;
+  --bg-input: #080C16;
+  --bg-input-focus: #0D1322;
+
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --border-medium: rgba(255, 255, 255, 0.14);
+  --border-focus: var(--color-primary-light);
+  --border-specular: rgba(255, 255, 255, 0.22);
+
+  --text-main: #F8FAFC;
+  --text-secondary: #CBD5E1;
+  --text-muted: #64748B;
+  --text-inverse: #07090E;
+
+  --glass-bg: rgba(11, 15, 25, 0.78);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-card: rgba(14, 20, 36, 0.82);
+  --specular-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.12);
+
+  --scrollbar-track: #07090E;
+  --scrollbar-thumb: #1E293B;
+}
+
+/* ==========================================================================
+   SOFT OFF-WHITE (Warm Ivory Cream — easy on eyes, premium reading feel)
+   ========================================================================== */
+[data-theme="SOFT_WHITE"] {
+  color-scheme: light;
+  --bg-app: #FAF9F6;
+  --bg-surface: #F5F0EB;
+  --bg-surface-elevated: #EDE7E0;
+  --bg-card: #FDFCFA;
+  --bg-card-hover: #F7F3EE;
+  --bg-input: #F5F0EB;
+  --bg-input-focus: #FDFCFA;
+
+  --border-subtle: rgba(120, 100, 70, 0.10);
+  --border-medium: rgba(120, 100, 70, 0.18);
+  --border-focus: var(--color-primary);
+  --border-specular: rgba(255, 255, 255, 0.85);
+
+  --text-main: #2C2417;
+  --text-secondary: #5C4F3D;
+  --text-muted: #8A7D6B;
+  --text-inverse: #FDFCFA;
+
+  --glass-bg: rgba(253, 252, 250, 0.88);
+  --glass-border: rgba(120, 100, 70, 0.10);
+  --glass-card: rgba(250, 249, 246, 0.92);
+  --specular-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.90);
+
+  --scrollbar-track: #F5F0EB;
+  --scrollbar-thumb: #D5CBBD;
+}
+
+/* ==========================================================================
+   SAGE GREEN (Calming Nature Study — reduces eye fatigue during long study)
+   ========================================================================== */
+[data-theme="SAGE_GREEN"] {
+  color-scheme: light;
+  --bg-app: #F0F5F0;
+  --bg-surface: #E8F0E8;
+  --bg-surface-elevated: #DCE8DC;
+  --bg-card: #F5FAF5;
+  --bg-card-hover: #EBF3EB;
+  --bg-input: #E8F0E8;
+  --bg-input-focus: #F5FAF5;
+
+  --border-subtle: rgba(60, 100, 60, 0.10);
+  --border-medium: rgba(60, 100, 60, 0.16);
+  --border-focus: var(--color-primary);
+  --border-specular: rgba(255, 255, 255, 0.85);
+
+  --text-main: #1A2E1A;
+  --text-secondary: #3D5C3D;
+  --text-muted: #6B8A6B;
+  --text-inverse: #F5FAF5;
+
+  --glass-bg: rgba(245, 250, 245, 0.88);
+  --glass-border: rgba(60, 100, 60, 0.09);
+  --glass-card: rgba(240, 245, 240, 0.92);
+  --specular-highlight: inset 0 1px 0 0 rgba(255, 255, 255, 0.88);
+
+  --scrollbar-track: #E8F0E8;
+  --scrollbar-thumb: #B8D0B8;
+}
+
+/* ==========================================================================
+   WARM GOLD (Premium Luxury Gold-Tinted — Hamsa Vidya Signature theme)
+   ========================================================================== */
+[data-theme="WARM_GOLD"] {
+  color-scheme: light;
+  --bg-app: #FDF8F0;
+  --bg-surface: #FAF0E4;
+  --bg-surface-elevated: #F0E4D0;
+  --bg-card: #FFFAF4;
+  --bg-card-hover: #FCF3E8;
+  --bg-input: #FAF0E4;
+  --bg-input-focus: #FFFAF4;
+
+  --border-subtle: rgba(160, 120, 50, 0.10);
+  --border-medium: rgba(160, 120, 50, 0.18);
+  --border-focus: var(--color-primary);
+  --border-specular: rgba(255, 250, 240, 0.90);
+
+  --text-main: #2E2310;
+  --text-secondary: #5C4A2E;
+  --text-muted: #8A7450;
+  --text-inverse: #FFFAF4;
+
+  --glass-bg: rgba(255, 250, 244, 0.88);
+  --glass-border: rgba(160, 120, 50, 0.10);
+  --glass-card: rgba(253, 248, 240, 0.92);
+  --specular-highlight: inset 0 1px 0 0 rgba(255, 252, 245, 0.92);
+
+  --scrollbar-track: #FAF0E4;
+  --scrollbar-thumb: #DCC8A0;
+}
+
+/* ==========================================================================
+   MIDNIGHT BLUE (Deep Navy — Premium alternative dark mode)
+   ========================================================================== */
+[data-theme="MIDNIGHT_BLUE"] {
+  color-scheme: dark;
+  --bg-app: #0A1628;
+  --bg-surface: #0F1D35;
+  --bg-surface-elevated: #152644;
+  --bg-card: #0D1A30;
+  --bg-card-hover: #152844;
+  --bg-input: #091424;
+  --bg-input-focus: #0F1D35;
+
+  --border-subtle: rgba(100, 160, 255, 0.08);
+  --border-medium: rgba(100, 160, 255, 0.15);
+  --border-focus: var(--color-primary-light);
+  --border-specular: rgba(100, 160, 255, 0.18);
+
+  --text-main: #E8F0FC;
+  --text-secondary: #A0B8D8;
+  --text-muted: #607898;
+  --text-inverse: #0A1628;
+
+  --glass-bg: rgba(15, 29, 53, 0.82);
+  --glass-border: rgba(100, 160, 255, 0.10);
+  --glass-card: rgba(13, 26, 48, 0.85);
+  --specular-highlight: inset 0 1px 0 0 rgba(100, 160, 255, 0.10);
+
+  --scrollbar-track: #0A1628;
+  --scrollbar-thumb: #1E3A5F;
+}
+
+/* ==========================================================================
+   CHARCOAL (Soft Dark Grey — gentler than OLED, classic dark mode)
+   ========================================================================== */
+[data-theme="CHARCOAL"] {
+  color-scheme: dark;
+  --bg-app: #1A1A2E;
+  --bg-surface: #1E1E36;
+  --bg-surface-elevated: #262640;
+  --bg-card: #1C1C32;
+  --bg-card-hover: #24243C;
+  --bg-input: #181830;
+  --bg-input-focus: #1E1E36;
+
+  --border-subtle: rgba(180, 180, 220, 0.08);
+  --border-medium: rgba(180, 180, 220, 0.14);
+  --border-focus: var(--color-primary-light);
+  --border-specular: rgba(180, 180, 220, 0.16);
+
+  --text-main: #EEEEF5;
+  --text-secondary: #B8B8D0;
+  --text-muted: #6868A0;
+  --text-inverse: #1A1A2E;
+
+  --glass-bg: rgba(30, 30, 54, 0.82);
+  --glass-border: rgba(180, 180, 220, 0.08);
+  --glass-card: rgba(28, 28, 50, 0.85);
+  --specular-highlight: inset 0 1px 0 0 rgba(180, 180, 220, 0.08);
+
+  --scrollbar-track: #1A1A2E;
+  --scrollbar-thumb: #3A3A5C;
+}
+
+/* ==========================================================================
+   SEPIA (Classic Book/Newspaper — warm-toned reading theme)
+   ========================================================================== */
+[data-theme="SEPIA"] {
+  color-scheme: light;
+  --bg-app: #F4ECD8;
+  --bg-surface: #EDE0C8;
+  --bg-surface-elevated: #E2D4B8;
+  --bg-card: #F8F0DC;
+  --bg-card-hover: #F0E4CC;
+  --bg-input: #EDE0C8;
+  --bg-input-focus: #F8F0DC;
+
+  --border-subtle: rgba(100, 80, 40, 0.12);
+  --border-medium: rgba(100, 80, 40, 0.20);
+  --border-focus: var(--color-primary);
+  --border-specular: rgba(255, 248, 230, 0.85);
+
+  --text-main: #3C2E18;
+  --text-secondary: #5C4A30;
+  --text-muted: #887054;
+  --text-inverse: #F8F0DC;
+
+  --glass-bg: rgba(248, 240, 220, 0.88);
+  --glass-border: rgba(100, 80, 40, 0.10);
+  --glass-card: rgba(244, 236, 216, 0.92);
+  --specular-highlight: inset 0 1px 0 0 rgba(255, 248, 230, 0.88);
+
+  --scrollbar-track: #EDE0C8;
+  --scrollbar-thumb: #C8B898;
+}
+
+/* ==========================================================================
+   FONT SCALE PRESETS
+   ========================================================================== */
+[data-font-scale="SMALL"] { --font-scale: 0.9; }
+[data-font-scale="DEFAULT"] { --font-scale: 1.0; }
+[data-font-scale="LARGE"] { --font-scale: 1.12; }
+[data-font-scale="EXTRA_LARGE"] { --font-scale: 1.25; }
+
+/* ==========================================================================
+   FONT FAMILY PRESETS
+   ========================================================================== */
+[data-font-family="DEFAULT"] {
+  --font-family-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-family-body: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+[data-font-family="SANS"] {
+  --font-family-display: 'Inter', -apple-system, sans-serif;
+  --font-family-body: 'Inter', -apple-system, sans-serif;
+}
+[data-font-family="SERIF"] {
+  --font-family-display: 'Merriweather', Georgia, serif;
+  --font-family-body: Georgia, 'Times New Roman', serif;
+}
+[data-font-family="ROUNDED"] {
+  --font-family-display: 'Outfit', cursive, sans-serif;
+  --font-family-body: 'Outfit', sans-serif;
+}
