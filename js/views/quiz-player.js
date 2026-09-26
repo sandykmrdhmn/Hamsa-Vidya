@@ -103,11 +103,31 @@ class QuizPlayerView {
     this.accumulatedSeconds = 0;
 
     if (this.quiz.quizMode === 'EXAM') {
-      const totalMinutes = Math.max(5, Math.round(this.questions.length * 1.5));
-      this.examDeadline = Date.now() + totalMinutes * 60 * 1000;
+      this.examDeadline = Date.now() + this.getExamWindowSeconds() * 1000;
     } else {
       this.examDeadline = null;
     }
+  }
+
+  /**
+   * How long this EXAM attempt is allowed, in seconds.
+   *
+   * A limit chosen on the Create Quiz screen is stored on the quiz row as
+   * `examDurationSeconds` and always wins. When it is absent — quizzes made
+   * before the control existed, and the quick drill / master mock / bookmark
+   * drill paths that do not ask — fall back to 1.5 minutes per question with a
+   * five-minute floor, which is the behaviour every existing quiz was created
+   * under.
+   *
+   * Read defensively: `this.quiz` is a plain Dexie row and the field may be
+   * missing, null, a string, or nonsense.
+   */
+  getExamWindowSeconds() {
+    const stored = Number(this.quiz?.examDurationSeconds);
+    if (Number.isFinite(stored) && stored > 0) return Math.round(stored);
+
+    const totalMinutes = Math.max(5, Math.round(this.questions.length * 1.5));
+    return totalMinutes * 60;
   }
 
   /** Start (or restart) the clock, listeners and render for this sitting. */
@@ -338,14 +358,34 @@ class QuizPlayerView {
     }
   }
 
+  /**
+   * Countdown text for a number of seconds.
+   *
+   * `MM:SS` under an hour, `H:MM:SS` at or above it. Custom limits can now be
+   * up to 600 minutes, and the old minutes-only format rendered that as
+   * "600:00" — technically correct but unreadable at a glance.
+   *
+   * Used by BOTH render() and _updateTimerDisplay(). They previously formatted
+   * the same value with two copies of the same arithmetic, which is exactly how
+   * the first paint and the first tick end up disagreeing.
+   */
+  formatClock(totalSeconds) {
+    const s = Math.max(0, Math.floor(Number(totalSeconds) || 0));
+    const hrs = Math.floor(s / 3600);
+    const mins = Math.floor((s % 3600) / 60);
+    const secs = s % 60;
+
+    const mm = String(mins).padStart(2, '0');
+    const ss = String(secs).padStart(2, '0');
+    return hrs > 0 ? `${hrs}:${mm}:${ss}` : `${mm}:${ss}`;
+  }
+
   /** Paint the countdown pill from the current derived value. */
   _updateTimerDisplay() {
     const timerEl = document.getElementById('exam-timer-display');
     if (!timerEl) return;
 
-    const mins = Math.floor(this.remainingSeconds / 60);
-    const secs = this.remainingSeconds % 60;
-    timerEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    timerEl.textContent = this.formatClock(this.remainingSeconds);
 
     const badge = document.getElementById('exam-timer-badge');
     if (badge) badge.classList.toggle('warning', this.remainingSeconds <= 120);
@@ -375,10 +415,9 @@ class QuizPlayerView {
     const isFlagged = this.flaggedQuestions.has(q.id);
     const letters = ['A', 'B', 'C', 'D'];
 
-    // Exam timer text
-    const mins = Math.floor(this.remainingSeconds / 60);
-    const secs = this.remainingSeconds % 60;
-    const timerText = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    // Exam timer text — same formatter the tick uses, so the first paint and
+    // the first tick can never disagree.
+    const timerText = this.formatClock(this.remainingSeconds);
 
     this.container.innerHTML = `
       <div class="quiz-player-container">

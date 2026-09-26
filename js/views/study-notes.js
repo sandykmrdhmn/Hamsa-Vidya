@@ -5,6 +5,29 @@
  * interactive examples & analogies, grounded Ask AI tutor, Quiz configuration & multi-format PDF export.
  */
 class StudyNotesView {
+  /**
+   * Cap on the focus instruction, mirroring GeminiService.MAX_FOCUS_CHARS.
+   * Enforced here too so the textarea itself stops accepting characters that
+   * the service would silently drop — a `maxlength` the user can see beats a
+   * truncation they cannot.
+   */
+  static MAX_FOCUS_CHARS = 500;
+
+  /**
+   * One-tap scopes for the things students actually ask for. Phrased as full
+   * instructions rather than keywords, because the text is inserted verbatim
+   * into the prompt and "questions" alone is ambiguous where
+   * "only the questions and their full solutions" is not.
+   */
+  static FOCUS_PRESETS = [
+    { label: '🧮 Only questions + solutions', text: 'only the questions and their full step-by-step solutions' },
+    { label: '⌨️ Only shortcut keys', text: 'only the computer shortcut keys, as a reference list with what each one does' },
+    { label: '📐 Only formulas', text: 'only the formulas and equations, with what each symbol means' },
+    { label: '📖 Only definitions', text: 'only the definitions of terms' },
+    { label: '📅 Only dates & facts', text: 'only the dates, numbers and factual data points' },
+    { label: '📋 Only tables & data', text: 'only the tables, lists and tabulated data' }
+  ];
+
   constructor() {
     this.container = document.getElementById('view-study-notes');
     this.notes = [];
@@ -27,6 +50,16 @@ class StudyNotesView {
     this.manualText = '';
     this.isCreating = false;
     this.creationProgressMsg = '';
+
+    // What to take OUT of the uploaded material, in the student's own words —
+    // "only the maths questions", "only the computer shortcut keys". Empty means
+    // build full notes from everything, which is the old behaviour.
+    //
+    // Written on every keystroke (never via a re-render) because
+    // onMultiFilesSelected() and removeAttachedFile() both call this.render(),
+    // which rebuilds the textarea from state. A value living only in the DOM
+    // would vanish the moment the user attached another file.
+    this.focusInstruction = '';
 
     // Reader UI States
     this.readerActiveTab = 'TEXTBOOK'; // 'TEXTBOOK' | 'SUMMARY' | 'SOURCE'
@@ -528,6 +561,64 @@ class StudyNotesView {
               </div>
             </div>
 
+            <!-- Step 3: Extraction Scope -->
+            <div style="margin-bottom:2rem;">
+              <h3 style="font-size:1.15rem; font-weight:800; color:var(--text-main); margin-bottom:0.5rem; display:flex; align-items:center; gap:0.5rem;">
+                <span style="background:var(--color-primary); color:white; width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; font-size:0.85rem;">3</span>
+                What should AI take out of it?
+                <span style="font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em;">Optional</span>
+              </h3>
+              <p style="font-size:0.88rem; color:var(--text-muted); margin-bottom:1rem;">
+                Leave this empty to get complete notes on everything in the file.
+                Or name exactly one thing, and AI makes notes on <strong>only</strong> that — the rest of the material is left out entirely.
+              </p>
+
+              <!-- Common scopes. Real <button>s so they are keyboard-operable
+                   without the runtime a11y promotion in app.js. -->
+              <div class="chips-select-grid" style="margin-bottom:0.85rem;">
+                ${StudyNotesView.FOCUS_PRESETS.map(p => `
+                  <button type="button"
+                    class="select-chip ${this.focusInstruction === p.text ? 'active' : ''}"
+                    style="font:inherit; font-size:0.83rem; cursor:pointer;"
+                    onclick="studyNotesView.applyFocusPreset('${this.escapeHtml(this.escapeJs(p.text))}')">
+                    ${p.label}
+                  </button>
+                `).join('')}
+              </div>
+
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem; gap:1rem; flex-wrap:wrap;">
+                <label for="create-input-focus" style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); margin:0;">
+                  Focus instruction
+                </label>
+                <span id="focus-scope-badge" style="font-size:0.78rem; font-weight:700; color:var(--text-muted);">
+                  ${this.describeFocusState()}
+                </span>
+              </div>
+
+              <textarea id="create-input-focus" class="live-reading-canvas"
+                style="min-height:92px; font-size:0.95rem; line-height:1.6;"
+                maxlength="${StudyNotesView.MAX_FOCUS_CHARS}"
+                placeholder="e.g. only the maths questions and their solutions&#10;e.g. only the computer shortcut keys&#10;e.g. only the definitions and formulas — skip the theory"
+                oninput="studyNotesView.onFocusInput(this.value)">${this.escapeHtml(this.focusInstruction)}</textarea>
+
+              ${this.focusInstruction.trim() ? `
+                <div class="reading-status-banner" style="margin-top:0.85rem;">
+                  <i data-lucide="filter" style="width:15px;height:15px;"></i>
+                  <span>
+                    Focused note. AI will read the whole file but write notes on
+                    <strong>only</strong> &ldquo;${this.escapeHtml(this.focusInstruction.trim())}&rdquo;.
+                    If the material contains none of it, nothing is saved and you will be told —
+                    you will not get unrelated notes instead.
+                  </span>
+                  <button type="button" class="btn btn-secondary btn-sm" style="margin-left:auto; flex-shrink:0;"
+                    onclick="studyNotesView.clearFocus()">
+                    <i data-lucide="x" style="width:13px;height:13px;"></i>
+                    <span>Clear</span>
+                  </button>
+                </div>
+              ` : ''}
+            </div>
+
             <!-- Submit Button -->
             <div style="display:flex; justify-content:flex-end; gap:1rem; border-top:1px solid var(--border-subtle); padding-top:1.5rem;">
               <button class="btn btn-secondary" onclick="studyNotesView.closeCreateView()">
@@ -683,6 +774,8 @@ class StudyNotesView {
           <div class="textbook-reading-progress-fill" id="reading-progress-fill"></div>
         </div>
       </div>
+
+      ${this.renderFocusScopeBanner(note)}
 
       <!-- Main Reader Content: Digital Textbook | High-Yield Summary | Original Source -->
       ${this.readerActiveTab === 'SOURCE' 
@@ -2679,8 +2772,11 @@ class StudyNotesView {
 
   async generateFreshSummary(noteId) {
     if (window.audioEngine) window.audioEngine.playClick();
-    const overlay = document.getElementById('generating-overlay');
-    if (overlay) overlay.classList.add('active');
+
+    // Shared lifecycle rather than a hand-rolled overlay toggle, so Cancel
+    // actually aborts this request instead of only hiding the overlay while it
+    // kept running and then reported a failure.
+    if (!app.beginGeneration('Reading textbook chapters & concepts...')) return;
 
     // Setup waiting motion card
     const batchCard = document.getElementById('batch-progress-card');
@@ -2730,7 +2826,7 @@ class StudyNotesView {
       });
 
       await new Promise(r => setTimeout(r, 350));
-      if (overlay) overlay.classList.remove('active');
+      app.endGeneration();
 
       this.activeNote = await getNoteById(noteId);
       this.readerActiveTab = 'SUMMARY';
@@ -2738,7 +2834,8 @@ class StudyNotesView {
       if (window.audioEngine) window.audioEngine.playFanfare();
       app.showToast('High-yield revision summary generated and saved! ✨', 'success');
     } catch (e) {
-      if (overlay) overlay.classList.remove('active');
+      app.endGeneration();
+      if (app.isGenerationCancelled() || e.name === 'AbortError') return;
       app.showToast(`Summary failed: ${e.message}`, 'error');
     }
   }
@@ -2777,8 +2874,7 @@ class StudyNotesView {
     const count = this.quizConfig.questionCount || 10;
     app.showToast(`Synthesizing ${count}-Question AI Quiz from "${note.title}"...`, 'info');
 
-    const overlay = document.getElementById('generating-overlay');
-    if (overlay) overlay.classList.add('active');
+    if (!app.beginGeneration(`Synthesizing ${count}-question quiz...`)) return;
 
     try {
       const fullText = note.sections?.map(s => `${s.heading}\n${s.content}`).join('\n\n') || note.content || '';
@@ -2809,13 +2905,14 @@ class StudyNotesView {
       note.quizzes.push(quizId);
       await updateNote(note.id, { quizzes: note.quizzes });
 
-      if (overlay) overlay.classList.remove('active');
+      app.endGeneration();
       if (window.audioEngine) window.audioEngine.playFanfare();
       app.showToast('AI Quiz formulated from your textbook!', 'success');
       app.startQuiz(quizId);
     } catch (err) {
+      app.endGeneration();
+      if (app.isGenerationCancelled() || err.name === 'AbortError') return;
       console.error(err);
-      if (overlay) overlay.classList.remove('active');
       app.showToast(`Quiz generation failed: ${err.message}`, 'error');
     }
   }
@@ -3105,6 +3202,85 @@ class StudyNotesView {
     if (window.audioEngine) window.audioEngine.playClick();
   }
 
+  // =========================================================================
+  // EXTRACTION SCOPE ("what should AI take out of this file?")
+  //
+  // Empty instruction = the old behaviour, full notes on everything. A non-empty
+  // one is passed to generateStructuredStudyBook(), which swaps its
+  // "reproduce everything at equal or greater depth" mandate for a scoped one.
+  // =========================================================================
+
+  /**
+   * Typing handler. Stores the raw value and repaints only the badge.
+   *
+   * Deliberately does NOT call this.render(): renderCreateView() replaces the
+   * whole container's innerHTML, which would destroy the textarea and the caret
+   * on the first keystroke. Same rule as the manual-paste box above and the
+   * page-range inputs in create-quiz.js.
+   */
+  onFocusInput(rawVal) {
+    this.focusInstruction = String(rawVal || '').slice(0, StudyNotesView.MAX_FOCUS_CHARS);
+    this.updateFocusBadge();
+  }
+
+  /** Chip tap — commits a preset. A full re-render is fine here: no caret to lose. */
+  applyFocusPreset(text) {
+    const next = String(text || '');
+    // Tapping the active chip again clears it, so a preset is never a trap.
+    this.focusInstruction = (this.focusInstruction === next) ? '' : next;
+    if (window.audioEngine) window.audioEngine.playClick();
+    this.render();
+  }
+
+  clearFocus() {
+    this.focusInstruction = '';
+    if (window.audioEngine) window.audioEngine.playClick();
+    this.render();
+  }
+
+  /**
+   * Banner shown at the top of the reader for a SCOPED note.
+   *
+   * A focused note deliberately leaves most of its source out. Without this, the
+   * next time it is opened it reads as a complete set of notes with material
+   * inexplicably missing — the reader has no way to tell "the AI skipped this"
+   * from "I asked for only this". The Original Source tab still holds the full
+   * text, so the banner points there.
+   *
+   * Returns '' for a normal note, so nothing changes for existing notes.
+   */
+  renderFocusScopeBanner(note) {
+    const scope = (note && typeof note.focusInstruction === 'string')
+      ? note.focusInstruction.trim()
+      : '';
+    if (!scope) return '';
+
+    return `
+      <div class="reading-status-banner" style="margin:0 0 1rem;">
+        <i data-lucide="filter" style="width:15px;height:15px;"></i>
+        <span>
+          <strong>Focused note.</strong>
+          Built from the uploaded material taking only &ldquo;${this.escapeHtml(scope)}&rdquo;.
+          Anything outside that was intentionally left out — the untouched original is under
+          <strong>📄 Original Source</strong>.
+        </span>
+      </div>
+    `;
+  }
+
+  /** Text for the badge beside the label. Mirrors create-quiz's updateScopeBadge(). */
+  describeFocusState() {
+    const len = this.focusInstruction.trim().length;
+    if (len === 0) return 'Full notes — everything in the file';
+    return `Focused • ${len}/${StudyNotesView.MAX_FOCUS_CHARS} characters`;
+  }
+
+  /** Surgical badge repaint, so onFocusInput never has to re-render. */
+  updateFocusBadge() {
+    const badge = document.getElementById('focus-scope-badge');
+    if (badge) badge.textContent = this.describeFocusState();
+  }
+
   // Trigger Creation: Extract & Structure with AI
   async triggerCreateStructuredNote() {
     const topic = (this.newTopic || '').trim();
@@ -3119,16 +3295,22 @@ class StudyNotesView {
     }
 
     if (window.audioEngine) window.audioEngine.playClick();
-    const overlay = document.getElementById('generating-overlay');
-    if (overlay) overlay.classList.add('active');
 
-    // Reset batch progress card
+    const focus = (this.focusInstruction || '').trim();
+
+    // Use the shared generation lifecycle instead of poking #generating-overlay
+    // directly, which is what this method used to do. beginGeneration() also
+    // refuses a second concurrent run (double-clicking the button used to start
+    // two), arms the Cancel button, and resets the batch visuals — and it is the
+    // contract app.cancelGeneration() / isGenerationCancelled() work against.
+    if (!app.beginGeneration(
+      focus ? 'Building your focused notes...' : 'Hamsa AI Ingestion in Progress...'
+    )) return;
+
     const batchCard = document.getElementById('batch-progress-card');
     if (batchCard) batchCard.style.display = 'flex';
     const batchFill = document.getElementById('batch-progress-fill');
     if (batchFill) batchFill.style.width = '8%';
-    const batchPills = document.getElementById('batch-pills-container');
-    if (batchPills) batchPills.innerHTML = '';
 
     app.handleGenerationProgress({
       message: 'Reading & parsing uploaded study material...',
@@ -3200,11 +3382,16 @@ class StudyNotesView {
         subject: effectiveSubject,
         rawText: combinedSourceText,
         files: this.newFiles,
+        // Empty string keeps the original "notes on everything" behaviour.
+        focus,
         onProgress: (status) => {
           app.handleGenerationProgress(status);
         }
       });
       structuredBook.subject = effectiveSubject;
+      // saveNewNote() writes a fixed allow-list, so this has to be set on the
+      // object it receives or it is dropped without a warning.
+      structuredBook.focusInstruction = focus;
 
       // Preserve original source explicitly
       structuredBook.originalSource = {
@@ -3237,22 +3424,44 @@ class StudyNotesView {
       });
 
       await new Promise(r => setTimeout(r, 400));
-      if (overlay) overlay.classList.remove('active');
+      app.endGeneration();
 
       this.isCreating = false;
       this.newFiles = [];
       this.manualText = '';
+      // The focus is intentionally KEPT. Building several scoped notes from
+      // different files with the same instruction is the common case, and
+      // clearing it would silently turn the next run into a full-notes run.
       if (window.audioEngine) window.audioEngine.playFanfare();
-      app.showToast('Digital Textbook Study Note Ready! ✨', 'success');
+      app.showToast(
+        focus
+          ? `Focused notes ready — only "${focus}" ✨`
+          : 'Digital Textbook Study Note Ready! ✨',
+        'success'
+      );
 
       // Open directly in reading view!
       await this.openNote(noteId);
 
     } catch (err) {
-      console.error('Note creation failed:', err);
-      if (overlay) overlay.classList.remove('active');
+      app.endGeneration();
       this.isCreating = false;
       this.render();
+
+      // Cancelling already told the user; don't also report it as a failure.
+      if (app.isGenerationCancelled() || err.name === 'AbortError') return;
+
+      console.error('Note creation failed:', err);
+
+      // A scoped request that matched nothing is not an error in the app — it is
+      // a real answer about the material, and the message already explains it.
+      // Reported as a warning, and at a length that can actually be read,
+      // because the alternative (silently saving unscoped notes) is worse.
+      if (err && err.code === 'SCOPE_NO_MATCH') {
+        app.showToast(err.message, 'warning');
+        return;
+      }
+
       app.showToast(`Creation error: ${err.message}`, 'error');
     }
   }

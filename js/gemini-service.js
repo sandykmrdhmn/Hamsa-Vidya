@@ -3,6 +3,23 @@
  */
 
 class GeminiService {
+  /**
+   * Cap on the student's extraction-scope instruction for study notes.
+   * The instruction is repeated into every source chunk's prompt, so an
+   * unbounded one multiplies across a long PDF. 500 characters is far more than
+   * "only the maths questions" needs while staying negligible next to the
+   * 4000-character source chunk it accompanies.
+   */
+  static MAX_FOCUS_CHARS = 500;
+
+  /**
+   * Thrown when a scoped request found nothing matching the instruction.
+   * Carried as a code rather than a message match so the caller can tell it
+   * apart from a transport failure — and so the unscoped fallback formatter is
+   * never substituted for it.
+   */
+  static SCOPE_NO_MATCH = 'SCOPE_NO_MATCH';
+
   constructor() {
     this.candidateModels = [
       'gemini-2.5-flash',
@@ -556,6 +573,163 @@ Respond ONLY with a valid JSON object adhering strictly to this schema:
     } catch (err) {
       console.error('Gemini batch generation error:', err);
       throw err;
+    }
+  }
+
+  /**
+   * Detect and extract existing MCQ/quiz questions from uploaded PDF text.
+   *
+   * Before generating fresh questions the caller can run this check. If the
+   * PDF already contains formatted quiz questions (multiple-choice with answer
+   * keys), the AI extracts them into the standard schema instead of inventing
+   * new ones. Returns `{ found: true, title, questions }` when existing MCQs
+   * are detected, or `{ found: false }` when the content is plain study
+   * material.
+   *
+   * @param {Object} opts
+   * @param {string} opts.sourceContent — raw text extracted from the PDF
+   * @param {string} opts.sourceTitle   — file name / topic label
+   * @param {string} opts.subject       — subject domain
+   * @param {string} opts.language      — ENGLISH | HINDI | BILINGUAL
+   * @param {Function} opts.onStatusUpdate — progress callback
+   * @returns {Promise<{found:boolean, title?:string, questions?:Array}>}
+   */
+  async detectAndExtractExistingQuiz({
+    sourceContent,
+    sourceTitle,
+    subject,
+    language = 'ENGLISH',
+    onStatusUpdate = () => {}
+  }) {
+    if (!this.isAiAvailable() || !sourceContent || sourceContent.trim().length < 50) {
+      return { found: false };
+    }
+
+    const apiKey = this.getApiKey();
+
+    onStatusUpdate({
+      message: 'Scanning PDF for existing quiz questions...',
+      badgeText: 'PDF Quiz Detection',
+      countText: 'Checking if PDF already contains MCQs...',
+      percent: 15,
+      showBatchCard: true
+    });
+
+    // Language phrasing for the extraction
+    let langNote = '';
+    if (language === 'HINDI') langNote = 'Preserve the original Hindi (Devanagari) text exactly.';
+    else if (language === 'BILINGUAL') langNote = 'Preserve the original bilingual Hindi+English text exactly.';
+    else langNote = 'Preserve the original English text exactly.';
+
+    const prompt = `You are a document analysis expert. Carefully read the following study material extracted from a PDF.
+
+YOUR TASK:
+1. Determine whether this document already contains pre-existing quiz questions, MCQ (Multiple Choice Questions), or test papers with answer options (A/B/C/D or 1/2/3/4).
+2. If YES — extract ALL the existing questions, their options, correct answer, and any explanation/answer key present.
+3. If NO — if the document is plain study material (textbook, notes, articles) without any formatted quiz questions, respond with: {"found": false}
+
+${langNote}
+
+STUDY MATERIAL TEXT:
+"""
+${sourceContent.slice(0, 40000)}
+"""
+
+OUTPUT FORMAT — respond ONLY with valid JSON:
+If existing MCQs ARE found:
+{
+  "found": true,
+  "title": "${sourceTitle || subject} — Extracted Quiz",
+  "questions": [
+    {
+      "id": 1,
+      "questionText": "The exact question stem as written in the document...",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctAnswerIndex": 0,
+      "explanation": "Answer key explanation if available, otherwise write 'Extracted from source PDF.'",
+      "sourcePage": null
+    }
+  ]
+}
+
+If NO existing MCQs are found:
+{"found": false}
+
+CRITICAL RULES:
+- Only extract questions that are CLEARLY formatted as quiz/test/exam questions with multiple choice options.
+- Do NOT invent or generate new questions. Only extract what already exists in the text.
+- Ensure correctAnswerIndex is 0-based (0=A, 1=B, 2=C, 3=D).
+- If answer key is provided in the document, map it to the correct option index.`;
+
+    try {
+      // Discover models
+      let liveModels = [];
+      try { liveModels = await this.discoverAvailableModels(apiKey); } catch (_) {}
+
+      let activeModel = this.getActiveModel();
+      let modelsToAttempt = liveModels.length > 0
+        ? this.sortModelsByPreference(liveModels, activeModel)
+        : this.sortModelsByPreference(this.candidateModels.filter(m => m !== 'gemini-pro'), activeModel);
+
+      onStatusUpdate({
+        message: 'AI is reading your PDF for existing MCQs...',
+        badgeText: 'Quiz Detection',
+        countText: 'Analyzing document structure...',
+        percent: 35,
+        showBatchCard: true
+      });
+
+      for (const model of modelsToAttempt) {
+        try {
+          const res = await window.aiClient.fetchGenerateContent(model, {
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.1,
+              maxOutputTokens: 8192,
+              responseMimeType: 'application/json'
+            }
+          }, { apiKey });
+
+          if (res.ok) {
+            this.setActiveModel(model);
+            const resJson = await res.json();
+            const parts = resJson.candidates?.[0]?.content?.parts || [];
+            const rawText = parts.map(p => p.text || '').join('').trim();
+            const parsed = this.parseJsonSafely(rawText, subject, `${sourceTitle} — Extracted Quiz`);
+
+            // Check if the AI found existing questions
+            if (parsed && parsed.found === false) {
+              return { found: false };
+            }
+
+            if (parsed && parsed.questions && parsed.questions.length > 0) {
+              // Re-index questions
+              parsed.questions.forEach((q, idx) => { q.id = idx + 1; });
+              return {
+                found: true,
+                title: parsed.title || `${sourceTitle} — Extracted Quiz`,
+                questions: parsed.questions
+              };
+            }
+
+            // Ambiguous response — treat as not found
+            return { found: false };
+          }
+
+          // Non-fatal HTTP error — try next model
+          const errMsgLower = ((await res.text().catch(() => '')).toLowerCase());
+          const isFatal = res.status === 400 || res.status === 429 || res.status === 403;
+          if (isFatal) break;
+        } catch (e) {
+          console.warn(`Quiz detection failed with model ${model}:`, e);
+        }
+      }
+
+      // All models failed — treat as not found so generation can proceed
+      return { found: false };
+    } catch (err) {
+      console.warn('Quiz detection check failed, proceeding with generation:', err);
+      return { found: false };
     }
   }
 
@@ -1257,6 +1431,9 @@ Instructions:
           lastError = errJson.error ? errJson.error.message : `HTTP ${res.status}`;
         }
       } catch (e) {
+        // Same reasoning as the structuring loop: a cancel is not a per-model
+        // failure to retry past.
+        if (e && e.name === 'AbortError') throw e;
         lastError = e.message;
       }
     }
@@ -1275,10 +1452,24 @@ Instructions:
    * Handles multi-batch chunking, semantic blocks (definitions, formulas, interactive examples),
    * and smart glossary terms.
    */
-  async generateStructuredStudyBook({ topic, subject = 'General Study', rawText = '', files = [], onProgress = () => {} }) {
+  async generateStructuredStudyBook({ topic, subject = 'General Study', rawText = '', files = [], focus = '', onProgress = () => {} }) {
     const apiKey = this.getApiKey();
     const cleanTopic = (topic || 'Study Document').trim();
     const cleanSubject = (subject || 'General Study').trim();
+
+    // ---- Extraction scope -------------------------------------------------
+    // `focus` is the student's own instruction about WHAT to take out of the
+    // material — "only the maths questions", "only the computer shortcut keys".
+    // It is repeated into every chunk prompt, so its cost is
+    // (focus length x chunk count); capped for the same reason
+    // answer-writing caps the submitted answer, and the truncation is disclosed
+    // in the prompt rather than applied silently.
+    const rawFocus = String(focus || '').trim();
+    const focusTruncated = rawFocus.length > GeminiService.MAX_FOCUS_CHARS;
+    const cleanFocus = focusTruncated
+      ? rawFocus.slice(0, GeminiService.MAX_FOCUS_CHARS)
+      : rawFocus;
+    const hasFocus = cleanFocus.length > 0;
 
     onProgress({
       message: 'Reading & analyzing source material...',
@@ -1290,6 +1481,20 @@ Instructions:
     });
 
     if (!this.isAiAvailable()) {
+      // The offline path is `generateStructuredFallbackNote`, a deterministic
+      // paragraph splitter. It reproduces the WHOLE source and has no way to
+      // judge what is or is not in scope. Returning it for a scoped request
+      // would hand back notes about everything while appearing to have honoured
+      // the instruction — so refuse instead of quietly doing the wrong thing.
+      if (hasFocus) {
+        const err = new Error(
+          'A focused note ("only …") needs Gemini, and no API key is configured. ' +
+          'Add a key in Settings, or clear the focus box to build full notes offline.'
+        );
+        err.code = GeminiService.SCOPE_NO_MATCH;
+        throw err;
+      }
+
       await new Promise(r => setTimeout(r, 600));
       onProgress({
         message: 'Structuring digital textbook chapters...',
@@ -1342,28 +1547,67 @@ Instructions:
           stepId: 'step-extracting'
         });
 
-        const prompt = `You are a premier educational content architect and master textbook author.
-Convert this raw learning material into an authentic, highly structured, student-friendly digital textbook chapter.
-
-TOPIC: "${cleanTopic}"
-SUBJECT: "${cleanSubject}"
-
-SOURCE MATERIAL CHUNK (Batch ${chunkIndex} of ${totalChunks}):
-"""
-${chunks[i]}
-"""
-
+        // ---- Scope directive, stated BEFORE the source -------------------
+        // Placed ahead of the material so the model reads the filter before the
+        // content, and repeated again after it (the chunk can be 4000 chars, so
+        // a single mention at the top gets buried).
+        const scopeHeader = hasFocus ? `
 ═══════════════════════════════════════════════════════════════
-MANDATORY LANGUAGE PRESERVATION RULE (AUTO-DETECT & MAINTAIN):
+⚠ EXTRACTION SCOPE — THE STUDENT'S INSTRUCTION. THIS OUTRANKS EVERYTHING BELOW:
 ═══════════════════════════════════════════════════════════════
-1. DETECT the primary language of the source material above (Hindi/Devanagari, English, or Mixed Hindi-English).
-2. Your output MUST be written in the SAME LANGUAGE as the source material:
-   - If the source is in Hindi (Devanagari script) → Write the entire output in Hindi (Devanagari).
-   - If the source is in English → Write the entire output in English.
-   - If the source is in mixed Hindi-English (Hinglish) → Write in the same mixed style, keeping technical/English terms in English and explanatory text in Hindi as the source does.
-3. Where the source uses specific technical terms in English within Hindi text (e.g., "Photosynthesis", "Article 32", "GDP"), preserve those English terms exactly as they appear, even if the surrounding text is in Hindi.
-4. Do NOT translate the source language to another language. Maintain the author's original language choice.
+The student wants notes on ONLY the following, out of all the material provided:
+"""
+${cleanFocus}
+"""${focusTruncated ? `
+(Their instruction was longer than ${GeminiService.MAX_FOCUS_CHARS} characters and has been cut to that length.)` : ''}
 
+SCOPE RULES — follow these exactly:
+1. Include content that falls within the requested scope. OMIT EVERYTHING ELSE
+   ENTIRELY. Do not add a section, paragraph, key point, definition, fact,
+   formula, example or glossary term for material outside the scope.
+2. Do not mention, summarise, list or allude to the out-of-scope material. Do
+   not write "this chunk also covers X". It simply does not appear.
+3. Be EXHAUSTIVE WITHIN THE SCOPE: every single item in the source that matches
+   the instruction must appear, fully worked and explained. Completeness applies
+   to the requested subset, not to the document.
+4. If this chunk of source material contains NOTHING matching the instruction,
+   return exactly {"sections": [], "glossaryTerms": []} and nothing else. An
+   empty result is CORRECT and expected for chunks that are off-topic — never
+   pad it with unrelated content to avoid returning empty.
+5. Judge scope by what the student asked for, not by what looks academically
+   important. Interesting, exam-relevant, out-of-scope content is still omitted.
+
+` : '';
+
+        // ---- Completeness mandate ----------------------------------------
+        // Unscoped, the mandate is "reproduce everything, at equal or greater
+        // depth". Scoped, that mandate becomes the opposite of what was asked.
+        // Leaving both in the prompt is the failure mode to avoid: the model
+        // gets contradictory orders and obeys the longer, more emphatic one,
+        // which is completeness — so the filter silently stops working.
+        const completenessBlock = hasFocus ? `
+═══════════════════════════════════════════════════════════════
+COMPLETENESS — SCOPED TO THE STUDENT'S INSTRUCTION:
+═══════════════════════════════════════════════════════════════
+1. EXHAUSTIVE WITHIN SCOPE, SILENT OUTSIDE IT:
+   - Within the requested scope, omit nothing: if the source has N matching
+     items (questions, keys, formulas, definitions, dates), ALL N must appear,
+     each fully explained rather than merely listed.
+   - Expand each in-scope item properly — worked steps, the reasoning, why it is
+     asked. A bare list is not notes.
+   - Outside the requested scope, produce nothing at all. There is no word-count
+     target to hit: a chunk with two matching items yields a short output, and
+     that is correct.
+   - NEVER write "and so on", "etc.", "similarly for others". Enumerate every
+     in-scope item explicitly.
+
+2. REWRITE, DON'T COPY: rewrite in clear textbook prose. Do not copy raw source
+   text verbatim, but lose no in-scope detail while rewriting.
+
+3. Explain from first principles, with academic rigour and student-accessible
+   language.
+
+4. Structure the in-scope content hierarchically:` : `
 ═══════════════════════════════════════════════════════════════
 CRITICAL PEDAGOGICAL REQUIREMENTS — ABSOLUTE ZERO SHORTENING:
 ═══════════════════════════════════════════════════════════════
@@ -1380,7 +1624,37 @@ CRITICAL PEDAGOGICAL REQUIREMENTS — ABSOLUTE ZERO SHORTENING:
 
 3. Explain all concepts clearly from first principles with academic rigor, smooth narrative transitions, and student-accessible language.
 
-4. Structure the content hierarchically:
+4. Structure the content hierarchically:`;
+
+        const prompt = `You are a premier educational content architect and master textbook author.
+Convert this raw learning material into an authentic, highly structured, student-friendly digital textbook chapter.
+
+TOPIC: "${cleanTopic}"
+SUBJECT: "${cleanSubject}"
+${scopeHeader}
+SOURCE MATERIAL CHUNK (Batch ${chunkIndex} of ${totalChunks}):
+"""
+${chunks[i]}
+"""
+${hasFocus ? `
+═══════════════════════════════════════════════════════════════
+REMINDER — APPLY THE SCOPE TO THE MATERIAL ABOVE:
+═══════════════════════════════════════════════════════════════
+Take from it ONLY: "${cleanFocus}"
+Everything else in that material is to be left out completely. If none of it
+matches, return {"sections": [], "glossaryTerms": []}.
+` : ''}
+═══════════════════════════════════════════════════════════════
+MANDATORY LANGUAGE PRESERVATION RULE (AUTO-DETECT & MAINTAIN):
+═══════════════════════════════════════════════════════════════
+1. DETECT the primary language of the source material above (Hindi/Devanagari, English, or Mixed Hindi-English).
+2. Your output MUST be written in the SAME LANGUAGE as the source material:
+   - If the source is in Hindi (Devanagari script) → Write the entire output in Hindi (Devanagari).
+   - If the source is in English → Write the entire output in English.
+   - If the source is in mixed Hindi-English (Hinglish) → Write in the same mixed style, keeping technical/English terms in English and explanatory text in Hindi as the source does.
+3. Where the source uses specific technical terms in English within Hindi text (e.g., "Photosynthesis", "Article 32", "GDP"), preserve those English terms exactly as they appear, even if the surrounding text is in Hindi.
+4. Do NOT translate the source language to another language. Maintain the author's original language choice.
+${completenessBlock}
    - "heading": e.g. "1. Fundamental Concepts & Mechanisms"
    - "subheading": e.g. "Primary Drivers and Operational Mechanics"
    - "content": Detailed explanatory paragraphs with clear phrasing written in textbook prose. Each section must have at least 3 to 5 full paragraphs.
@@ -1398,7 +1672,10 @@ CRITICAL PEDAGOGICAL REQUIREMENTS — ABSOLUTE ZERO SHORTENING:
    - "term", "simpleMeaning", "contextMeaning", "hindiMeaning", "exampleSentence", "pronunciation"
 
 RESPONSE FORMAT:
-Respond ONLY with valid JSON adhering strictly to this schema:
+Respond ONLY with valid JSON adhering strictly to this schema.${hasFocus ? `
+Before you write it, re-read the scope: "${cleanFocus}". Every section below must
+fall inside it. If nothing in the source material does, the whole response is
+exactly: {"sections": [], "glossaryTerms": []}` : ''}
 {
   "title": "${cleanTopic}",
   "subject": "${cleanSubject}",
@@ -1476,15 +1753,31 @@ Respond ONLY with valid JSON adhering strictly to this schema:
               const parts = resJson.candidates?.[0]?.content?.parts || [];
               const rawJsonText = parts.map(p => p.text || '').join('').trim();
               const parsed = JSON.parse(rawJsonText.replace(/```json/gi, '').replace(/```/g, '').trim());
-              if (parsed && Array.isArray(parsed.sections) && parsed.sections.length > 0) {
-                batchData = parsed;
-                break;
+
+              // A well-formed response has a `sections` array. Whether an EMPTY
+              // array counts as success depends on the mode:
+              //   unscoped — nothing extracted from real material means the
+              //              model failed; try the next one.
+              //   scoped   — "no maths questions in this chunk" is the correct
+              //              answer. Retrying every model on it wastes quota and
+              //              ends up discarding a valid result.
+              if (parsed && Array.isArray(parsed.sections)) {
+                if (hasFocus || parsed.sections.length > 0) {
+                  batchData = parsed;
+                  break;
+                }
               }
             } else {
               const errJson = await res.json().catch(() => ({}));
               lastError = errJson.error ? errJson.error.message : `HTTP ${res.status}`;
             }
           } catch (e) {
+            // A cancel must not be absorbed as "this model failed, try the next
+            // one". abortAll() aborts every in-flight controller, so each
+            // remaining model would fail the same way, the loop would run to the
+            // end, and the outer catch would hand back a fallback note — i.e.
+            // pressing Cancel still produced a note.
+            if (e && e.name === 'AbortError') throw e;
             lastError = e.message;
           }
         }
@@ -1516,6 +1809,20 @@ Respond ONLY with valid JSON adhering strictly to this schema:
       });
 
       if (allSections.length === 0) {
+        // With a scope set, "nothing came back" has a specific, legitimate
+        // meaning: the material contains nothing the student asked for. The
+        // outer catch would otherwise hand this to the deterministic splitter,
+        // which rebuilds the ENTIRE unscoped source — i.e. it would answer
+        // "only the maths questions" with notes on everything. Refuse instead,
+        // and say so.
+        if (hasFocus) {
+          const err = new Error(
+            `No content matching "${cleanFocus}" was found in the material you uploaded. ` +
+            'Nothing was saved. Try rewording the focus, or clear it to build full notes.'
+          );
+          err.code = GeminiService.SCOPE_NO_MATCH;
+          throw err;
+        }
         throw new Error('Could not structure document from AI response. Falling back to built-in formatter.');
       }
 
@@ -1566,7 +1873,13 @@ Respond ONLY with valid JSON adhering strictly to this schema:
       return {
         title: cleanTopic,
         subject: cleanSubject,
-        description: `Comprehensive digital textbook note covering ${cleanTopic} across ${allSections.length} sections.`,
+        // The instruction is carried on the note so the reader can state what
+        // the note is (and is not) — a scoped note that looks like a full one is
+        // misleading the next time the student opens it.
+        focusInstruction: hasFocus ? cleanFocus : '',
+        description: hasFocus
+          ? `Focused note on "${cleanFocus}" from ${cleanTopic}, across ${allSections.length} sections.`
+          : `Comprehensive digital textbook note covering ${cleanTopic} across ${allSections.length} sections.`,
         sourceFiles: files.map(f => ({ name: f.name, type: f.type || 'TEXT', size: f.size || 0 })),
         originalSource: {
           text: rawText,
@@ -1585,6 +1898,20 @@ Respond ONLY with valid JSON adhering strictly to this schema:
       };
 
     } catch (err) {
+      // Two failures must NOT become a fallback note:
+      //
+      //   SCOPE_NO_MATCH — the student asked for a subset and the material has
+      //     none of it. The fallback reproduces the whole document, so
+      //     substituting it here would silently ignore their instruction.
+      //
+      //   AbortError — the user pressed Cancel. Building and saving a note
+      //     anyway is the opposite of cancelling. (This was already wrong
+      //     before scoping existed: cancelling a note generation produced a
+      //     fallback note.)
+      if (err && (err.code === GeminiService.SCOPE_NO_MATCH || err.name === 'AbortError')) {
+        throw err;
+      }
+
       console.warn('AI textbook generation encountered an issue:', err);
       onProgress({
         message: 'Synthesizing structured textbook note...',

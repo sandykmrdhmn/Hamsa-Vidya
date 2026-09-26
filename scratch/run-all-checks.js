@@ -31,6 +31,9 @@ const SUITES = [
   { file: 'verify-profile-education.js', label: 'Onboarding education list' },
   { file: 'verify-quiz-palette.js', label: 'In-view overlays are hidden + viewport-fixed' },
   { file: 'verify-auth-gate.js', label: 'Pre-app login gate + social footer' },
+  { file: 'verify-quiz-timer.js', label: 'Custom exam time limit' },
+  { file: 'verify-library-bookmarks.js', label: 'Saved questions reach the Library, by subject' },
+  { file: 'verify-notes-focus.js', label: 'Study Notes extraction scope ("only …")' },
 ];
 
 let totalPass = 0;

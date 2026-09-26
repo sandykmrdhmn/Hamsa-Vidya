@@ -947,25 +947,14 @@ class HamsaApp {
       }
 
       if (pillsRow && status.totalBatches > 1) {
-        pillsRow.innerHTML = Array.from({ length: status.totalBatches }, (_, i) => {
-          const bNum = i + 1;
-          let cls = 'batch-pill';
-          let icon = '⚪';
-          let label = `Batch ${bNum}`;
-          if (bNum < status.batchIndex) {
-            cls += ' completed';
-            icon = '✓';
-            label = `Batch ${bNum} (Done)`;
-          } else if (bNum === status.batchIndex) {
-            cls += ' active';
-            icon = '⚡';
-            label = `Batch ${bNum} (Working...)`;
-          } else {
-            label = `Batch ${bNum} (Pending)`;
-          }
-          return `<div class="${cls}"><span>${icon} ${label}</span></div>`;
-        }).join('');
+        // Show only the current batch to prevent UI overflow with many batches
+        pillsRow.innerHTML = `
+          <div class="batch-pill active" style="margin: 0 auto;">
+            <span>⚡ Processing Batch ${status.batchIndex} of ${status.totalBatches}</span>
+          </div>
+        `;
       }
+
 
       // Step progress items update if provided
       if (status.stepId) {
@@ -1677,6 +1666,8 @@ class HamsaApp {
 
     if (!isComplete) {
       this.populateOnboardingDropdowns();
+      const cancelBtn = document.getElementById('ob-cancel-btn');
+      if (cancelBtn) cancelBtn.style.display = 'none';
       modal.style.display = 'flex';
       document.body.classList.add('onboarding-locked');
 
@@ -2052,7 +2043,33 @@ class HamsaApp {
     if (!modal) return;
     const profile = window.examProfileManager.loadProfile() || window.examProfileManager.getProfile();
     this.populateOnboardingDropdowns(profile);
+    const cancelBtn = document.getElementById('ob-cancel-btn');
+    if (cancelBtn) cancelBtn.style.display = 'inline-flex';
     modal.style.display = 'flex';
+  }
+
+  closeProfileManagerModal() {
+    const modal = document.getElementById('mandatory-onboarding-modal');
+    if (modal) {
+      modal.style.display = 'none';
+    }
+  }
+
+  handleProfileLogout() {
+    if (confirm('Are you sure you want to log out? Your local profile will be reset.')) {
+      if (window.examProfileManager) {
+        window.examProfileManager.resetProfile();
+      }
+      this.closeProfileManagerModal();
+      if (window.authGate) {
+        // Calling signOut will show the auth gate overlay and reset session
+        window.authGate.signOut(() => {
+          const root = document.getElementById('app-root');
+          if (root) root.removeAttribute('hidden');
+          window.app.init();
+        });
+      }
+    }
   }
 }
 

@@ -113,6 +113,14 @@ class ExamProfileManager {
   }
 
   /**
+   * Reset profile (Logout)
+   */
+  resetProfile() {
+    this._profile = null;
+    localStorage.removeItem(PROFILE_STORAGE_KEY);
+  }
+
+  /**
    * Rebuild the `education` list for a profile saved before it existed.
    *
    * Older profiles stored a 10th percentage, a 12th percentage and one

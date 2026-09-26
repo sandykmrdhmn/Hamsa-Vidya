@@ -791,10 +791,19 @@
               <i data-lucide="shield-check" style="width:16px;height:16px;color:var(--color-success);"></i>
               <span>Saved locally in browser. 100% private & secure.</span>
             </div>
-            <button type="submit" id="ob-submit-btn" class="btn btn-primary btn-lg onboarding-submit-btn">
-              <span>Save Academic Profile & Enter Dashboard</span>
-              <i data-lucide="arrow-right" style="width:18px;height:18px;"></i>
-            </button>
+            <div style="display:flex; gap:0.75rem; flex-wrap:wrap; justify-content:flex-end; width:100%;">
+              <button type="button" id="ob-logout-btn" class="btn btn-secondary" onclick="app.handleProfileLogout()">
+                <i data-lucide="log-out" style="width:16px;height:16px;"></i>
+                <span>Logout</span>
+              </button>
+              <button type="button" id="ob-cancel-btn" class="btn btn-secondary" onclick="app.closeProfileManagerModal()" style="display:none;">
+                <span>Cancel</span>
+              </button>
+              <button type="submit" id="ob-submit-btn" class="btn btn-primary btn-lg onboarding-submit-btn" style="flex:1; max-width:max-content;">
+                <span>Save Profile</span>
+                <i data-lucide="arrow-right" style="width:18px;height:18px;"></i>
+              </button>
+            </div>
           </div>
         </form>
       </div>

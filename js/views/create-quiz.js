@@ -27,6 +27,19 @@ class CreateQuizView {
     // Marking scheme id from EXAM_SCORING_PRESETS (db.js).
     this.selectedScoringPreset = 'NONE';
     this._scoringPresetTouched = false;
+
+    // ---- Exam time limit --------------------------------------------------
+    // 'AUTO' leaves the limit unset on the quiz row, so the player derives it
+    // from the number of questions it actually received (the AI can return
+    // fewer than requested). 'CUSTOM' stores an exact number of seconds.
+    //
+    // `customDurationRaw` is the unvalidated string the user is typing;
+    // `customDurationMinutes` is the last committed value. Two fields, because
+    // clamping mid-keystroke fights the user — the same split the page-range
+    // steppers above use.
+    this.durationMode = 'AUTO'; // 'AUTO' | 'CUSTOM'
+    this.customDurationMinutes = 30;
+    this.customDurationRaw = '30';
     this.selectedLanguage = 'ENGLISH'; // 'ENGLISH', 'HINDI', 'BILINGUAL'
     this.customTopicTitle = '';
     this.notesText = '';
@@ -234,9 +247,15 @@ class CreateQuizView {
               <span style="font-size:0.75rem; color:var(--text-muted);">AI will formulate questions specifically on this topic.</span>
             </div>
 
-            <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.25rem;">
               <label style="font-weight:700; font-size:0.96rem;">Additional Study Notes / Excerpts (Optional)</label>
-              <span id="char-count-badge" style="font-size:0.8rem; color:var(--text-muted);">0 characters</span>
+              <div style="display:flex; gap:1rem; align-items:center;">
+                <button type="button" class="btn btn-secondary btn-sm" id="mic-btn" onclick="createQuizView.toggleMic()" style="display:flex; align-items:center; gap:0.25rem;">
+                  <i data-lucide="mic" id="mic-icon" style="width:14px;height:14px;"></i>
+                  <span id="mic-text">Dictate</span>
+                </button>
+                <span id="char-count-badge" style="font-size:0.8rem; color:var(--text-muted);">${this.notesText.length} characters</span>
+              </div>
             </div>
             <textarea id="notes-textarea" class="study-textarea" placeholder="Paste textbook excerpts, chapter summaries, syllabus points, or handwritten notes here (or leave empty if you just specified a topic above)..." oninput="createQuizView.onNotesChange(this.value)">${this.notesText}</textarea>
             
@@ -364,6 +383,72 @@ class CreateQuizView {
                     ? `, <strong style="color:var(--color-error);">−${Math.round(p.negativeMarkPerWrong * 100) / 100}</strong> per wrong answer`
                     : ', no penalty for wrong answers'}.</div>
                   <div style="color:var(--text-muted);">Paper total: <strong style="color:var(--color-primary-light);">${maxMarks} marks</strong> for ${count} questions. Skipped questions always score 0.</div>
+                </div>
+              `;
+            })()}
+          </div>
+
+          <!-- Time limit — previously invisible and fixed at 1.5 min/question.
+               Real papers differ (SSC CGL ~0.96, UPSC Prelims ~1.2), so the
+               student sets their own budget and can see the per-question rate
+               it works out to. -->
+          <div style="margin-top:1.1rem; padding-top:1rem; border-top:1px solid var(--border-subtle);">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; flex-wrap:wrap;">
+              <div style="font-weight:700; font-size:0.95rem; display:flex; align-items:center; gap:0.4rem;">
+                <i data-lucide="timer" style="width:16px;height:16px;color:var(--color-warning);"></i>
+                <span>Time Limit</span>
+              </div>
+              <span class="badge badge-primary" id="duration-total-badge">${this.formatDurationLabel(this.getEffectiveDurationMinutes())}</span>
+            </div>
+
+            <p style="font-size:0.83rem; color:var(--text-secondary); margin:0.35rem 0 0.7rem;">
+              ${this.selectedQuizMode === 'EXAM'
+                ? 'Pick a preset or type your own total time for the whole paper.'
+                : 'Practice Mode is untimed — this limit is saved with the quiz and applies whenever you run it in Exam Mode.'}
+            </p>
+
+            <div class="chips-select-grid">
+              <div class="select-chip ${this.durationMode === 'AUTO' ? 'active' : ''}"
+                   onclick="createQuizView.setDurationPreset(null)"
+                   title="1.5 minutes per question, recalculated from the questions actually generated">
+                Auto (${this.formatDurationLabel(this.getAutoDurationMinutes())})
+              </div>
+              ${[5, 10, 15, 20, 30, 45, 60, 90, 120, 180].map(mins => `
+                <div class="select-chip ${this.durationMode === 'CUSTOM' && this.customDurationMinutes === mins ? 'active' : ''}"
+                     onclick="createQuizView.setDurationPreset(${mins})">
+                  ${this.formatDurationLabel(mins)}
+                </div>
+              `).join('')}
+            </div>
+
+            <div class="stepper-group" style="margin-top:0.9rem; max-width:320px;">
+              <label for="custom-duration-input">Custom total time (minutes)</label>
+              <div class="stepper-control">
+                <button class="stepper-btn" type="button" onclick="createQuizView.stepDuration(-5)"
+                  aria-label="Decrease time limit by 5 minutes">−</button>
+                <input type="text" inputmode="numeric" id="custom-duration-input" class="stepper-input"
+                  value="${this.customDurationRaw}"
+                  aria-label="Custom total time in minutes"
+                  oninput="createQuizView.onCustomDurationInput(this.value)"
+                  onblur="createQuizView.onCustomDurationBlur()"
+                  onkeydown="if(event.key==='Enter'){event.preventDefault();createQuizView.onCustomDurationBlur();}">
+                <button class="stepper-btn" type="button" onclick="createQuizView.stepDuration(5)"
+                  aria-label="Increase time limit by 5 minutes">+</button>
+              </div>
+            </div>
+
+            ${(() => {
+              const mins = this.getEffectiveDurationMinutes();
+              const count = Number(this.selectedQuestionCount) || 0;
+              const perQ = count > 0 ? `${(mins / count).toFixed(2)} min per question` : '—';
+              return `
+                <div style="margin-top:0.7rem; padding:0.7rem 0.9rem; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md); font-size:0.83rem; line-height:1.55;">
+                  <div>Total window: <strong style="color:var(--color-primary-light);">${this.formatDurationLabel(mins)}</strong> for ${count} questions —
+                    <strong id="duration-per-question" style="color:var(--text-main);">${perQ}</strong>.</div>
+                  <div style="color:var(--text-muted);">
+                    Allowed range ${CreateQuizView.DURATION_MIN_MINUTES}–${CreateQuizView.DURATION_MAX_MINUTES} minutes.
+                    The clock auto-submits when it reaches zero.
+                  </div>
                 </div>
               `;
             })()}
@@ -587,6 +672,83 @@ class CreateQuizView {
     if (charBadge) charBadge.textContent = `${val.length} characters`;
   }
 
+  toggleMic() {
+    if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+      if (window.app) window.app.showToast('Speech recognition is not supported in this browser.', 'error');
+      return;
+    }
+
+    if (this.isRecording) {
+      if (this.recognition) {
+        this.recognition.stop();
+      }
+      return;
+    }
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    this.recognition = new SpeechRecognition();
+    this.recognition.continuous = true;
+    this.recognition.interimResults = true;
+    this.recognition.lang = 'en-IN'; // Set to Indian English as it's an Indian education app
+
+    const micBtn = document.getElementById('mic-btn');
+    const micIcon = document.getElementById('mic-icon');
+    const micText = document.getElementById('mic-text');
+
+    this.recognition.onstart = () => {
+      this.isRecording = true;
+      if (micBtn) {
+        micBtn.classList.add('recording-pulse');
+        micBtn.style.backgroundColor = 'var(--color-danger)';
+        micBtn.style.color = '#fff';
+      }
+      if (micText) micText.textContent = 'Recording... (Click to stop)';
+      if (window.app) window.app.showToast('Mic on. Start speaking...', 'success');
+    };
+
+    this.recognition.onresult = (event) => {
+      let finalTranscript = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + ' ';
+        }
+      }
+      if (finalTranscript) {
+        const textarea = document.getElementById('notes-textarea');
+        if (textarea) {
+          const currentVal = textarea.value;
+          const newVal = (currentVal + (currentVal.endsWith(' ') || currentVal === '' ? '' : ' ') + finalTranscript);
+          textarea.value = newVal;
+          this.onNotesChange(newVal);
+        }
+      }
+    };
+
+    this.recognition.onerror = (event) => {
+      console.error('Speech recognition error', event.error);
+      if (window.app) window.app.showToast(`Microphone error: ${event.error}`, 'error');
+      this.stopMicUI();
+    };
+
+    this.recognition.onend = () => {
+      this.stopMicUI();
+    };
+
+    this.recognition.start();
+  }
+
+  stopMicUI() {
+    this.isRecording = false;
+    const micBtn = document.getElementById('mic-btn');
+    const micText = document.getElementById('mic-text');
+    if (micBtn) {
+      micBtn.classList.remove('recording-pulse');
+      micBtn.style.backgroundColor = '';
+      micBtn.style.color = '';
+    }
+    if (micText) micText.textContent = 'Dictate';
+  }
+
   onTopicTitleChange(val) {
     this.customTopicTitle = val;
   }
@@ -702,6 +864,133 @@ class CreateQuizView {
     this.render();
   }
 
+  // =========================================================================
+  // EXAM TIME LIMIT
+  //
+  // Before this existed the exam window was invisible and non-negotiable: the
+  // player allowed 1.5 minutes per question and the student was never told.
+  // That is wrong for a mock — SSC CGL gives ~0.96 min/question, UPSC Prelims
+  // ~1.2, and a descriptive-style drill may want 3. The limit is now chosen at
+  // creation time and frozen onto the quiz row, exactly like the marking
+  // scheme, so re-attempts of the same quiz are timed identically.
+  // =========================================================================
+
+  /** Bounds for a hand-typed limit. One minute is useless, ten hours is a typo. */
+  static DURATION_MIN_MINUTES = 1;
+  static DURATION_MAX_MINUTES = 600;
+
+  /**
+   * The fallback the player applies when no limit is stored.
+   * Must stay in step with `_resetAttemptState()` in js/views/quiz-player.js,
+   * which is the authority — this copy only exists so the form can *show* the
+   * number before the quiz is created. scratch/verify-quiz-timer.js asserts the
+   * two agree.
+   */
+  getAutoDurationMinutes(questionCount = this.selectedQuestionCount) {
+    return Math.max(5, Math.round((Number(questionCount) || 0) * 1.5));
+  }
+
+  /** Minutes that will actually apply, whichever mode is selected. */
+  getEffectiveDurationMinutes() {
+    if (this.durationMode === 'CUSTOM') return this.customDurationMinutes;
+    return this.getAutoDurationMinutes();
+  }
+
+  /**
+   * Seconds to persist on the quiz row, or `null` for AUTO.
+   *
+   * AUTO deliberately stores nothing rather than storing the computed number.
+   * The AI can return fewer questions than requested, and the player derives
+   * AUTO from the questions it really has — so leaving it null keeps the
+   * per-question budget honest instead of freezing a stale total.
+   */
+  getExamDurationSecondsForSave() {
+    if (this.durationMode !== 'CUSTOM') return null;
+    return this.customDurationMinutes * 60;
+  }
+
+  /** `null` selects AUTO; any number selects that many minutes. */
+  setDurationPreset(minutes) {
+    if (minutes === null) {
+      this.durationMode = 'AUTO';
+    } else {
+      this.durationMode = 'CUSTOM';
+      this.customDurationMinutes = this._clampDuration(minutes);
+      this.customDurationRaw = String(this.customDurationMinutes);
+    }
+    if (window.audioEngine) window.audioEngine.playClick();
+    this.render();
+  }
+
+  _clampDuration(value) {
+    const min = CreateQuizView.DURATION_MIN_MINUTES;
+    const max = CreateQuizView.DURATION_MAX_MINUTES;
+    let num = parseInt(value, 10);
+    if (isNaN(num)) num = 30;
+    return Math.max(min, Math.min(max, num));
+  }
+
+  /**
+   * Lenient while typing: store the raw string and only repaint the summary.
+   * No render() — rebuilding innerHTML would blow away focus and the caret
+   * after the first keystroke.
+   */
+  onCustomDurationInput(rawVal) {
+    this.customDurationRaw = rawVal;
+    this.durationMode = 'CUSTOM';
+
+    const num = parseInt(rawVal, 10);
+    const min = CreateQuizView.DURATION_MIN_MINUTES;
+    const max = CreateQuizView.DURATION_MAX_MINUTES;
+    if (!isNaN(num) && num >= min && num <= max) {
+      this.customDurationMinutes = num;
+    }
+    this.updateDurationSummary();
+  }
+
+  /** Commit on blur or Enter: clamp, normalise the text, then re-render. */
+  onCustomDurationBlur() {
+    this.customDurationMinutes = this._clampDuration(this.customDurationRaw);
+    this.customDurationRaw = String(this.customDurationMinutes);
+    this.durationMode = 'CUSTOM';
+    this.render();
+  }
+
+  stepDuration(delta) {
+    this.durationMode = 'CUSTOM';
+    this.customDurationMinutes = this._clampDuration(this.customDurationMinutes + delta);
+    this.customDurationRaw = String(this.customDurationMinutes);
+    this.render();
+  }
+
+  /**
+   * Repaint the live summary without a re-render, so it can be called from
+   * `oninput`. Mirrors `updateScopeBadge()` for the page range.
+   */
+  updateDurationSummary() {
+    const total = document.getElementById('duration-total-badge');
+    const perQ = document.getElementById('duration-per-question');
+
+    const mins = this.getEffectiveDurationMinutes();
+    const count = Number(this.selectedQuestionCount) || 0;
+
+    if (total) total.textContent = this.formatDurationLabel(mins);
+    if (perQ) {
+      perQ.textContent = count > 0
+        ? `${(mins / count).toFixed(2)} min per question`
+        : '—';
+    }
+  }
+
+  /** "45 min" / "1h 30m" — hours once past 60, so long papers stay readable. */
+  formatDurationLabel(minutes) {
+    const m = Math.max(0, Math.round(Number(minutes) || 0));
+    if (m < 60) return `${m} min`;
+    const h = Math.floor(m / 60);
+    const rem = m % 60;
+    return rem === 0 ? `${h}h` : `${h}h ${rem}m`;
+  }
+
   setLanguage(lang) {
     this.selectedLanguage = lang;
     this.render();
@@ -762,6 +1051,76 @@ class CreateQuizView {
 
       updateStep('step-reading', false, true);
       updateStep('step-extracting', true);
+
+      // ---- PDF Quiz Detection Step ----
+      // Before generating new questions, check if the PDF already contains
+      // quiz/MCQ questions. If it does, extract and use them directly.
+      if (this.activeSource === 'PDF' && sourceContent) {
+        app.handleGenerationProgress({
+          message: 'Scanning PDF for existing quiz questions...',
+          badgeText: 'Quiz Detection',
+          countText: 'Checking if PDF already contains MCQs...',
+          percent: 20,
+          showBatchCard: true
+        });
+
+        const detection = await window.geminiService.detectAndExtractExistingQuiz({
+          sourceContent,
+          sourceTitle,
+          subject: this.selectedSubject,
+          language: this.selectedLanguage,
+          onStatusUpdate: (status) => {
+            app.handleGenerationProgress(status);
+          }
+        });
+
+        if (detection.found && detection.questions && detection.questions.length > 0) {
+          // Existing quiz detected! Use extracted questions directly.
+          updateStep('step-extracting', false, true);
+          updateStep('step-formulating', false, true);
+          updateStep('step-crafting', true);
+
+          app.handleGenerationProgress({
+            message: `Found ${detection.questions.length} existing MCQs in PDF! Extracting...`,
+            badgeText: 'Quiz Detected ✓',
+            countText: `${detection.questions.length} questions extracted from PDF`,
+            percent: 90,
+            showBatchCard: true
+          });
+
+          await new Promise(r => setTimeout(r, 500));
+          updateStep('step-crafting', false, true);
+
+          // Save extracted quiz into IndexedDB
+          const quizId = await saveNewQuiz({
+            title: detection.title || `${sourceTitle} — Extracted Quiz`,
+            subject: this.selectedSubject,
+            difficulty: this.selectedDifficulty,
+            quizMode: this.selectedQuizMode,
+            language: this.selectedLanguage,
+            scoringPreset: this.selectedScoringPreset,
+            examDurationSeconds: this.getExamDurationSecondsForSave(),
+            sourceType: this.activeSource,
+            sourceTitle: sourceTitle,
+            pageRangeText: `Pages ${fromPageNum}–${toPageNum}`
+          }, detection.questions);
+
+          app.endGeneration();
+          app.showToast(`${detection.questions.length} existing quiz questions extracted from PDF! 📋`, 'success');
+          app.startQuiz(quizId);
+          return;
+        }
+
+        // No existing quiz found — proceed with normal AI generation
+        app.handleGenerationProgress({
+          message: 'No existing quiz found in PDF. Generating fresh MCQs...',
+          badgeText: 'AI Generation',
+          countText: 'Preparing AI quiz generation...',
+          percent: 30,
+          showBatchCard: true
+        });
+      }
+
       await new Promise(r => setTimeout(r, 400));
       updateStep('step-extracting', false, true);
 
@@ -789,6 +1148,7 @@ class CreateQuizView {
       await new Promise(r => setTimeout(r, 400));
       updateStep('step-crafting', false, true);
 
+
       // Save into IndexedDB
       const quizId = await saveNewQuiz({
         title: generated.title || `${sourceTitle} Quiz`,
@@ -797,6 +1157,9 @@ class CreateQuizView {
         quizMode: this.selectedQuizMode,
         language: this.selectedLanguage,
         scoringPreset: this.selectedScoringPreset,
+        // null for AUTO — the player then derives the window from the questions
+        // it actually received. See getExamDurationSecondsForSave().
+        examDurationSeconds: this.getExamDurationSecondsForSave(),
         sourceType: this.activeSource,
         sourceTitle: sourceTitle,
         pageRangeText: this.activeSource === 'PDF' ? `Pages ${fromPageNum}–${toPageNum}` : null

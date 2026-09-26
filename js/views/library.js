@@ -13,6 +13,10 @@ class LibraryView {
     this.selectedDifficulty = 'ALL';
     this.selectedSort = 'NEWEST';
     this.revealedBookmarkIds = new Set();
+
+    // Saved-questions subject switch. 'ALL' shows every subject, grouped under
+    // its own heading; any other value narrows to that one subject.
+    this.bookmarkSubject = 'ALL';
   }
 
   async render(initialTab) {
@@ -23,6 +27,25 @@ class LibraryView {
 
     const allQuizzes = await getAllQuizzes();
     const bookmarks = await getBookmarkedQuestions();
+
+    // Subject buckets for the saved-questions switch. Derived from the same
+    // helper the sections render from, so a chip's count can never disagree
+    // with the number of cards it reveals.
+    const bookmarkGroups = groupBookmarksBySubject(bookmarks);
+
+    // A subject the user had selected can disappear — they removed its last
+    // bookmark, or deleted the parent quiz. Falling back to ALL avoids an empty
+    // screen with an active filter the chips no longer offer.
+    if (this.bookmarkSubject !== 'ALL' &&
+        !bookmarkGroups.some(g => g.subject === this.bookmarkSubject)) {
+      this.bookmarkSubject = 'ALL';
+    }
+
+    const visibleGroups = this.bookmarkSubject === 'ALL'
+      ? bookmarkGroups
+      : bookmarkGroups.filter(g => g.subject === this.bookmarkSubject);
+
+    const visibleBookmarkCount = visibleGroups.reduce((n, g) => n + g.questions.length, 0);
 
     // Filter & sort quizzes
     let filteredQuizzes = allQuizzes.filter(q => {
@@ -199,58 +222,112 @@ class LibraryView {
               </div>
             ` : ''}
 
-            <!-- Bookmarks List -->
-            <div style="display:flex; flex-direction:column; gap:1rem;">
+            <!-- Subject switch. One chip per subject that actually has saved
+                 questions, so the row never offers an empty bucket. -->
+            ${bookmarkGroups.length > 0 ? `
+              <div class="bm-subject-switch" role="group" aria-label="Filter saved questions by subject">
+                <span class="bm-switch-label">
+                  <i data-lucide="folder-tree" style="width:15px;height:15px;"></i>
+                  <span>Subject</span>
+                </span>
+
+                <button type="button"
+                  class="select-chip bm-subject-chip ${this.bookmarkSubject === 'ALL' ? 'active' : ''}"
+                  aria-pressed="${this.bookmarkSubject === 'ALL' ? 'true' : 'false'}"
+                  onclick="libraryView.setBookmarkSubject('ALL')">
+                  <span>All Subjects</span>
+                  <span class="bm-chip-count">${bookmarks.length}</span>
+                </button>
+
+                ${bookmarkGroups.map(g => `
+                  <button type="button"
+                    class="select-chip bm-subject-chip ${this.bookmarkSubject === g.subject ? 'active' : ''}"
+                    aria-pressed="${this.bookmarkSubject === g.subject ? 'true' : 'false'}"
+                    onclick="libraryView.setBookmarkSubject('${SecurityUtils.escapeHtml(UIUtils.escapeJs(g.subject))}')">
+                    <span>${SecurityUtils.escapeHtml(g.subject)}</span>
+                    <span class="bm-chip-count">${g.questions.length}</span>
+                  </button>
+                `).join('')}
+              </div>
+            ` : ''}
+
+            <!-- Bookmarks List, grouped by subject -->
+            <div style="display:flex; flex-direction:column; gap:1.75rem;">
               ${bookmarks.length === 0 ? `
                 <div class="glass-panel" style="padding:3rem 2rem; text-align:center; color:var(--text-muted);">
                   <i data-lucide="bookmark" style="width:48px;height:48px;margin-bottom:0.75rem;opacity:0.5;"></i>
                   <p style="font-size:1.05rem; font-weight:600;">No saved questions yet</p>
-                  <p style="font-size:0.85rem; margin-top:0.25rem;">Bookmark critical questions during quizzes to review them here.</p>
+                  <p style="font-size:0.85rem; margin-top:0.25rem;">Tap the bookmark icon on any question — during a quiz or on the results screen — and it lands here, filed under its subject.</p>
                 </div>
-              ` : bookmarks.map((q, idx) => {
-                const isRevealed = this.revealedBookmarkIds.has(q.id);
-                const letters = ['A', 'B', 'C', 'D'];
+              ` : visibleGroups.map(group => `
+                <section class="bm-subject-group" aria-label="${SecurityUtils.escapeHtml(group.subject)}">
+                  <header class="bm-group-header">
+                    <h3 class="bm-group-title">${SecurityUtils.escapeHtml(group.subject)}</h3>
+                    <span class="badge badge-primary">${group.questions.length} saved</span>
+                    <span class="bm-group-rule" aria-hidden="true"></span>
+                    <button type="button" class="btn btn-secondary btn-sm"
+                      onclick="libraryView.startBookmarksDrill('${SecurityUtils.escapeHtml(UIUtils.escapeJs(group.subject))}')"
+                      title="Practise only the ${SecurityUtils.escapeHtml(group.subject)} questions">
+                      <i data-lucide="play" style="width:14px;height:14px;"></i>
+                      <span>Drill this subject</span>
+                    </button>
+                  </header>
 
-                return `
-                  <div class="review-item-card">
-                    <div style="display:flex; align-items:center; justify-content:space-between;">
-                      <div style="display:flex; align-items:center; gap:0.5rem;">
-                        <span class="badge badge-primary">${SecurityUtils.escapeHtml(q.subject)}</span>
-                        ${q.sourcePage ? `<span class="badge badge-muted">Page ${q.sourcePage}</span>` : ''}
-                        <span style="font-size:0.8rem; color:var(--text-muted);">From: ${SecurityUtils.escapeHtml(q.quizTitle)}</span>
-                      </div>
+                  <div style="display:flex; flex-direction:column; gap:1rem;">
+                    ${group.questions.map((q, idx) => {
+                      const isRevealed = this.revealedBookmarkIds.has(q.id);
+                      const letters = ['A', 'B', 'C', 'D'];
+                      const correct = (q.options || [])[q.correctAnswerIndex];
 
-                      <button class="bookmark-toggle-btn bookmarked" title="Remove Bookmark" onclick="libraryView.removeBookmark(${q.id})">
-                        <i data-lucide="bookmark" style="width:20px;height:20px;fill:currentColor;"></i>
-                      </button>
-                    </div>
+                      return `
+                        <div class="review-item-card">
+                          <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
+                            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+                              <span class="badge badge-primary">${SecurityUtils.escapeHtml(q.subject)}</span>
+                              ${q.sourcePage ? `<span class="badge badge-muted">Page ${q.sourcePage}</span>` : ''}
+                              <span style="font-size:0.8rem; color:var(--text-muted);">From: ${SecurityUtils.escapeHtml(q.quizTitle)}</span>
+                            </div>
 
-                    <div style="font-size:1.08rem; font-weight:700; color:var(--text-main);">
-                      ${idx + 1}. ${SecurityUtils.sanitizeHtml(q.questionText)}
-                    </div>
-
-                    <!-- Collapsible Reveal Accordion -->
-                    <div>
-                      <button class="btn btn-secondary btn-sm" onclick="libraryView.toggleReveal(${q.id})">
-                        <i data-lucide="${isRevealed ? 'chevron-up' : 'eye'}"></i>
-                        <span>${isRevealed ? 'Hide Answer & Explanation' : 'Reveal Answer & Explanation'}</span>
-                      </button>
-
-                      ${isRevealed ? `
-                        <div class="explanation-card" style="margin-top:0.75rem;">
-                          <div style="font-weight:700; color:var(--color-success);">
-                            Correct Answer: Option (${letters[q.correctAnswerIndex]}) — ${SecurityUtils.escapeHtml(q.options[q.correctAnswerIndex])}
+                            <button class="bookmark-toggle-btn bookmarked" title="Remove Bookmark" onclick="libraryView.removeBookmark(${q.id})">
+                              <i data-lucide="bookmark" style="width:20px;height:20px;fill:currentColor;"></i>
+                            </button>
                           </div>
-                          <div class="explanation-body" style="margin-top:0.35rem;">
-                            ${SecurityUtils.sanitizeHtml(q.explanation)}
+
+                          <div style="font-size:1.08rem; font-weight:700; color:var(--text-main);">
+                            ${idx + 1}. ${SecurityUtils.sanitizeHtml(q.questionText)}
+                          </div>
+
+                          <!-- Collapsible Reveal Accordion -->
+                          <div>
+                            <button class="btn btn-secondary btn-sm" onclick="libraryView.toggleReveal(${q.id})">
+                              <i data-lucide="${isRevealed ? 'chevron-up' : 'eye'}"></i>
+                              <span>${isRevealed ? 'Hide Answer & Explanation' : 'Reveal Answer & Explanation'}</span>
+                            </button>
+
+                            ${isRevealed ? `
+                              <div class="explanation-card" style="margin-top:0.75rem;">
+                                <div style="font-weight:700; color:var(--color-success);">
+                                  Correct Answer: Option (${letters[q.correctAnswerIndex] || '?'})${correct ? ` — ${SecurityUtils.escapeHtml(correct)}` : ''}
+                                </div>
+                                <div class="explanation-body" style="margin-top:0.35rem;">
+                                  ${SecurityUtils.sanitizeHtml(q.explanation)}
+                                </div>
+                              </div>
+                            ` : ''}
                           </div>
                         </div>
-                      ` : ''}
-                    </div>
+                      `;
+                    }).join('')}
                   </div>
-                `;
-              }).join('')}
+                </section>
+              `).join('')}
             </div>
+
+            ${bookmarks.length > 0 && visibleBookmarkCount === 0 ? `
+              <div class="glass-panel" style="padding:2rem; text-align:center; color:var(--text-muted);">
+                No saved questions in this subject.
+              </div>
+            ` : ''}
           </div>
         `}
       </div>
@@ -276,6 +353,13 @@ class LibraryView {
 
   setDifficultyFilter(diff) {
     this.selectedDifficulty = diff;
+    this.render();
+  }
+
+  /** Narrow the saved-questions list to one subject, or 'ALL' for every group. */
+  setBookmarkSubject(subject) {
+    this.bookmarkSubject = subject || 'ALL';
+    if (window.audioEngine) window.audioEngine.playClick();
     this.render();
   }
 
@@ -307,25 +391,51 @@ class LibraryView {
     });
   }
 
-  async startBookmarksDrill() {
-    const bookmarks = await getBookmarkedQuestions();
-    if (bookmarks.length === 0) {
-      app.showToast('You have no bookmarked questions.', 'error');
+  /**
+   * Build a practice quiz from saved questions.
+   *
+   * @param {string} [subject] restrict the drill to one subject. Omitted (or
+   *        'ALL') drills every saved question. A subject-specific drill is
+   *        titled and tagged with that subject, so it files itself back into the
+   *        right bucket instead of landing in a generic "Mixed" pile.
+   */
+  async startBookmarksDrill(subject) {
+    const all = await getBookmarkedQuestions();
+    const scoped = (!subject || subject === 'ALL')
+      ? all
+      : all.filter(q => q.subject === subject);
+
+    if (scoped.length === 0) {
+      app.showToast(
+        subject && subject !== 'ALL'
+          ? `No saved questions in ${subject} yet.`
+          : 'You have no bookmarked questions.',
+        'error'
+      );
       return;
     }
 
-    // Create custom dynamic practice quiz
+    const isScoped = !!subject && subject !== 'ALL';
+
     const drillId = await saveNewQuiz({
-      title: '⭐ Saved Bookmarks Mastery Drill',
-      subject: 'Mixed Revisions',
+      title: isScoped
+        ? `⭐ ${subject} — Bookmarks Drill`
+        : '⭐ Saved Bookmarks Mastery Drill',
+      // Tagging the drill with the real subject keeps it grouped correctly if
+      // the student bookmarks questions from inside the drill itself. The old
+      // hard-coded 'Mixed Revisions' created a phantom subject bucket.
+      subject: isScoped ? subject : 'Mixed Revisions',
       difficulty: 'MIXED',
       quizMode: 'PRACTICE',
       language: 'ENGLISH',
       sourceType: 'TEXT_NOTES',
       sourceTitle: 'Saved Bookmarks'
-    }, bookmarks);
+    }, scoped);
 
-    app.showToast('Created Bookmarks Practice Quiz!', 'success');
+    app.showToast(
+      `Created a ${scoped.length}-question drill from your saved ${isScoped ? subject : ''} questions!`.replace('  ', ' '),
+      'success'
+    );
     app.startQuiz(drillId);
   }
 }

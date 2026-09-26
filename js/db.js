@@ -58,6 +58,39 @@ db.version(9).stores({
   examDetails: null
 });
 
+/**
+ * v10 normalises every `isBookmarked` field to the numbers 1 and 0.
+ *
+ * THE BUG THIS REPAIRS
+ * `isBookmarked` is declared as an INDEX — on `questions` in version(1), and on
+ * `aiTeacherExplanations` in version(7). IndexedDB cannot index boolean values:
+ * a record whose indexed property is `true` or `false` is left out of that index
+ * entirely. Every write site stored a JavaScript boolean, so the Library's
+ * `where('isBookmarked')` query matched nothing and saved questions never
+ * appeared. (`.equals(true)` is worse than useless: a boolean is not a valid
+ * IndexedDB key at all, so the query rejected with a DataError and the Library
+ * render threw before painting anything.)
+ *
+ * The dashboard's bookmark count kept working the whole time because it reads
+ * with an in-memory `filter()`, never the index — which is why the data was
+ * provably on disk and counted in one place while invisible in another.
+ *
+ * `aiTeacherExplanations` is included even though nothing queries its index
+ * today. Leaving half the database in an un-indexable representation just
+ * preserves the trap for whoever writes that query next.
+ *
+ * `? 1 : 0` preserves truthiness, so `true` becomes 1 and every existing
+ * bookmark survives. `toCollection().modify()` walks the PRIMARY key, not the
+ * broken index — an index query here would skip exactly the rows needing repair.
+ */
+db.version(10).stores({}).upgrade(async (tx) => {
+  for (const tableName of ['questions', 'aiTeacherExplanations']) {
+    await tx.table(tableName).toCollection().modify((row) => {
+      row.isBookmarked = row.isBookmarked ? 1 : 0;
+    });
+  }
+});
+
 
 
 // =========================================================================
@@ -204,7 +237,18 @@ async function saveNewQuiz(quizMeta, questionsList) {
       sourceTitle: quizMeta.sourceTitle || 'Direct Ingestion',
       pageRangeText: quizMeta.pageRangeText || null,
       totalQuestions: questionsList.length,
+      // Time ALREADY SPENT on the attempt, written at submit. Not a limit.
       durationSeconds: 0,
+      // The exam window ALLOWED for this quiz, chosen at creation time and
+      // frozen here so re-attempts are timed identically — the same lifecycle
+      // as the marking scheme below. `null` means "not specified", and the
+      // player falls back to its per-question heuristic.
+      //
+      // Deliberately not added to the version(1) `stores()` index string: that
+      // declares indexes only, and an unindexed property needs no migration.
+      examDurationSeconds: Number(quizMeta.examDurationSeconds) > 0
+        ? Math.round(Number(quizMeta.examDurationSeconds))
+        : null,
       // Marking scheme chosen at creation time, so re-attempts score identically.
       ...resolveScoringConfig(quizMeta),
       score: 0,
@@ -227,7 +271,8 @@ async function saveNewQuiz(quizMeta, questionsList) {
       correctAnswerIndex: Number(q.correctAnswerIndex ?? 0),
       explanation: q.explanation || 'No explanation provided.',
       sourcePage: q.sourcePage ?? null,
-      isBookmarked: false,
+      // 0, not false — see toBookmarkFlag() and the v10 migration.
+      isBookmarked: BOOKMARK_OFF,
       userSelectedOptionIndex: null
     }));
 
@@ -281,29 +326,101 @@ async function deleteQuiz(quizId) {
 }
 
 /**
- * Toggle or update question bookmark state
+ * The only two values `questions.isBookmarked` may ever hold.
+ *
+ * NOT `true`/`false`. The field is an IndexedDB index (see the v10 migration
+ * above) and IndexedDB silently omits boolean-valued records from an index, so
+ * a boolean here makes the row unfindable. Route every write through
+ * `toBookmarkFlag()` rather than assigning a raw value.
  */
-async function updateQuestionBookmark(questionId, isBookmarked) {
-  return await db.questions.update(Number(questionId), { isBookmarked: Boolean(isBookmarked) });
+const BOOKMARK_ON = 1;
+const BOOKMARK_OFF = 0;
+
+/** Coerce anything truthy to 1 and anything else to 0. */
+function toBookmarkFlag(value) {
+  return value ? BOOKMARK_ON : BOOKMARK_OFF;
 }
 
 /**
- * Fetch all bookmarked questions across all quizzes
+ * Toggle or update question bookmark state.
+ */
+async function updateQuestionBookmark(questionId, isBookmarked) {
+  return await db.questions.update(Number(questionId), {
+    isBookmarked: toBookmarkFlag(isBookmarked)
+  });
+}
+
+/**
+ * Fetch all bookmarked questions across all quizzes, newest first.
+ *
+ * WHY THIS SCANS INSTEAD OF USING THE INDEX
+ * An indexed `where('isBookmarked').equals(1)` would be faster, and after the
+ * v10 migration it would even be correct. It is deliberately not used, because
+ * this query has exactly one job — never lose a bookmark — and the index cannot
+ * promise that:
+ *
+ *   • A backup file written by an older build contains boolean values. Import
+ *     writes rows through `bulkPut` largely verbatim, so one restore would make
+ *     those bookmarks invisible again.
+ *   • Any future write site that forgets `toBookmarkFlag()` reintroduces the
+ *     original bug, silently, with no error anywhere.
+ *
+ * A predicate on the row itself is immune to the representation. The table is
+ * a few questions per quiz for a single student, so the scan is not the
+ * bottleneck — the N+1 it replaces was.
  */
 async function getBookmarkedQuestions() {
-  const bookmarks = await db.questions.where('isBookmarked').equals(1).or('isBookmarked').equals(true).toArray();
-  
-  // Enrich with quiz title and subject
-  const enriched = await Promise.all(bookmarks.map(async (q) => {
-    const parentQuiz = await db.quizzes.get(q.quizId);
+  const bookmarks = await db.questions.filter(q => !!q.isBookmarked).toArray();
+
+  // One read of the quizzes table, then a Map lookup. This used to issue a
+  // separate `db.quizzes.get()` for EVERY bookmark — and the Library re-renders
+  // on every keystroke of its search box, so a student with 60 bookmarks was
+  // firing 60 IndexedDB reads per character typed.
+  const allQuizzes = await db.quizzes.toArray();
+  const quizById = new Map(allQuizzes.map(qz => [qz.id, qz]));
+
+  const enriched = bookmarks.map((q) => {
+    const parentQuiz = quizById.get(q.quizId);
     return {
       ...q,
       quizTitle: parentQuiz ? parentQuiz.title : 'Study Quiz',
-      subject: parentQuiz ? parentQuiz.subject : 'General'
+      // `questions` rows carry no subject of their own; it lives on the parent
+      // quiz. The Library groups by this value, so the fallback has to be a
+      // stable string rather than undefined or an empty bucket label.
+      subject: (parentQuiz && parentQuiz.subject) ? parentQuiz.subject : 'Uncategorised'
     };
-  }));
+  });
 
+  // Most recently added first — question ids are auto-increment, so a higher id
+  // is a later insert.
+  enriched.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
   return enriched;
+}
+
+/**
+ * Group bookmarked questions by the subject of their parent quiz.
+ *
+ * Returns `[{ subject, questions[] }]` sorted by count descending, then
+ * alphabetically, so the subject a student has actually been working on leads.
+ * Kept here rather than in the view because the Library needs both the grouped
+ * shape and the per-subject counts, and deriving them twice would let the
+ * filter chips disagree with the sections they filter.
+ */
+function groupBookmarksBySubject(bookmarks) {
+  const groups = new Map();
+
+  for (const q of (bookmarks || [])) {
+    const subject = (q && q.subject) ? String(q.subject) : 'Uncategorised';
+    if (!groups.has(subject)) groups.set(subject, []);
+    groups.get(subject).push(q);
+  }
+
+  return [...groups.entries()]
+    .map(([subject, questions]) => ({ subject, questions }))
+    .sort((a, b) =>
+      b.questions.length - a.questions.length ||
+      a.subject.localeCompare(b.subject)
+    );
 }
 
 /**
@@ -318,7 +435,11 @@ async function updateQuizCompletion(quizId, resultData, questionsState) {
       if (q.id) {
         await db.questions.update(q.id, {
           userSelectedOptionIndex: q.userSelectedOptionIndex ?? null,
-          isBookmarked: Boolean(q.isBookmarked)
+          // Submitting a quiz rewrites every one of its question rows. Writing a
+          // boolean here would un-index that quiz's bookmarks again on each
+          // submit, which is how the original bug kept coming back even for
+          // rows that had been saved correctly moments earlier.
+          isBookmarked: toBookmarkFlag(q.isBookmarked)
         });
       }
     }
@@ -824,7 +945,12 @@ async function getQuizAttemptSummary(quizId) {
  */
 const BACKUP_TABLE_SPECS = [
   { key: 'quizzes',               label: 'Quizzes',                autoId: true,  required: ['title'] },
-  { key: 'questions',             label: 'Questions',              autoId: true,  required: ['questionText'], parentRef: { field: 'quizId', table: 'quizzes' } },
+  // `normalise` runs on every imported row before it is written. Backups taken
+  // from a build older than v10 hold `isBookmarked: true/false`, and a boolean
+  // in an indexed field is invisible to IndexedDB — restoring one verbatim would
+  // silently hide those bookmarks all over again.
+  { key: 'questions',             label: 'Questions',              autoId: true,  required: ['questionText'], parentRef: { field: 'quizId', table: 'quizzes' },
+    normalise: (row) => { row.isBookmarked = row.isBookmarked ? 1 : 0; } },
   { key: 'attempts',              label: 'Quiz Attempts',          autoId: true,  required: [],               parentRef: { field: 'quizId', table: 'quizzes' } },
   { key: 'notes',                 label: 'Study Notes',            autoId: true,  required: ['title'] },
   { key: 'customDecks',           label: 'Flashcard Decks',        autoId: true,  required: ['title'] },
@@ -959,6 +1085,14 @@ function _validateBackupTables(tables) {
 
       const missing = spec.required.filter(f => row[f] === undefined || row[f] === null || row[f] === '');
       if (missing.length > 0) { skipped++; continue; }
+
+      // Repair representations that a newer schema requires but an older export
+      // could not have written. Mutates in place — `row` is already a parsed
+      // copy from the backup file, never live data.
+      if (typeof spec.normalise === 'function') {
+        try { spec.normalise(row); }
+        catch (err) { console.warn(`Could not normalise a ${spec.key} row:`, err); }
+      }
 
       kept.push(row);
     }
@@ -1265,6 +1399,17 @@ async function saveNewNote(noteData) {
       importedAt: new Date().toISOString()
     },
     isFavorite: noteData.isFavorite ?? false,
+    // The extraction scope the student typed when creating the note, e.g.
+    // "only the maths questions". Empty string for a full note.
+    //
+    // This entity is a fixed allow-list — a field absent from it is silently
+    // dropped no matter what the caller passes. It is persisted because a
+    // scoped note deliberately omits most of its source, and a reader that does
+    // not say so is misleading: the next time this note is opened it would look
+    // like a complete set of notes with material inexplicably missing.
+    focusInstruction: typeof noteData.focusInstruction === 'string'
+      ? noteData.focusInstruction.trim()
+      : '',
     sections: sectionsList,
     glossaryTerms: Array.isArray(noteData.glossaryTerms) ? noteData.glossaryTerms : [],
     summary: noteData.summary || null,
@@ -2058,7 +2203,12 @@ async function saveAiTeacherExplanation(data) {
     depth: data.depth || 'DETAILED',
     mode: data.mode || 'STUDENT',
     structuredData: data.structuredData || {},
-    isBookmarked: Boolean(data.isBookmarked),
+    // 1/0, not a boolean: `isBookmarked` is indexed on this table too (see the
+    // version(7) declaration), and IndexedDB omits boolean-valued records from
+    // an index. The AI Teacher library happens to read with an in-memory
+    // filter, so it works either way — but storing an un-indexable value leaves
+    // the same landmine the questions table already stepped on.
+    isBookmarked: toBookmarkFlag(data.isBookmarked),
     createdAt: data.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
@@ -2145,11 +2295,13 @@ async function getAllAiTeacherExplanations(options = {}) {
 async function toggleBookmarkAiTeacherExplanation(id) {
   const item = await db.aiTeacherExplanations.get(Number(id));
   if (!item) return false;
-  const newState = !item.isBookmarked;
+  const newState = toBookmarkFlag(!item.isBookmarked);
   await db.aiTeacherExplanations.update(Number(id), {
     isBookmarked: newState,
     updatedAt: new Date().toISOString()
   });
+  // Callers use this to paint the icon, so a truthy/falsy number is fine —
+  // `!!newState` is not needed and would hide the stored representation.
   return newState;
 }
 
