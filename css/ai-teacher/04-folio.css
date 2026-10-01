@@ -1297,3 +1297,197 @@
   0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
   50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
 }
+
+
+/* ==========================================================================
+   NEW ARCHITECTURE: PROGRESSIVE DISCLOSURE & COMPACT LAYOUT
+   ========================================================================== */
+
+/* Metadata Bar */
+.response-analysis-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px dashed rgba(217, 119, 6, 0.28);
+}
+[data-theme="DARK"] .response-analysis-bar {
+  border-bottom-color: rgba(245, 158, 11, 0.2);
+}
+
+.analysis-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.analysis-pill {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.25rem 0.65rem;
+  border-radius: var(--radius-sm);
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  color: #334155;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+[data-theme="DARK"] .analysis-pill {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.1);
+  color: #CBD5E1;
+}
+
+.pill-subject { background: #EEF2FF; border-color: #C7D2FE; color: #4338CA; }
+[data-theme="DARK"] .pill-subject { background: rgba(67, 56, 202, 0.2); border-color: rgba(67, 56, 202, 0.5); color: #818CF8; }
+
+.pill-level { background: #FEF3C7; border-color: #FDE68A; color: #92400E; }
+[data-theme="DARK"] .pill-level { background: rgba(245, 158, 11, 0.2); border-color: rgba(245, 158, 11, 0.5); color: #FBBF24; }
+
+.analysis-exam-relevance {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #B45309;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+[data-theme="DARK"] .analysis-exam-relevance {
+  color: #F59E0B;
+}
+
+/* Compact Modifications */
+.book-query-banner.compact {
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  border-left-width: 4px;
+}
+.query-banner-title.compact {
+  font-size: 1.15rem;
+  margin: 0;
+}
+.teacher-takeaway-box.compact {
+  padding: 0.85rem 1.15rem;
+  margin-bottom: 1rem;
+}
+.foundation-block.compact {
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+.glossary-container.compact {
+  margin-top: 0.85rem;
+  padding-top: 0.85rem;
+}
+.glossary-card.compact {
+  padding: 0.5rem 0.75rem;
+}
+
+/* Collapsible Sections */
+.collapsible-section {
+  background: #FFFDF9;
+  border: 1px solid #E2D9CC;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1rem;
+  overflow: hidden;
+  transition: all 0.2s ease;
+}
+[data-theme="DARK"] .collapsible-section {
+  background: #161C29;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 1rem 1.25rem;
+  cursor: pointer;
+  font-family: 'Merriweather', Georgia, serif;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #0F172A;
+  user-select: none;
+  background: #FAF7F2;
+  list-style: none; /* Hide default arrow */
+}
+.collapsible-header::-webkit-details-marker {
+  display: none;
+}
+[data-theme="DARK"] .collapsible-header {
+  color: #F8FAFC;
+  background: #1A2130;
+}
+
+.collapse-chevron {
+  margin-left: auto;
+  transition: transform 0.3s ease;
+  color: #64748B;
+}
+.collapsible-section[open] .collapse-chevron {
+  transform: rotate(180deg);
+}
+
+.collapsible-body {
+  padding: 1rem 1.25rem 1.25rem;
+  border-top: 1px solid #E2D9CC;
+}
+[data-theme="DARK"] .collapsible-body {
+  border-top-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Sub-Cards within Collapsible */
+.mistakes-trick-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.mistakes-book-card, .trick-book-card, .exam-points-book-card, .summary-book-card, .flowchart-book-card, .diagram-book-card {
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: var(--radius-md);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+[data-theme="DARK"] .mistakes-book-card, [data-theme="DARK"] .trick-book-card, [data-theme="DARK"] .exam-points-book-card, [data-theme="DARK"] .summary-book-card, [data-theme="DARK"] .flowchart-book-card, [data-theme="DARK"] .diagram-book-card {
+  background: #181E2C;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.mistakes-header, .trick-header, .exam-points-header, .summary-header, .flowchart-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: #475569;
+  margin-bottom: 0.85rem;
+}
+[data-theme="DARK"] .mistakes-header, [data-theme="DARK"] .trick-header, [data-theme="DARK"] .exam-points-header, [data-theme="DARK"] .summary-header, [data-theme="DARK"] .flowchart-header {
+  color: #CBD5E1;
+}
+
+.mistake-wrong { color: #DC2626; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.2rem; }
+.mistake-correct { color: #16A34A; font-size: 0.9rem; margin-bottom: 0.75rem; }
+[data-theme="DARK"] .mistake-wrong { color: #F87171; }
+[data-theme="DARK"] .mistake-correct { color: #4ADE80; }
+
+.mnemonic-badge {
+  display: inline-block;
+  background: #FEF3C7;
+  color: #B45309;
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius-sm);
+  font-weight: 800;
+  font-family: monospace;
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+[data-theme="DARK"] .mnemonic-badge {
+  background: rgba(245, 158, 11, 0.2);
+  color: #FCD34D;
+}

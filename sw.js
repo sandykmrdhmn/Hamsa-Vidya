@@ -30,7 +30,7 @@
  */
 
 // Bump this on release to invalidate every cache.
-const CACHE_VERSION = 'v12';
+const CACHE_VERSION = 'v14';
 const SHELL_CACHE = `hamsa-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `hamsa-runtime-${CACHE_VERSION}`;
 const ALL_CACHES = [SHELL_CACHE, RUNTIME_CACHE];
@@ -55,6 +55,8 @@ const SHELL_ASSETS = [
   'css/components/03-create-quiz.css',
   'css/components/04-motion.css',
   'css/components/05-study-notes.css',
+  'css/study-notes.css',
+  'assets/fonts/NotoSansDevanagari.ttf',
   'css/components/06-flashcards.css',
   'css/components/07-global-search.css',
   'css/components/08-doubt-solver.css',
@@ -81,6 +83,7 @@ const SHELL_ASSETS = [
   'css/layout.css',
   'css/responsive.css',
   'css/a11y.css',
+  'css/settings.css',
 
   // Vendor libraries needed just to boot
   'assets/vendor/dexie.min.js',
@@ -90,6 +93,7 @@ const SHELL_ASSETS = [
   // Application modules
   'js/sanitizer.js',
   'js/ui-utils.js',
+  'js/study-preferences.js',
   'js/ai-client.js',
   'js/audio-engine.js',
   'js/db.js',

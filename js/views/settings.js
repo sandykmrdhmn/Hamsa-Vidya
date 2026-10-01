@@ -3,15 +3,222 @@
  */
 
 class SettingsView {
+  static MAX_BACKUP_BYTES = 100 * 1024 * 1024;
   constructor() {
     this.container = document.getElementById('view-settings');
     // 'REPLACE' (default) or 'MERGE' — how an imported backup is applied.
     this.importMode = 'REPLACE';
+    this._renderVersion = 0;
+    this._apiKeyDraft = null;
+    this._keyVisible = false;
+    this._testResult = null;
+    this._testController = null;
+    this._importPending = false;
+    this._exportPending = false;
+    this._resetPending = false;
+    this._sectionState = { profile: false, ai: false, appearance: false, study: true, data: false };
+    this._studyDraft = null;
+    this._storageStatus = {};
+    this._persistPending = false;
+    this._voiceChange = () => this.updateVoiceOptions();
+    window.speechSynthesis?.addEventListener('voiceschanged', this._voiceChange);
+  }
+
+  captureSections() {
+    this.container?.querySelectorAll('details[data-settings-section]').forEach(section => {
+      this._sectionState[section.dataset.settingsSection] = section.open;
+    });
+  }
+
+  preferenceSelect(key, label, choices) {
+    const p = this._studyDraft;
+    return `<label class="settings-field">${label}<select id="study-pref-${key}" onchange="settingsView._studyDraft.${key}=this.value;${key === 'voiceLanguage' ? 'settingsView.updateVoiceOptions()' : ''}">${choices.map(([id, text]) => `<option value="${this.escape(id)}" ${String(p[key]) === id ? 'selected' : ''}>${this.escape(text)}</option>`).join('')}</select></label>`;
+  }
+
+  studyPreferencesHTML() {
+    const store = window.studyPreferences;
+    if (!store) return '<p>Reload the page to load Study Preferences.</p>';
+    this._studyDraft ||= store.get();
+    return `<p class="settings-help">Defaults for new lessons, notes and quizzes. Choices made inside a study tab take priority; saved lessons keep their original settings. Quizzes use bilingual text for Hinglish.</p>
+      <div class="settings-fields">
+      ${this.preferenceSelect('language', 'Study language', store.languages)}
+      ${this.preferenceSelect('level', 'Class / learning level', store.levels)}
+      <label class="settings-field">Target exam (optional)<input id="study-pref-exam" maxlength="120" value="${this.escape(this._studyDraft.exam)}" placeholder="CBSE Class 10, SSC, UPSC…" oninput="settingsView._studyDraft.exam=this.value"></label>
+      ${this.preferenceSelect('depth', 'Explanation depth', store.depths)}
+      ${this.preferenceSelect('voiceLanguage', 'Read-aloud language', [['AUTO', 'Match the lesson'], ['HINDI', 'Hindi'], ['ENGLISH', 'English']])}
+      <label class="settings-field">Read-aloud voice<select id="study-pref-voiceURI" onchange="settingsView._studyDraft.voiceURI=this.value"><option value="">Automatic voice</option></select></label>
+      <label class="settings-field">Reading speed<input id="study-pref-voiceRate" type="range" min="0.6" max="1.4" step="0.05" value="${Number(this._studyDraft.voiceRate)}" oninput="settingsView._studyDraft.voiceRate=Number(this.value);document.getElementById('study-voice-rate').textContent=Number(this.value).toFixed(2)+'×'"><output id="study-voice-rate" for="study-pref-voiceRate">${Number(this._studyDraft.voiceRate).toFixed(2)}×</output></label>
+      </div><div class="settings-actions"><button class="btn btn-primary btn-sm" onclick="settingsView.saveStudyPreferences()">Save study defaults</button><button class="btn btn-secondary btn-sm" ${window.speechSynthesis ? '' : 'disabled'} onclick="settingsView.previewVoice()">Preview voice</button></div>
+      <p id="study-pref-status" class="settings-help" role="status" aria-live="polite">Voice availability depends on your device. Narration starts only when you choose Read Aloud.</p>`;
+  }
+
+  updateVoiceOptions() {
+    const select = this.container?.querySelector('#study-pref-voiceURI');
+    if (!select || !this._studyDraft) return;
+    select.replaceChildren(new Option('Automatic voice', ''));
+    const voices = window.speechSynthesis?.getVoices() || [];
+    const chosen = this._studyDraft.voiceURI;
+    const language = this._studyDraft.voiceLanguage === 'HINDI' ? 'hi' : this._studyDraft.voiceLanguage === 'ENGLISH' ? 'en' : null;
+    voices.filter(voice => !language || voice.lang.toLowerCase().startsWith(language)).forEach(voice => {
+      select.add(new Option(`${voice.name} (${voice.lang})`, voice.voiceURI));
+    });
+    if (chosen && ![...select.options].some(option => option.value === chosen)) select.add(new Option('Saved voice unavailable here · automatic fallback', chosen));
+    select.value = chosen;
+  }
+
+  saveStudyPreferences() {
+    try {
+      this._studyDraft = window.studyPreferences.save(this._studyDraft);
+      document.getElementById('study-pref-status').textContent = 'Study defaults saved on this device.';
+      app.showToast('Study defaults saved.', 'success');
+    } catch (error) { app.showToast(`Could not save study defaults: ${error.message}`, 'error'); }
+  }
+
+  previewVoice() {
+    if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) return;
+    const p = window.studyPreferences.normalize(this._studyDraft);
+    const hindi = p.voiceLanguage === 'HINDI' || (p.voiceLanguage === 'AUTO' && ['HINDI', 'HINGLISH', 'BILINGUAL'].includes(p.language));
+    const utterance = new SpeechSynthesisUtterance(hindi ? 'हर छोटा कदम आपकी समझ को बेहतर बनाता है। आराम से पढ़ें और सीखते रहें।' : 'Every small step improves your understanding. Read comfortably and keep learning.');
+    utterance.rate = p.voiceRate; utterance.lang = hindi ? 'hi-IN' : 'en-IN';
+    const voices = window.speechSynthesis.getVoices();
+    utterance.voice = voices.find(voice => voice.voiceURI === p.voiceURI && voice.lang.startsWith(utterance.lang.slice(0, 2)))
+      || voices.find(voice => voice.lang.startsWith(utterance.lang.slice(0, 2))) || null;
+    window.speechSynthesis.cancel(); this._previewSpeech = utterance;
+    window.speechSynthesis.speak(utterance);
+  }
+
+  async readStorageStatus() {
+    const storage = navigator.storage;
+    const [estimate, persisted] = await Promise.allSettled([
+      Promise.resolve().then(() => storage?.estimate ? storage.estimate() : null),
+      Promise.resolve().then(() => storage?.persisted ? storage.persisted() : null)
+    ]);
+    return { estimate: estimate.status === 'fulfilled' ? estimate.value : null,
+      persisted: persisted.status === 'fulfilled' ? persisted.value : null };
+  }
+
+  formatBytes(bytes) {
+    if (!Number.isFinite(Number(bytes))) return 'Unavailable';
+    const value = Number(bytes);
+    return value >= 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(2)} GB` : `${(value / 1024 ** 2).toFixed(1)} MB`;
+  }
+
+  storageHTML() {
+    const { estimate, persisted } = this._storageStatus;
+    let last = null; try { last = JSON.parse(localStorage.getItem('hamsa_last_backup') || 'null'); } catch {}
+    const date = last?.requestedAt && !Number.isNaN(Date.parse(last.requestedAt)) ? new Date(last.requestedAt).toLocaleString() : 'No export recorded on this device';
+    const percent = estimate?.quota > 0 ? Math.min(100, Math.max(0, (estimate.usage || 0) / estimate.quota * 100)) : null;
+    return `<div class="settings-storage-grid"><div><span>Browser storage used</span><strong>${estimate ? this.formatBytes(estimate.usage) : 'Unavailable'}</strong><small>${estimate ? `${this.formatBytes(estimate.quota)} estimated quota · ${percent == null ? 'unknown' : percent.toFixed(1) + '%'} used` : 'Your browser does not provide an estimate.'}</small></div>
+      <div><span>Storage protection</span><strong>${persisted === true ? 'Persistent storage granted' : persisted === false ? 'Standard browser storage' : 'Status unavailable'}</strong><small>Protection reduces automatic cleanup; clearing site data still removes your library.</small></div>
+      <div><span>Last backup export</span><strong>${this.escape(date)}</strong><small>Records the download request; confirm the JSON file was saved.</small></div></div>
+      <div class="settings-actions"><button class="btn btn-secondary btn-sm" onclick="settingsView.refreshStorageStatus()">Refresh storage</button><button id="settings-persist-button" class="btn btn-secondary btn-sm" aria-busy="${this._persistPending}" ${this._persistPending || persisted === true || !navigator.storage?.persist ? 'disabled' : ''} onclick="settingsView.requestPersistentStorage()">Protect local storage</button></div>
+      <p class="settings-help">Estimates cover this website’s browser storage, including offline assets. Backups up to 100 MB can be restored; large files need extra space during restore.</p>`;
+  }
+
+  async refreshStorageStatus() { this._storageStatus = await this.readStorageStatus(); return this.render(); }
+
+  async requestPersistentStorage() {
+    if (this._persistPending || !navigator.storage?.persist) return;
+    this._persistPending = true;
+    const button = document.getElementById('settings-persist-button'); if (button) button.disabled = true;
+    try {
+      const granted = await navigator.storage.persist();
+      app.showToast(granted ? 'Persistent storage granted.' : 'Browser did not grant persistent storage. Keep an exported backup.', granted ? 'success' : 'info');
+      await this.refreshStorageStatus();
+    } catch (error) { app.showToast(`Could not request storage protection: ${error.message}`, 'error'); }
+    finally { this._persistPending = false; const current = document.getElementById('settings-persist-button'); if (current) current.disabled = this._storageStatus.persisted === true; }
+  }
+
+  compactSections() {
+    const root = this.container.querySelector('.settings-container');
+    const cards = [...root.querySelectorAll(':scope > .form-group-card')];
+    const preferences = document.createElement('div'); preferences.className = 'form-group-card'; preferences.innerHTML = this.studyPreferencesHTML();
+    const preview = document.createElement('div'); preview.className = 'settings-live-preview';
+    preview.innerHTML = '<span>Live reading preview · पढ़ने का नमूना</span><h3>Learn one clear idea at a time.</h3><p>प्रकाश संश्लेषण में पौधे सूर्य की ऊर्जा से भोजन बनाते हैं। Follow the reason, explore an example, then test what you understand.</p><div><span class="badge badge-primary">Key idea</span><span class="badge">Aa · हिन्दी · 123</span></div>';
+    cards[2].prepend(preview);
+    cards[4].insertAdjacentHTML('afterbegin', this.storageHTML());
+    const resets = document.createElement('div'); resets.className = 'settings-module-resets';
+    resets.innerHTML = '<h4>Reset one module</h4><p class="settings-help">Choose only the library you want to erase. Your profile, study defaults and API key are kept. Export a backup first.</p>'
+      + [['QUIZZES','Quizzes & attempts'],['NOTES','Study Notes'],['FLASHCARDS','Flashcards & revision'],['ANSWERS','Answer Writing'],['TEACHER','AI Teacher lessons'],['EXAMS','Saved exams & cache']].map(([id,label]) => `<button class="btn btn-secondary btn-sm" onclick="settingsView.confirmModuleReset('${id}')">${label}</button>`).join('');
+    cards[4].append(resets);
+    const groups = [
+      ['profile', 'user-check', 'Profile', 'Identity & academic background', [cards[0]]],
+      ['ai', 'key-round', 'AI Connection', 'Gemini key, model & connection test', [cards[1]]],
+      ['appearance', 'palette', 'Appearance', 'Theme, typography & live preview', [cards[2],cards[3]]],
+      ['study', 'graduation-cap', 'Study Preferences', 'Language, class, exam, depth & voice', [preferences]],
+      ['data', 'database-backup', 'Data & Storage', 'Storage status, backups & module resets', [cards[4]]]
+    ];
+    for (const [id, icon, title, hint, contents] of groups) {
+      const section = document.createElement('details'); section.className = 'settings-section'; section.dataset.settingsSection = id; section.open = this._sectionState[id];
+      section.innerHTML = `<summary><i data-lucide="${icon}"></i><span><strong>${title}</strong><small>${hint}</small></span><i data-lucide="chevron-down" class="settings-chevron"></i></summary>`;
+      const body = document.createElement('div'); body.className = 'settings-section-body'; contents.forEach(card => body.append(card)); section.append(body);
+      section.addEventListener('toggle', () => { this._sectionState[id] = section.open; }); root.append(section);
+    }
+    this.updateVoiceOptions();
+  }
+
+  escape(value) {
+    return String(value ?? '').replace(/[&<>"']/g, char => ({
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[char]));
+  }
+
+  captureKeyDraft() {
+    const input = this.container?.querySelector('#gemini-api-key-input');
+    if (input) this._apiKeyDraft = input.value;
+  }
+
+  onKeyInput(value) {
+    this._apiKeyDraft = value;
+    this.cancelConnectionTest();
+  }
+
+  cancelConnectionTest() {
+    this._testController?.abort();
+    this._testController = null;
+    this._testResult = null;
+    this.updateTestStatus();
+  }
+
+  onLeaveView() {
+    this.captureKeyDraft();
+    this.captureSections();
+    if (this._previewSpeech) { window.speechSynthesis?.cancel(); this._previewSpeech = null; }
+    this._keyVisible = false;
+    this._renderVersion++;
+    this.cancelConnectionTest();
+  }
+
+  updateTestStatus() {
+    const box = this.container?.querySelector('#api-test-result-box');
+    const button = this.container?.querySelector('#api-test-button');
+    const pending = !!this._testController;
+    if (button) {
+      button.disabled = pending;
+      button.setAttribute('aria-busy', String(pending));
+      const label = button.querySelector('span');
+      if (label) label.textContent = pending ? 'Testing…' : 'Test Connection';
+    }
+    if (!box) return;
+    box.style.display = pending || this._testResult ? 'block' : 'none';
+    box.replaceChildren();
+    if (pending) {
+      box.textContent = 'Checking credentials and a complete Gemini text response…';
+    } else if (this._testResult) {
+      const status = document.createElement('div');
+      status.className = `badge ${this._testResult.success ? 'badge-success' : 'badge-error'}`;
+      status.style.cssText = 'width:100%;justify-content:center;padding:0.5rem;white-space:normal;line-height:1.4;';
+      status.textContent = `${this._testResult.success ? '✓' : '✕'} ${this._testResult.message}`;
+      box.append(status);
+    }
   }
 
   async render() {
     this.container = document.getElementById('view-settings');
     if (!this.container) return;
+    this.captureKeyDraft();
+    this.captureSections();
+    const version = ++this._renderVersion;
 
     try {
       const apiKey = (window.geminiService && typeof window.geminiService.getApiKey === 'function') 
@@ -30,7 +237,8 @@ class SettingsView {
 
       const currentModel = (window.geminiService && typeof window.geminiService.getActiveModel === 'function')
         ? window.geminiService.getActiveModel()
-        : (localStorage.getItem('hamsa_gemini_model') || 'gemini-2.5-flash');
+        : 'gemini-3.6-flash';
+      const modelOptions = window.geminiService?.candidateModels || ['gemini-3.6-flash'];
 
       const currentTheme = localStorage.getItem('hamsa_theme_mode') || 'DARK';
       const currentPalette = localStorage.getItem('hamsa_theme_palette') || 'INDIGO';
@@ -40,6 +248,13 @@ class SettingsView {
       const dbStats = (typeof getDatabaseSummaryCounts === 'function') 
         ? await getDatabaseSummaryCounts() 
         : { quizzesCount: 0, questionsCount: 0, notesCount: 0, attemptsCount: 0 };
+      const storageStatus = await this.readStorageStatus();
+      if (version !== this._renderVersion) return;
+      this._storageStatus = storageStatus;
+      for (const key of ['quizzesCount', 'questionsCount', 'notesCount', 'attemptsCount', 'cardCount',
+        'deckCount', 'reviewCount', 'answerCount', 'teacherCount', 'savedExamCount']) {
+        dbStats[key] = Number.isFinite(Number(dbStats[key])) ? Number(dbStats[key]) : 0;
+      }
 
       const backgroundThemes = [
         { id: 'DARK', name: 'OLED Dark', emoji: '🌑', type: 'Dark', bg: '#07090E', cardBg: '#0E1424', text: '#F8FAFC', desc: 'Ultra-black obsidian & celestial glass' },
@@ -77,23 +292,29 @@ class SettingsView {
         title: 'Your app,',
         titleAccent: 'on your terms.',
         hindi: 'व्यवस्था — आपका डेटा, आपके नियम',
-        tagline: 'Everything here stays on this device. Set up your academic profile, pick a theme and type size, choose how AI requests are routed, and export or restore a full backup.',
+        tagline: 'Your library and preferences are stored on this device. When you use cloud AI, your submitted content is sent to Google through the configured connection. Manage your profile, appearance and backups here.',
         stats: [
           { value: Number(totalRecords).toLocaleString('en-IN'), label: 'Records stored' },
           { value: dbStats.quizzesCount || 0, label: 'Quizzes' },
           { value: dbStats.notesCount || 0, label: 'Notes' },
-          { value: '9', label: 'Themes' }
+          { value: backgroundThemes.length, label: 'Themes' }
         ],
         chipsLabel: 'What you control here',
         chips: [
           { icon: 'user-check', label: 'Academic profile', hint: 'Drives exam eligibility matching' },
           { icon: 'key-round', label: 'AI transport', hint: 'Server proxy or a direct API key' },
-          { icon: 'palette', label: 'Theme & palette', hint: '9 themes across 6 colour palettes' },
+          { icon: 'palette', label: 'Theme & palette', hint: `${backgroundThemes.length} themes across ${palettes.length} colour palettes` },
           { icon: 'type', label: 'Typography', hint: 'Font family and four size steps' },
           { icon: 'database-backup', label: 'Backup & restore', hint: 'Full export, merge or replace on import' }
         ]
       });
 
+      if (version !== this._renderVersion) return;
+      this.captureKeyDraft();
+      this.captureSections();
+      const focused = this.container.contains(document.activeElement) ? document.activeElement : null;
+      const focusId = focused?.id;
+      const focusAction = focused?.getAttribute('onclick');
       this.container.innerHTML = `
         <div class="settings-container">
           ${heroHtml}
@@ -115,13 +336,13 @@ class SettingsView {
             </p>
 
             ${profile ? `
-              <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(200px, 1fr)); gap:0.75rem; margin-top:0.75rem; padding:1rem; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-lg);">
-                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Student Name</span><div style="font-weight:750; font-size:1.05rem; color:var(--text-main);">${profile.fullName || 'Scholar'}</div></div>
-                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Date of Birth & Age</span><div style="font-weight:700; color:var(--text-main);">${profile.dateOfBirth || '—'} (${profile.age || '—'} yrs)</div></div>
-                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Category & State</span><div style="font-weight:700; color:var(--text-main);">${profile.category || 'General'} • ${profile.domicile || 'All India'}</div></div>
-                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">10th Matric Score</span><div style="font-weight:700; color:var(--color-primary-light);">${profile.tenthPercentage !== null ? profile.tenthPercentage + '% (' + (profile.tenthBoard || 'CBSE') + ')' : 'Not filled'}</div></div>
-                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">12th Inter Score</span><div style="font-weight:700; color:var(--color-primary-light);">${profile.twelfthPercentage !== null ? profile.twelfthPercentage + '% (' + (profile.twelfthStream || 'Science') + ')' : 'Not filled'}</div></div>
-                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Highest Qualification</span><div style="font-weight:700; color:var(--text-main);">${profile.qualification || '—'}</div></div>
+              <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap:0.75rem; margin-top:0.75rem; padding:1rem; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-lg);">
+                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Student Name</span><div style="font-weight:750; font-size:1.05rem; color:var(--text-main);">${this.escape(profile.fullName || 'Scholar')}</div></div>
+                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Date of Birth & Age</span><div style="font-weight:700; color:var(--text-main);">${this.escape(profile.dateOfBirth || '—')} (${this.escape(profile.age || '—')} yrs)</div></div>
+                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Category & State</span><div style="font-weight:700; color:var(--text-main);">${this.escape(profile.category || 'General')} • ${this.escape(profile.domicile || 'All India')}</div></div>
+                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">10th Matric Score</span><div style="font-weight:700; color:var(--color-primary-light);">${profile.tenthPercentage != null && profile.tenthPercentage !== '' && Number.isFinite(Number(profile.tenthPercentage)) ? this.escape(profile.tenthPercentage + '% (' + (profile.tenthBoard || 'CBSE') + ')') : 'Not filled'}</div></div>
+                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">12th Inter Score</span><div style="font-weight:700; color:var(--color-primary-light);">${profile.twelfthPercentage != null && profile.twelfthPercentage !== '' && Number.isFinite(Number(profile.twelfthPercentage)) ? this.escape(profile.twelfthPercentage + '% (' + (profile.twelfthStream || 'Science') + ')') : 'Not filled'}</div></div>
+                <div><span style="font-size:0.75rem; color:var(--text-muted); text-transform:uppercase; font-weight:700;">Highest Qualification</span><div style="font-weight:700; color:var(--text-main);">${this.escape(profile.qualification || '—')}</div></div>
               </div>
             ` : `
               <div style="padding:1rem; background:var(--bg-surface-elevated); border-radius:var(--radius-lg); text-align:center;">
@@ -135,7 +356,7 @@ class SettingsView {
 
           <!-- 1. Google Gemini AI Configuration -->
           <div class="form-group-card">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
               <div style="font-size:1.1rem; font-weight:700;">1. Google Gemini AI Configuration</div>
               <span class="badge ${transportBadge.cls}">${transportBadge.text}</span>
             </div>
@@ -164,16 +385,17 @@ class SettingsView {
 
             <p style="font-size:0.88rem; color:var(--text-secondary);">
               ${usingProxy
-                ? 'A personal key is optional and only used if the server proxy becomes unavailable.'
+                ? 'The server connection takes priority. Entering a personal key and clicking Test Connection verifies that key directly with Google; it does not replace the server connection.'
                 : 'Enter your Google Gemini API key to enable cloud question formulation.'}
             </p>
 
             <div style="display:flex; gap:0.5rem; flex-direction:column;">
               <div style="display:flex; gap:0.5rem;">
-                <input type="password" id="gemini-api-key-input" class="study-textarea" style="min-height:44px; flex:1;"
-                  placeholder="AIzaSy..." value="${apiKey}">
-                <button class="btn btn-secondary" onclick="settingsView.togglePasswordVisibility()">
-                  <i data-lucide="eye" id="api-eye-icon"></i>
+                <input type="${this._keyVisible ? 'text' : 'password'}" id="gemini-api-key-input" class="study-textarea" style="min-height:44px; flex:1; min-width:0;"
+                  aria-label="Personal Gemini API key" autocomplete="off" spellcheck="false" oninput="settingsView.onKeyInput(this.value)"
+                  placeholder="AIzaSy..." value="${this.escape(this._apiKeyDraft ?? apiKey)}">
+                <button type="button" id="api-visibility-button" class="btn btn-secondary" aria-label="${this._keyVisible ? 'Hide' : 'Show'} API key" aria-pressed="${this._keyVisible}" onclick="settingsView.togglePasswordVisibility()">
+                  <i data-lucide="${this._keyVisible ? 'eye-off' : 'eye'}" id="api-eye-icon"></i>
                 </button>
               </div>
 
@@ -181,16 +403,11 @@ class SettingsView {
               <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; margin-top:0.5rem; padding:0.75rem 1rem; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
                 <div style="display:flex; flex-direction:column; gap:0.2rem;">
                   <span style="font-size:0.85rem; font-weight:700; color:var(--text-main);">Active Gemini Model</span>
-                  <span style="font-size:0.75rem; color:var(--text-muted);">Auto-detected or manually chosen</span>
+                  <span style="font-size:0.75rem; color:var(--text-muted);">Free-tier models · Usage limits apply</span>
                 </div>
 
-                <select id="gemini-model-select" class="study-textarea" style="width:auto; min-height:36px; padding:0.25rem 0.75rem; font-size:0.85rem; font-weight:600;" onchange="settingsView.onModelSelect(this.value)">
-                  <option value="gemini-2.5-flash" ${currentModel === 'gemini-2.5-flash' ? 'selected' : ''}>gemini-2.5-flash (Recommended)</option>
-                  <option value="gemini-2.0-flash" ${currentModel === 'gemini-2.0-flash' ? 'selected' : ''}>gemini-2.0-flash</option>
-                  <option value="gemini-1.5-flash" ${currentModel === 'gemini-1.5-flash' ? 'selected' : ''}>gemini-1.5-flash</option>
-                  <option value="gemini-1.5-flash-latest" ${currentModel === 'gemini-1.5-flash-latest' ? 'selected' : ''}>gemini-1.5-flash-latest</option>
-                  <option value="gemini-2.5-pro" ${currentModel === 'gemini-2.5-pro' ? 'selected' : ''}>gemini-2.5-pro</option>
-                  <option value="gemini-1.5-pro" ${currentModel === 'gemini-1.5-pro' ? 'selected' : ''}>gemini-1.5-pro</option>
+                <select id="gemini-model-select" aria-label="Active Gemini model" class="study-textarea" style="width:auto; max-width:100%; min-width:0; min-height:36px; padding:0.25rem 0.75rem; font-size:0.85rem; font-weight:600;" onchange="settingsView.onModelSelect(this.value)">
+                  ${modelOptions.map(m => `<option value="${this.escape(m)}" ${currentModel === m ? 'selected' : ''}>${this.escape(m)}${m === 'gemini-3.6-flash' ? ' (Recommended)' : ''}</option>`).join('')}
                 </select>
               </div>
 
@@ -201,7 +418,7 @@ class SettingsView {
               </a>
 
               <div style="display:flex; gap:0.5rem;">
-                <button class="btn btn-secondary btn-sm" onclick="settingsView.testApiKey()">
+                <button id="api-test-button" class="btn btn-secondary btn-sm" onclick="settingsView.testApiKey()">
                   <i data-lucide="activity"></i>
                   <span>Test Connection</span>
                 </button>
@@ -212,7 +429,7 @@ class SettingsView {
               </div>
             </div>
             
-            <div id="api-test-result-box" style="margin-top:0.5rem; display:none;"></div>
+            <div id="api-test-result-box" role="status" aria-live="polite" style="margin-top:0.5rem; display:none;"></div>
 
             <!-- Token usage. Gemini bills per token and the free tier has daily
                  limits, but nothing used to report consumption — a runaway batch
@@ -232,7 +449,7 @@ class SettingsView {
                       <span>AI Token Usage</span>
                     </div>
                     ${hasAny ? `
-                      <button class="btn btn-secondary btn-sm" onclick="settingsView.resetAiUsage()" title="Reset the counters">
+                      <button class="btn btn-secondary btn-sm" onclick="settingsView.resetAiUsage()" title="Reset local counters; Google's quota is unchanged">
                         <i data-lucide="rotate-ccw" style="width:13px;height:13px;"></i>
                         <span>Reset</span>
                       </button>
@@ -259,11 +476,12 @@ class SettingsView {
                       </div>
                     </div>
                     <p style="font-size:0.78rem; color:var(--text-muted); margin-top:0.55rem;">
-                      Exact counts reported by the Gemini API. Daily totals reset at midnight.
+                      Exact counts reported by the Gemini API for responses recorded in this browser.
+                      Local daily totals reset at midnight; these counters do not show or reset Google's quota.
                     </p>
                   ` : `
                     <p style="font-size:0.83rem; color:var(--text-muted); margin-top:0.5rem;">
-                      No AI requests yet today. Usage will appear here once you generate something.
+                      No AI usage recorded in this browser today. Counts appear when Google reports usage in a response.
                     </p>
                   `}
                 </div>
@@ -276,7 +494,7 @@ class SettingsView {
         <div class="form-group-card">
           <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
             <div style="font-size:1.1rem; font-weight:700;">2. Appearance & Visual Identity</div>
-            <span class="badge badge-primary">8 Backgrounds • 6 Accents</span>
+            <span class="badge badge-primary">${backgroundThemes.length} Backgrounds • ${palettes.length} Accents</span>
           </div>
           <p style="font-size:0.88rem; color:var(--text-secondary); margin-top:0.25rem;">
             Select a tailored background tone designed for long reading or night focus, then customize with your preferred accent colors.
@@ -285,13 +503,13 @@ class SettingsView {
           <div style="margin-top:0.75rem;">
             <label style="font-size:0.88rem; font-weight:700; color:var(--text-secondary); display:flex; align-items:center; gap:0.4rem;">
               <i data-lucide="palette" style="width:16px;height:16px;color:var(--color-primary-light);"></i>
-              Background Theme Mode (8 Study Themes):
+            Background Theme Mode (${backgroundThemes.length} Study Themes):
             </label>
             <div class="theme-modes-grid" style="margin-top:0.6rem;">
               ${backgroundThemes.map(theme => {
                 const isActive = currentTheme === theme.id;
                 return `
-                  <div class="theme-mode-card ${isActive ? 'active' : ''}" onclick="settingsView.setThemeMode('${theme.id}')">
+                  <button type="button" aria-pressed="${isActive}" style="font:inherit;text-align:left;color:inherit;" class="theme-mode-card ${isActive ? 'active' : ''}" onclick="settingsView.setThemeMode('${theme.id}')">
                     <div class="theme-preview-box" style="background:${theme.bg};">
                       <div class="theme-preview-inner" style="background:${theme.cardBg}; color:${theme.text};">
                         <span>${theme.emoji} ${theme.name}</span>
@@ -305,7 +523,7 @@ class SettingsView {
                       </div>
                       <div style="font-size:0.74rem; color:var(--text-muted); line-height:1.3; margin-top:0.2rem;">${theme.desc}</div>
                     </div>
-                  </div>
+                  </button>
                 `;
               }).join('')}
             </div>
@@ -318,13 +536,13 @@ class SettingsView {
             </label>
             <div class="palette-swatches-grid" style="margin-top:0.6rem;">
               ${palettes.map(pal => `
-                <div class="palette-swatch-card ${currentPalette === pal.id ? 'active' : ''}" onclick="settingsView.setThemePalette('${pal.id}')">
+                <button type="button" aria-pressed="${currentPalette === pal.id}" style="font:inherit;text-align:left;color:inherit;" class="palette-swatch-card ${currentPalette === pal.id ? 'active' : ''}" onclick="settingsView.setThemePalette('${pal.id}')">
                   <div class="swatch-color-pill" style="background:linear-gradient(135deg, ${pal.primary}, ${pal.accent});"></div>
                   <div>
                     <div style="font-weight:700; font-size:0.92rem; color:var(--text-main);">${pal.name}</div>
                     <div style="font-size:0.75rem; color:var(--text-muted);">${pal.id}</div>
                   </div>
-                </div>
+                </button>
               `).join('')}
             </div>
           </div>
@@ -337,36 +555,36 @@ class SettingsView {
           <div>
             <label style="font-size:0.88rem; font-weight:600; color:var(--text-secondary);">Font Scaling:</label>
             <div class="chips-select-grid" style="margin-top:0.5rem;">
-              <div class="select-chip ${currentFontSize === 'SMALL' ? 'active' : ''}" onclick="settingsView.setFontSize('SMALL')">
+              <button type="button" aria-pressed="${currentFontSize === 'SMALL'}" class="select-chip ${currentFontSize === 'SMALL' ? 'active' : ''}" onclick="settingsView.setFontSize('SMALL')">
                 Small (90%)
-              </div>
-              <div class="select-chip ${currentFontSize === 'DEFAULT' ? 'active' : ''}" onclick="settingsView.setFontSize('DEFAULT')">
+              </button>
+              <button type="button" aria-pressed="${currentFontSize === 'DEFAULT'}" class="select-chip ${currentFontSize === 'DEFAULT' ? 'active' : ''}" onclick="settingsView.setFontSize('DEFAULT')">
                 Default (100%)
-              </div>
-              <div class="select-chip ${currentFontSize === 'LARGE' ? 'active' : ''}" onclick="settingsView.setFontSize('LARGE')">
+              </button>
+              <button type="button" aria-pressed="${currentFontSize === 'LARGE'}" class="select-chip ${currentFontSize === 'LARGE' ? 'active' : ''}" onclick="settingsView.setFontSize('LARGE')">
                 Large (112%)
-              </div>
-              <div class="select-chip ${currentFontSize === 'EXTRA_LARGE' ? 'active' : ''}" onclick="settingsView.setFontSize('EXTRA_LARGE')">
+              </button>
+              <button type="button" aria-pressed="${currentFontSize === 'EXTRA_LARGE'}" class="select-chip ${currentFontSize === 'EXTRA_LARGE' ? 'active' : ''}" onclick="settingsView.setFontSize('EXTRA_LARGE')">
                 Extra Large (125%)
-              </div>
+              </button>
             </div>
           </div>
 
           <div style="margin-top:0.75rem;">
             <label style="font-size:0.88rem; font-weight:600; color:var(--text-secondary);">Font Family Style:</label>
             <div class="chips-select-grid" style="margin-top:0.5rem;">
-              <div class="select-chip ${currentFontFamily === 'DEFAULT' ? 'active' : ''}" onclick="settingsView.setFontFamily('DEFAULT')">
+              <button type="button" aria-pressed="${currentFontFamily === 'DEFAULT'}" class="select-chip ${currentFontFamily === 'DEFAULT' ? 'active' : ''}" onclick="settingsView.setFontFamily('DEFAULT')">
                 Outfit & Inter (Modern EdTech)
-              </div>
-              <div class="select-chip ${currentFontFamily === 'SANS' ? 'active' : ''}" onclick="settingsView.setFontFamily('SANS')">
+              </button>
+              <button type="button" aria-pressed="${currentFontFamily === 'SANS'}" class="select-chip ${currentFontFamily === 'SANS' ? 'active' : ''}" onclick="settingsView.setFontFamily('SANS')">
                 Clean System Sans
-              </div>
-              <div class="select-chip ${currentFontFamily === 'SERIF' ? 'active' : ''}" onclick="settingsView.setFontFamily('SERIF')">
+              </button>
+              <button type="button" aria-pressed="${currentFontFamily === 'SERIF'}" class="select-chip ${currentFontFamily === 'SERIF' ? 'active' : ''}" onclick="settingsView.setFontFamily('SERIF')">
                 Editorial Serif
-              </div>
-              <div class="select-chip ${currentFontFamily === 'ROUNDED' ? 'active' : ''}" onclick="settingsView.setFontFamily('ROUNDED')">
+              </button>
+              <button type="button" aria-pressed="${currentFontFamily === 'ROUNDED'}" class="select-chip ${currentFontFamily === 'ROUNDED' ? 'active' : ''}" onclick="settingsView.setFontFamily('ROUNDED')">
                 Friendly Rounded
-              </div>
+              </button>
             </div>
           </div>
         </div>
@@ -422,7 +640,7 @@ class SettingsView {
           </div>
 
           <p style="font-size:0.85rem; color:var(--text-secondary); margin-top:0.85rem;">
-            A backup includes <strong>all ${dbStats.totalRecords} records above</strong> plus your theme preferences and
+            A backup includes <strong>all ${totalRecords} records above</strong> plus your theme preferences and
             student academic profile, so nothing is lost when you move to another device or browser.
           </p>
 
@@ -477,12 +695,18 @@ class SettingsView {
       </div>
     `;
 
+      this.compactSections();
+      this.updateTestStatus();
       if (window.app) window.app.refreshIcons();
+      const focusTarget = focusId ? document.getElementById(focusId)
+        : (focusAction ? [...this.container.querySelectorAll('[onclick]')].find(el => el.getAttribute('onclick') === focusAction) : null);
+      focusTarget?.focus({ preventScroll: true });
     } catch (err) {
+      if (version !== this._renderVersion) return;
       console.error('Error rendering settings view:', err);
       this.container.innerHTML = `
         <div class="card p-6 text-center" style="padding: 2rem; text-align: center;">
-          <p style="color:var(--color-error); font-weight: 600;">Failed to load settings: ${err.message}</p>
+          <p style="color:var(--color-error); font-weight: 600;">Failed to load settings: ${this.escape(err.message)}</p>
           <button class="btn btn-primary" style="margin-top: 1rem;" onclick="settingsView.render()">Retry</button>
         </div>
       `;
@@ -491,88 +715,108 @@ class SettingsView {
 
   togglePasswordVisibility() {
     const input = document.getElementById('gemini-api-key-input');
-    const icon = document.getElementById('api-eye-icon');
-    if (input) {
-      if (input.type === 'password') {
-        input.type = 'text';
-      } else {
-        input.type = 'password';
-      }
-    }
+    if (!input) return;
+    this._keyVisible = input.type === 'password';
+    input.type = this._keyVisible ? 'text' : 'password';
+    const button = document.getElementById('api-visibility-button');
+    button.setAttribute('aria-label', `${this._keyVisible ? 'Hide' : 'Show'} API key`);
+    button.setAttribute('aria-pressed', String(this._keyVisible));
+    button.innerHTML = `<i data-lucide="${this._keyVisible ? 'eye-off' : 'eye'}" id="api-eye-icon"></i>`;
+    window.app?.refreshIcons();
   }
 
   saveApiKey() {
     const input = document.getElementById('gemini-api-key-input');
-    const val = input ? input.value : '';
-    window.geminiService.setApiKey(val);
-    app.showToast('Gemini API key saved!', 'success');
-    this.render();
+    if (!input) return;
+    this.captureKeyDraft();
+    const val = input.value.trim();
+    try {
+      window.geminiService.setApiKey(val);
+      this._apiKeyDraft = val;
+      this.cancelConnectionTest();
+      app.showToast(val ? 'Gemini API key saved on this device.' : 'Personal Gemini API key removed.', 'success');
+      this.render();
+    } catch (error) {
+      app.showToast(`Could not save API key: ${error.message}`, 'error');
+    }
   }
 
   onModelSelect(model) {
-    window.geminiService.setActiveModel(model);
-    app.showToast(`Selected model: ${model}`, 'info');
+    this.cancelConnectionTest();
+    try {
+      const service = window.geminiService;
+      if (!service.candidateModels.includes(model)) throw new Error('Unsupported Gemini model.');
+      service.setActiveModel(model);
+      if (service.getActiveModel() !== model) throw new Error('Model selection was not saved.');
+      app.showToast(`Selected model: ${model}`, 'info');
+    } catch (error) {
+      app.showToast(`Could not change model: ${error.message}`, 'error');
+      this.render();
+    }
   }
 
   async testApiKey() {
+    if (this._testController) return;
     const input = document.getElementById('gemini-api-key-input');
-    const val = input ? input.value : '';
-    const box = document.getElementById('api-test-result-box');
-    if (!box) return;
-
-    box.style.display = 'block';
-    box.innerHTML = `<span style="font-size:0.85rem; color:var(--text-muted);">Auto-discovering supported models on Google Gemini API...</span>`;
-
-    const res = await window.geminiService.testApiKey(val);
-    if (res.success) {
-      box.innerHTML = `
-        <div class="badge badge-success" style="width:100%; justify-content:center; padding:0.5rem;">
-          ✓ ${res.message}
-        </div>
-      `;
-      // Update model dropdown with active model and discovered models
-      const modelSelect = document.getElementById('gemini-model-select');
-      if (modelSelect) {
-        if (res.availableModels && res.availableModels.length > 0) {
-          modelSelect.innerHTML = res.availableModels.map(m => 
-            `<option value="${m}" ${m === res.model ? 'selected' : ''}>${m}${m.includes('flash') ? ' (Recommended)' : ''}</option>`
-          ).join('');
-        } else if (res.model) {
-          modelSelect.value = res.model;
-        }
+    if (!input) return;
+    this.captureKeyDraft();
+    const val = input.value.trim();
+    const controller = new AbortController();
+    this._testController = controller;
+    this._testResult = null;
+    this.updateTestStatus();
+    try {
+      const service = window.geminiService;
+      const res = await service.testApiKey(val, { signal: controller.signal, saveModel: false });
+      if (controller.signal.aborted || this._testController !== controller) return;
+      // Testing a spare personal key must not change the server's active model.
+      const canSelect = res.success && (res.transport === 'PROXY' || service.getTransportMode() !== 'PROXY');
+      if (canSelect && service.candidateModels.includes(res.model)) {
+        service.setActiveModel(res.model);
+        const select = document.getElementById('gemini-model-select');
+        if (select) select.value = res.model;
       }
-    } else {
-      box.innerHTML = `
-        <div class="badge badge-error" style="width:100%; justify-content:center; padding:0.5rem; white-space:normal; line-height:1.4;">
-          ✕ ${res.message}
-        </div>
-      `;
+      this._testResult = res;
+    } catch (error) {
+      if (!controller.signal.aborted && this._testController === controller) {
+        this._testResult = { success: false, message: error.message || 'Connection test failed. Please retry.' };
+      }
+    } finally {
+      if (this._testController === controller) {
+        this._testController = null;
+        this.updateTestStatus();
+      }
+    }
+  }
+
+  applyPreference(method, value) {
+    try {
+      app[method](value);
+      return this.render();
+    } catch (error) {
+      app.showToast(`Could not save preference: ${error.message}`, 'error');
     }
   }
 
   setThemeMode(mode) {
-    app.setThemeMode(mode);
-    this.render();
+    return this.applyPreference('setThemeMode', mode);
   }
 
   setThemePalette(palette) {
-    app.setThemePalette(palette);
-    this.render();
+    return this.applyPreference('setThemePalette', palette);
   }
 
   setFontSize(size) {
-    app.setFontSize(size);
-    this.render();
+    return this.applyPreference('setFontSize', size);
   }
 
   setFontFamily(family) {
-    app.setFontFamily(family);
-    this.render();
+    return this.applyPreference('setFontFamily', family);
   }
 
   resetAiUsage() {
     window.aiClient?.resetUsage?.();
-    app.showToast('AI usage counters reset.', 'info');
+    app.showToast('Local AI counters reset. Google quota is unchanged.', 'info');
     this.render();
   }
 
@@ -581,22 +825,43 @@ class SettingsView {
   }
 
   async handleExportBackup() {
+    if (this._exportPending || this._importPending || this._resetPending) return;
+    this._exportPending = true;
     try {
       const summary = await exportDatabaseBackup();
       const total = Object.values(summary).reduce((a, b) => a + b, 0);
-      app.showToast(`Backup exported — ${total} records saved to your Downloads folder.`, 'success');
+      try { localStorage.setItem('hamsa_last_backup', JSON.stringify({ requestedAt: new Date().toISOString(), records: total })); }
+      catch { app.showToast('Backup download requested, but its date could not be saved.', 'warning'); }
+      app.showToast(`Backup exported — download requested for ${total} records.`, 'success');
+      await this.render();
       if (window.audioEngine) window.audioEngine.playSuccess();
     } catch (e) {
       app.showToast(`Export failed: ${e.message}`, 'error');
+    } finally {
+      this._exportPending = false;
     }
   }
 
   async handleImportFile(event) {
     const file = event.target.files?.[0];
     if (!file) return;
+    if (Number(file.size) > SettingsView.MAX_BACKUP_BYTES) {
+      event.target.value = '';
+      app.showToast('This backup exceeds the 100 MB restore limit. Use a smaller backup; current data was left untouched.', 'error');
+      return;
+    }
+    if (this._importPending || this._exportPending || this._resetPending) {
+      event.target.value = '';
+      app.showToast('A data operation is already pending. Please finish it first.', 'info');
+      return;
+    }
+    this._importPending = true;
 
     const mode = this.importMode === 'MERGE' ? 'MERGE' : 'REPLACE';
-    const resetInput = () => { event.target.value = ''; };
+    const resetInput = () => {
+      event.target.value = '';
+      this._importPending = false;
+    };
 
     let text;
     let preview;
@@ -611,7 +876,7 @@ class SettingsView {
       return;
     }
 
-    if (preview.totalRecords === 0) {
+    if (preview.totalRecords === 0 && !preview.hasProfile && !preview.preferenceCount) {
       app.showToast('This backup contains no restorable records. Your data was left untouched.', 'warning');
       resetInput();
       return;
@@ -635,6 +900,8 @@ class SettingsView {
       title: mode === 'MERGE' ? 'Merge Backup Into Current Data?' : 'Replace All Data With Backup?',
       message:
         `File: "${file.name}"\n` +
+        (file.size ? `File size: ${this.formatBytes(file.size)}\n` : '') +
+        (file.size > 20 * 1024 * 1024 ? 'Large backup: restore may take time and require extra browser storage. Keep this page open.\n' : '') +
         `Created: ${exportedOn} (format v${preview.formatVersion})\n\n` +
         `Will restore ${preview.totalRecords} records:\n${contents}\n` +
         (preview.hasProfile ? '  • Student academic profile\n' : '') +
@@ -643,6 +910,7 @@ class SettingsView {
         `\n${modeLine}\n\n` +
         'If anything goes wrong, your current data is automatically restored.',
       confirmText: mode === 'MERGE' ? 'Merge Now' : 'Replace Now',
+      onCancel: resetInput,
       onConfirm: async () => {
         try {
           const report = await importDatabaseBackup(text, { mode });
@@ -659,6 +927,7 @@ class SettingsView {
 
           // Re-apply restored theme/font preferences and refresh identity.
           app.initThemeAndPreferences();
+          this._studyDraft = window.studyPreferences?.get() || null;
           if (app.updateGlobalStudentIdentity) app.updateGlobalStudentIdentity();
 
           await this.render();
@@ -673,6 +942,8 @@ class SettingsView {
   }
 
   confirmResetAll() {
+    if (this._resetPending || this._importPending || this._exportPending) return;
+    this._resetPending = true;
     app.showConfirmation({
       title: 'Reset All Data?',
       message:
@@ -684,6 +955,7 @@ class SettingsView {
         '  • AI Teacher lessons and saved exams\n\n' +
         'Your theme settings and student profile are kept. This cannot be undone — export a backup first if you are unsure.',
       confirmText: 'Reset Everything',
+      onCancel: () => { this._resetPending = false; },
       onConfirm: async () => {
         try {
           const removed = await clearDatabase();
@@ -691,8 +963,53 @@ class SettingsView {
           app.showToast(`All local data reset — ${total} records removed.`, 'info');
         } catch (e) {
           app.showToast(`Reset failed: ${e.message}`, 'error');
+        } finally {
+          this._resetPending = false;
         }
         this.render();
+      }
+    });
+  }
+
+  confirmModuleReset(moduleId) {
+    if (this._resetPending || this._importPending || this._exportPending) return;
+    if (app._isGenerating || window.studyNotesView?.isCreating || window.aiTeacherView?.isLoading || window.answerWritingView?.isEvaluating) {
+      app.showToast('Finish or cancel the active generation before resetting data.', 'info'); return;
+    }
+    const labels = { QUIZZES: 'Quizzes & attempts', NOTES: 'Study Notes', FLASHCARDS: 'Flashcards & revision progress', ANSWERS: 'Answer Writing', TEACHER: 'AI Teacher lessons', EXAMS: 'Saved exams & exam cache' };
+    if (!labels[moduleId]) return;
+    this._resetPending = true;
+    app.showConfirmation({
+      title: `Reset ${labels[moduleId]}?`,
+      message: `Permanently erase ${labels[moduleId]} on this device? Related review progress for deleted notes or quiz questions is also removed. Other libraries, your profile, preferences and API key are kept. This cannot be undone; export a backup first.`,
+      confirmText: 'Reset this module', onCancel: () => { this._resetPending = false; },
+      onConfirm: async () => {
+        try {
+          if (moduleId === 'NOTES') await window.studyNotesView?.flushAutoSave();
+          if (moduleId === 'TEACHER') await window.aiTeacherView?._saveQueue;
+          if (moduleId === 'ANSWERS' && window.answerWritingView) clearTimeout(window.answerWritingView._autoSaveTimer);
+          const removed = await clearModuleData(moduleId);
+          if (moduleId === 'NOTES' && window.studyNotesView) {
+            const view = window.studyNotesView; view._endNoteSession(); view.activeNote = null; view.activeNoteId = null; view.currentViewMode = 'DASHBOARD';
+          }
+          if (moduleId === 'TEACHER' && window.aiTeacherView) {
+            const view = window.aiTeacherView; view._cancelRequests(); view.currentExplanation = null; view.currentRecordId = null; view.followUpHistory = []; view.isBookmarked = false;
+          }
+          if (moduleId === 'QUIZZES') {
+            try { localStorage.removeItem('hamsa_active_quiz_attempt'); } catch {}
+            if (window.quizPlayerView) { window.quizPlayerView.quiz = null; window.quizPlayerView.questions = []; }
+          }
+          if (moduleId === 'ANSWERS' && window.answerWritingView) {
+            const view = window.answerWritingView; view.activeQuestion = null; view.studentAnswerText = ''; view.currentEvaluation = null; view.currentAttemptId = null; view.activeTab = 'new-answer';
+          }
+          if (['QUIZZES','NOTES','FLASHCARDS'].includes(moduleId) && window.flashcardsView) {
+            window.flashcardsView.currentDeck = null; window.flashcardsView.cards = []; window.flashcardsView.activeTab = 'decks';
+          }
+          const total = Object.values(removed).reduce((sum, count) => sum + count, 0);
+          app.showToast(`${labels[moduleId]} reset — ${total} records removed.`, 'success');
+          await this.render();
+        } catch (error) { app.showToast(`Module reset failed: ${error.message}`, 'error'); }
+        finally { this._resetPending = false; }
       }
     });
   }

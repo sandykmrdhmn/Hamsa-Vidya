@@ -209,10 +209,10 @@ class PdfGeneratorService {
   /**
    * Opens clean Print Window with full vector text for native 'Save as PDF'
    */
-  openPrintWindow(htmlContent) {
-    const printWindow = window.open('', '_blank');
+  openPrintWindow(htmlContent,reservedWindow=null) {
+    const printWindow = reservedWindow || window.open('', '_blank');
     if (!printWindow) {
-      window.print();
+      window.app?.showToast('Allow pop-ups for this site to export the PDF.','warning');
       return;
     }
 
@@ -220,7 +220,7 @@ class PdfGeneratorService {
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Hamsa Vidya - Question Paper</title>
+        <title>Hamsa Vidya - PDF Preview</title>
         <meta charset="UTF-8">
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -254,7 +254,7 @@ class PdfGeneratorService {
         </div>
         ${htmlContent}
         <script>
-          setTimeout(() => { window.print(); }, 800);
+          Promise.resolve(document.fonts && document.fonts.ready).then(() => { setTimeout(() => window.print(), 100); });
         <\/script>
       </body>
       </html>
@@ -265,173 +265,49 @@ class PdfGeneratorService {
   /**
    * Generates a professionally designed Digital Textbook Study Booklet PDF
    */
-  exportStudyNotesBookletPdf(note) {
-    const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
-    const sections = note.sections || [];
-    const glossary = note.glossaryTerms || [];
-    const words = note.metadata?.wordCount || (note.content ? note.content.split(/\s+/).length : 500);
-    const readTime = note.metadata?.readingTimeMin || Math.max(1, Math.ceil(words / 200));
-
-    const tocHtml = sections.map((sec, idx) => `
-      <div style="display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px dashed #e2e8f0; font-size: 13px;">
-        <span style="font-weight: 600; color: #1e293b;">${sec.heading || `Section ${idx + 1}`}</span>
-        <span style="color: #64748b; font-style: italic;">${sec.subheading || ''}</span>
-      </div>
-    `).join('');
-
-    const sectionsHtml = sections.map((sec, idx) => `
-      <div style="margin-bottom: 24px; page-break-inside: auto;">
-        <h2 style="font-size: 16px; font-weight: 800; color: #4338ca; border-bottom: 2px solid #e0e7ff; padding-bottom: 6px; margin-top: 20px; margin-bottom: 10px;">
-          ${sec.heading || `Section ${idx + 1}`}
-        </h2>
-        ${sec.subheading ? `<div style="font-size: 12px; font-weight: 700; color: #64748b; margin-bottom: 10px; text-transform: uppercase;">${sec.subheading}</div>` : ''}
-
-        <div style="font-size: 13px; line-height: 1.75; color: #334155; margin-bottom: 14px; white-space: pre-wrap;">
-          ${sec.content || ''}
-        </div>
-
-        ${sec.keyPoints && sec.keyPoints.length > 0 ? `
-          <div style="page-break-inside: avoid; background: #f5f3ff; border-left: 4px solid #6366f1; border-radius: 6px; padding: 12px 16px; margin-bottom: 14px;">
-            <div style="font-size: 12px; font-weight: 800; color: #4f46e5; text-transform: uppercase; margin-bottom: 6px;">📌 Core Key Points</div>
-            <ul style="margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: #312e81;">
-              ${sec.keyPoints.map(kp => `<li>${kp}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-
-        ${sec.definitions && sec.definitions.length > 0 ? `
-          <div style="page-break-inside: avoid; background: #f0fdf4; border-left: 4px solid #10b981; border-radius: 6px; padding: 12px 16px; margin-bottom: 14px;">
-            <div style="font-size: 12px; font-weight: 800; color: #065f46; text-transform: uppercase; margin-bottom: 6px;">📖 Key Definitions</div>
-            ${sec.definitions.map(def => `
-              <div style="margin-bottom: 6px; font-size: 12.5px;">
-                <strong style="color: #047857;">${def.term}:</strong> <span style="color: #064e3b;">${def.definition}</span>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-
-        ${sec.importantFacts && sec.importantFacts.length > 0 ? `
-          <div style="page-break-inside: avoid; background: #fffbeb; border-left: 4px solid #f59e0b; border-radius: 6px; padding: 12px 16px; margin-bottom: 14px;">
-            <div style="font-size: 12px; font-weight: 800; color: #92400e; text-transform: uppercase; margin-bottom: 6px;">⚡ Important Exam Facts</div>
-            <ul style="margin: 0; padding-left: 18px; font-size: 12px; color: #78350f;">
-              ${sec.importantFacts.map(fact => `<li>${fact}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-
-        ${sec.formulas && sec.formulas.length > 0 ? `
-          <div style="page-break-inside: avoid; background: #f8fafc; border: 1.5px solid #cbd5e1; border-radius: 8px; padding: 12px 16px; margin-bottom: 14px;">
-            <div style="font-size: 12px; font-weight: 800; color: #334155; text-transform: uppercase; margin-bottom: 6px;">📐 Formulas & Mathematical Relations</div>
-            ${sec.formulas.map(f => `
-              <div style="margin-bottom: 8px;">
-                <div style="font-weight: 700; color: #1e293b; font-size: 12.5px;">${f.name}</div>
-                <div style="font-family: monospace; background: #ffffff; border: 1px solid #e2e8f0; padding: 4px 8px; border-radius: 4px; font-size: 13px; color: #2563eb; margin: 4px 0;">
-                  ${f.formula}
-                </div>
-                <div style="font-size: 11.5px; color: #64748b;">${f.explanation}</div>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-
-        ${sec.examples && sec.examples.length > 0 ? `
-          ${sec.examples.map(ex => `
-            <div style="page-break-inside: avoid; background: #fdf4ff; border-left: 4px solid #c084fc; border-radius: 6px; padding: 12px 16px; margin-bottom: 14px;">
-              <div style="font-size: 12px; font-weight: 800; color: #7e22ce; text-transform: uppercase; margin-bottom: 4px;">💡 Example: ${ex.title}</div>
-              <div style="font-size: 12.5px; line-height: 1.6; color: #581c87; margin-bottom: 6px;">${ex.content}</div>
-              ${ex.stepByStep ? `
-                <div style="font-size: 11.5px; font-weight: 700; color: #7e22ce;">Step-by-step breakdown:</div>
-                <ul style="margin: 4px 0 6px; padding-left: 18px; font-size: 12px; color: #6b21a8;">
-                  ${ex.stepByStep.map(s => `<li>${s}</li>`).join('')}
-                </ul>
-              ` : ''}
-              ${ex.realWorldAnalogy ? `
-                <div style="font-size: 11.5px; color: #9333ea; font-style: italic;">Analogy: ${ex.realWorldAnalogy}</div>
-              ` : ''}
-            </div>
-          `).join('')}
-        ` : ''}
-      </div>
-    `).join('');
-
-    const glossaryHtml = glossary.length > 0 ? `
-      <div style="page-break-before: auto; margin-top: 30px; border-top: 2px solid #cbd5e1; padding-top: 16px;">
-        <h2 style="font-size: 15px; font-weight: 800; color: #0f172a; margin-bottom: 12px;">🔤 Interactive Smart Glossary & Reference Index</h2>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-          ${glossary.map(g => `
-            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 8px 12px; font-size: 12px;">
-              <div style="font-weight: 700; color: #3b82f6;">${g.term}</div>
-              <div style="color: #475569; margin: 2px 0;">${g.simpleMeaning}</div>
-              ${g.hindiMeaning ? `<div style="color: #10b981; font-weight: 600;">${g.hindiMeaning}</div>` : ''}
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    ` : '';
-
-    const fullHtml = `
-      <div style="font-family: 'Noto Sans Devanagari', 'Inter', sans-serif; max-width: 820px; margin: 0 auto; padding: 24px; color: #0f172a;">
-        <!-- Running Header -->
-        <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #4f46e5; padding-bottom: 8px; margin-bottom: 20px; font-size: 11px; color: #64748b;">
-          <span style="font-weight: 700; color: #4f46e5;">HAMSA VIDYA (हंस विद्या) • AI Digital Textbook</span>
-          <span>Printed: ${todayStr}</span>
-        </div>
-
-        <!-- Cover Title Box -->
-        <div style="background: linear-gradient(135deg, #4f46e5, #7c3aed); color: #ffffff; border-radius: 12px; padding: 20px 24px; margin-bottom: 24px;">
-          <div style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #c7d2fe; margin-bottom: 6px;">
-            ${note.subject || 'General Studies'} • Comprehensive Textbook Study Module
-          </div>
-          <h1 style="font-size: 22px; font-weight: 800; margin: 0 0 8px 0; line-height: 1.3;">
-            ${note.title}
-          </h1>
-          <div style="font-size: 12px; color: #e0e7ff; display: flex; gap: 16px; flex-wrap: wrap;">
-            <span>📖 ${sections.length} Sections</span>
-            <span>📝 ~${words} Words</span>
-            <span>⏱️ ~${readTime} Min Read</span>
-          </div>
-        </div>
-
-        <!-- Table of Contents -->
-        <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin-bottom: 24px;">
-          <div style="font-size: 12px; font-weight: 800; color: #334155; text-transform: uppercase; margin-bottom: 8px;">📚 Table of Contents</div>
-          ${tocHtml}
-        </div>
-
-        <!-- Structured Chapters -->
-        ${sectionsHtml}
-
-        <!-- Glossary Index -->
-        ${glossaryHtml}
-
-        <!-- Running Footer -->
-        <div style="margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 10px; text-align: center; font-size: 10px; color: #94a3b8;">
-          Hamsa Vidya Knowledge Vault • Sharpen Your Intellect • Page 1
-        </div>
-      </div>
-    `;
-
-    this.openPrintWindow(fullHtml);
+  exportStudyNotesBookletPdf(note,printWindow=null) {
+    const escape=value=>SecurityUtils.escapeHtml(String(value??''));
+    const list=values=>`<ul>${(values||[]).map(value=>`<li>${escape(value)}</li>`).join('')}</ul>`;
+    const prose=value=>window.marked?SecurityUtils.sanitizeHtml(window.marked.parse(escape(value))):escape(value);
+    const refs=values=>(values||[]).length?`<p class="study-print-source">Source: ${values.map(ref=>`${escape(ref.fileName)}${ref.page?' · page '+Number(ref.page):''}`).join('; ')}</p>`:'';
+    const sections=(note.sections||[]).map(section=>`<section class="study-print-section"><h2>${escape(section.heading)}</h2>${refs(section.sourceRefs)}<div class="study-print-prose study-print-markdown">${prose(section.content)}</div>
+      ${section.keyPoints?.length?`<h3>Key points</h3>${list(section.keyPoints)}`:''}
+      ${section.definitions?.length?`<h3>Definitions</h3><dl>${section.definitions.map(item=>`<dt>${escape(item.term)}</dt><dd>${escape(item.definition)}</dd>`).join('')}</dl>`:''}
+      ${(section.formulas||[]).map(item=>`<div class="study-print-box"><strong>${escape(item.name)}</strong><p class="study-print-formula">${escape(item.formula)}</p><p>${escape(item.explanation)}</p></div>`).join('')}
+      ${(section.tables||[]).map(table=>`<table><caption>${escape(table.title)}</caption><thead><tr>${table.headers.map(cell=>`<th>${escape(cell)}</th>`).join('')}</tr></thead><tbody>${table.rows.map(row=>`<tr>${row.map(cell=>`<td>${escape(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table>`).join('')}
+      ${section.flowchart?.nodes?.length?`<h3>${escape(section.flowchart.title)}</h3><ol>${section.flowchart.nodes.map(node=>`<li><strong>${escape(node.label)}</strong> — ${escape(node.description)}</li>`).join('')}</ol>`:''}
+      ${section.diagram?.svgContent?`<figure><figcaption>${escape(section.diagram.title)}</figcaption>${SecurityUtils.sanitizeSvg(section.diagram.svgContent)}<p>${escape(section.diagram.caption)}</p></figure>`:''}
+      ${(section.examples||[]).map(example=>`<div class="study-print-box"><h3>${escape(example.title)}</h3><p>${example.origin==='TEACHING_EXAMPLE'?'Additional teaching example':'Example from the note'}</p><p>${escape(example.content)}</p>${list(example.stepByStep)}${example.realWorldAnalogy?`<p>${escape(example.realWorldAnalogy)}</p>`:''}</div>`).join('')}
+      ${section.importantFacts?.length?`<h3>Source facts</h3>${list(section.importantFacts)}`:''}
+      ${section.recall?`<div class="study-print-box"><h3>Check your understanding</h3><p>${escape(section.recall.question)}</p>${list(section.recall.expectedPoints)}</div>`:''}
+      ${(note.annotations?.highlights||[]).filter(highlight=>highlight.sectionId===section.id).length?`<h3>Your highlights</h3>${list(note.annotations.highlights.filter(highlight=>highlight.sectionId===section.id).map(highlight=>highlight.text))}`:''}
+    </section>`).join('');
+    this.openPrintWindow(this._studyPrintDocument(note,`<nav><h2>Contents</h2><ol>${(note.sections||[]).map(section=>`<li>${escape(section.heading)}</li>`).join('')}</ol></nav>${sections}${note.glossaryTerms?.length?`<h2>Glossary</h2><dl>${note.glossaryTerms.map(term=>`<dt>${escape(term.term)}</dt><dd>${escape(term.simpleMeaning||term.contextMeaning||term.definition)}${term.hindiMeaning?' · '+escape(term.hindiMeaning):''}</dd>`).join('')}</dl>`:''}`,'Full Study Notes'),printWindow);
   }
 
-  /**
-   * Generates a Printable Quiz PDF with question stems and answer blanks
-   */
-  exportPrintableQuizPdf(quiz, questions) {
+  _studyPrintDocument(note,body,label) {
+    const escape=value=>SecurityUtils.escapeHtml(String(value??''));
+    const fontURL=new URL('assets/fonts/NotoSansDevanagari.ttf',document.baseURI).href;
+    return `<style>@font-face{font-family:'Noto Sans Devanagari';src:url('${fontURL}') format('truetype');font-weight:100 900;font-style:normal;font-display:block}.study-print{font-family:'Noto Sans Devanagari',Inter,sans-serif;color:#172033;line-height:1.55;font-size:12px}.study-print h1{font-size:23px}.study-print h2{font-size:17px;border-bottom:1px solid #cbd5e1;padding-bottom:5px}.study-print h3{font-size:13px}.study-print-section{margin:18px 0}.study-print-prose{white-space:pre-wrap}.study-print-markdown{white-space:normal}.study-print-markdown p{margin:7px 0}.study-print-source{font-size:10px;color:#526077}.study-print-box{border:1px solid #cbd5e1;border-radius:6px;padding:10px;margin:10px 0;break-inside:avoid}.study-print-formula{white-space:pre-wrap;font-family:monospace;font-size:13px}.study-print table{width:100%;border-collapse:collapse;margin:12px 0}.study-print td,.study-print th{padding:6px;border:1px solid #cbd5e1;text-align:left}.study-print dt{font-weight:700;margin-top:6px}.study-print dd{margin:2px 0 6px}.study-print svg{width:100%;height:auto;max-height:300px}.study-print figure{break-inside:avoid;margin:12px 0}.study-print p,.study-print li{overflow-wrap:anywhere}.study-print-header{border-bottom:2px solid #7c3aed;padding-bottom:10px}.study-print footer{margin-top:20px;color:#526077;font-size:10px}</style>
+      <article class="study-print"><header class="study-print-header"><p>HAMSA VIDYA · ${escape(label)}</p><h1>${escape(note.title)}</h1><p>${escape(note.subject)} · ${new Date().toLocaleDateString()}${note.metadata?.generationSource==='LOCAL_FORMATTER'?' · Source organised locally':''}</p>${note.focusInstruction?`<p>Focused extraction: ${escape(note.focusInstruction)}</p>`:''}</header>${body}<footer>Hamsa Vidya · Source references identify the material used for each section.</footer></article>`;
+  }
+
+  exportPrintableQuizPdf(quiz, questions,printWindow=null) {
+    const escape = value => SecurityUtils.escapeHtml(String(value ?? ''));
     const letters = ['(A)', '(B)', '(C)', '(D)'];
     const todayStr = new Date().toLocaleDateString();
 
     const questionsHtml = questions.map((q, idx) => `
       <div style="page-break-inside: avoid; margin-bottom: 18px; padding: 12px 16px; background: #fafafa; border: 1px solid #e5e7eb; border-radius: 8px;">
         <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-          <span style="font-weight: 700; font-size: 13.5px; color: #0f172a;">Q${idx + 1}. ${q.questionText}</span>
+          <span style="font-weight: 700; font-size: 13.5px; color: #0f172a;">Q${idx + 1}. ${escape(q.questionText)}</span>
           <span style="font-size: 11px; color: #64748b; border: 1px dashed #cbd5e1; padding: 2px 8px; border-radius: 4px;">Candidate Answer: [ &nbsp;&nbsp;&nbsp; ]</span>
         </div>
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12.5px; padding-left: 8px;">
           ${(q.options || []).map((opt, optIdx) => `
             <div style="display: flex; gap: 6px;">
               <span style="font-weight: 700; color: #4f46e5;">${letters[optIdx]}</span>
-              <span>${opt}</span>
+              <span>${escape(opt)}</span>
             </div>
           `).join('')}
         </div>
@@ -445,20 +321,21 @@ class PdfGeneratorService {
           <span>Date: ${todayStr}</span>
         </div>
         <div style="background: #4f46e5; color: white; padding: 16px 20px; border-radius: 8px; margin-bottom: 20px;">
-          <h1 style="font-size: 18px; font-weight: 800; margin: 0 0 6px 0;">${quiz.title || 'Practice Quiz'}</h1>
+          <h1 style="font-size: 18px; font-weight: 800; margin: 0 0 6px 0;">${escape(quiz.title || 'Practice Quiz')}</h1>
           <div style="font-size: 12px; color: #e0e7ff;">Total Questions: ${questions.length} • Marking: +1 / -0.33 • Duration: ${Math.round(questions.length * 1.5)} Mins</div>
         </div>
         ${questionsHtml}
       </div>
     `;
 
-    this.openPrintWindow(html);
+    this.openPrintWindow(html,printWindow);
   }
 
   /**
    * Generates a Printable Answer Key PDF with rationale
    */
   exportQuizAnswerKeyPdf(quiz, questions) {
+    const escape = value => SecurityUtils.escapeHtml(String(value ?? ''));
     const letters = ['(A)', '(B)', '(C)', '(D)'];
     const todayStr = new Date().toLocaleDateString();
 
@@ -468,9 +345,9 @@ class PdfGeneratorService {
       return `
         <div style="page-break-inside: avoid; border-bottom: 1px solid #e2e8f0; padding: 10px 0;">
           <div style="font-weight: 700; font-size: 13px; color: #1e293b; margin-bottom: 4px;">
-            Q${idx + 1}. Correct Answer: <span style="color: #10b981;">Option ${correctLetter}</span> (${optText})
+            Q${idx + 1}. Correct Answer: <span style="color: #10b981;">Option ${correctLetter}</span> (${escape(optText)})
           </div>
-          <div style="font-size: 12px; color: #475569; line-height: 1.55;">${q.explanation || 'No explanation.'}</div>
+          <div style="font-size: 12px; color: #475569; line-height: 1.55;">${escape(q.explanation || 'No explanation.')}</div>
         </div>
       `;
     }).join('');
@@ -481,7 +358,7 @@ class PdfGeneratorService {
           <span style="font-weight: 700; color: #10b981;">HAMSA VIDYA • Official Answer Key & Explanations</span>
           <span>Date: ${todayStr}</span>
         </div>
-        <h1 style="font-size: 18px; font-weight: 800; color: #065f46; margin-bottom: 16px;">${quiz.title} — Verified Answer Key</h1>
+        <h1 style="font-size: 18px; font-weight: 800; color: #065f46; margin-bottom: 16px;">${escape(quiz.title)} — Verified Answer Key</h1>
         ${rows}
       </div>
     `;
@@ -492,55 +369,20 @@ class PdfGeneratorService {
   /**
    * Generates a 1-page High-Yield Revision Cheat-Sheet PDF
    */
-  exportSummarySheetPdf(note) {
-    const summary = note.summary;
-    const todayStr = new Date().toLocaleDateString();
-
-    const html = `
-      <div style="font-family: 'Noto Sans Devanagari', 'Inter', sans-serif; max-width: 800px; margin: 0 auto; padding: 24px; color: #0f172a;">
-        <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #10b981; padding-bottom: 6px; margin-bottom: 16px; font-size: 11px; color: #64748b;">
-          <span style="font-weight: 700; color: #10b981;">HAMSA VIDYA • High-Yield Revision Cheat-Sheet</span>
-          <span>${todayStr}</span>
-        </div>
-        <div style="background: #065f46; color: white; padding: 14px 18px; border-radius: 8px; margin-bottom: 16px;">
-          <div style="font-size: 11px; text-transform: uppercase; color: #a7f3d0;">${note.subject || 'General'} Revision Module</div>
-          <h1 style="font-size: 18px; font-weight: 800; margin: 2px 0 0 0;">${note.title}</h1>
-        </div>
-
-        ${summary ? `
-          <div style="background: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
-            <div style="font-size: 12px; font-weight: 800; color: #065f46; text-transform: uppercase; margin-bottom: 6px;">💡 Core Concept</div>
-            <div style="font-size: 13px; line-height: 1.6; color: #064e3b;">${summary.coreConcept || ''}</div>
-          </div>
-
-          <div style="background: #faf5ff; border: 1.5px solid #d8b4fe; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
-            <div style="font-size: 12px; font-weight: 800; color: #6b21a8; text-transform: uppercase; margin-bottom: 6px;">📌 5 High-Yield Key Takeaways</div>
-            <ul style="margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: #581c87;">
-              ${(summary.takeaways || []).map(t => `<li>${t}</li>`).join('')}
-            </ul>
-          </div>
-
-          ${summary.examTraps && summary.examTraps.length > 0 ? `
-            <div style="background: #fff1f2; border: 1.5px solid #fecdd3; border-radius: 8px; padding: 14px; margin-bottom: 14px;">
-              <div style="font-size: 12px; font-weight: 800; color: #9f1239; text-transform: uppercase; margin-bottom: 6px;">⚠️ Common Exam Pitfalls & Traps to Avoid</div>
-              <ul style="margin: 0; padding-left: 18px; font-size: 12.5px; line-height: 1.6; color: #881337;">
-                ${summary.examTraps.map(trap => `<li>${trap}</li>`).join('')}
-              </ul>
-            </div>
-          ` : ''}
-
-          ${summary.finalTakeaway ? `
-            <div style="background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #475569; font-style: italic;">
-              ${summary.finalTakeaway}
-            </div>
-          ` : ''}
-        ` : `
-          <div style="font-size: 13px; color: #475569;">${note.content}</div>
-        `}
-      </div>
-    `;
-
-    this.openPrintWindow(html);
+  exportSummarySheetPdf(note,mode='DETAILED',printWindow=null) {
+    const escape=value=>SecurityUtils.escapeHtml(String(value??''));
+    const prose=value=>window.marked?SecurityUtils.sanitizeHtml(window.marked.parse(escape(value))):escape(value);
+    const summary=note.summary||window.geminiService.generateFallbackComprehensiveSummary({title:note.title,sections:note.sections||[]});
+    const list=values=>`<ul>${(values||[]).map(value=>`<li>${escape(value)}</li>`).join('')}</ul>`;
+    const quick=mode==='QUICK',exam=mode==='EXAM';
+    let body=`<p>${summary.generationSource==='GEMINI_AI'?'AI revision':'Revision extracted from source notes'}</p>`;
+    if(quick)body+=`<div class="study-print-prose study-print-markdown">${prose(summary.coreConcept)}</div>${list((summary.takeaways||[]).slice(0,8))}<p>Selected highlights. Use Detailed Revision for every section.</p>`;
+    else {
+      body+=(summary.sectionBreakdowns||[]).map(section=>`<section class="study-print-section"><h2>${escape(section.sectionTitle)}</h2>${!exam?`<div class="study-print-prose study-print-markdown">${prose(section.deepDiveSummary)}</div>`:''}${list(exam?(section.highYieldPointers||[]).slice(0,3):section.highYieldPointers)}${section.sourceRefs?.length?`<p class="study-print-source">Source: ${section.sourceRefs.map(ref=>`${escape(ref.fileName)}${ref.page?' · page '+Number(ref.page):''}`).join('; ')}</p>`:''}</section>`).join('');
+      body+=`<h2>Definitions</h2><dl>${(summary.keyDefinitions||[]).map(item=>`<dt>${escape(item.term)}</dt><dd>${escape(item.definition)}</dd>`).join('')}</dl><h2>Formulas & rules</h2>${(summary.formulasOrRules||[]).map(item=>`<div class="study-print-box"><strong>${escape(item.name)}</strong><p class="study-print-formula">${escape(item.rule||item.formula)}</p><p>${escape(item.significance||item.explanation)}</p></div>`).join('')}`;
+      if(summary.examTraps?.length)body+=`<h2>Misconceptions</h2>${list(summary.examTraps)}`;
+    }
+    this.openPrintWindow(this._studyPrintDocument(note,body,quick?'Quick Revision':exam?'Compact Exam Sheet':'Detailed Revision'),printWindow);
   }
 
   async generateAnswerWritingReportPdf(arg1 = {}, arg2 = {}, arg3 = '', arg4 = 'BILINGUAL') {

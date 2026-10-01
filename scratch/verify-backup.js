@@ -389,6 +389,39 @@ function seed(db) {
     check('includePreferences also clears profile', !store.has('hamsa_exam_profile'));
   }
 
+  console.log('\n=== Module resets are isolated and atomic ===');
+  for (const [moduleId, erased, reviewPrefix] of [
+    ['QUIZZES',['quizzes','questions','attempts'],'q:'], ['NOTES',['notes'],'note_'],
+    ['FLASHCARDS',['customDecks','customCards','cardReviews'],null], ['ANSWERS',['answers','answerDrafts'],null],
+    ['TEACHER',['aiTeacherExplanations'],null], ['EXAMS',['exams','savedExams'],null]
+  ]) {
+    const { sandbox, db, store } = buildSandbox(); seed(db);
+    db.cardReviews.rows = [{id:1,cardKey:'q:1'}, {id:2,cardKey:'note_1:energy'}, {id:3,cardKey:'custom:1'}];
+    store.set('hamsa_study_preferences','{"language":"HINDI"}'); store.set('hamsa_gemini_api_key','fake');
+    const before = Object.fromEntries(TABLE_NAMES.map(key => [key, JSON.stringify(db[key].rows)]));
+    await sandbox.clearModuleData(moduleId);
+    check(`${moduleId}: requested stores emptied`, erased.every(key => db[key].rows.length === 0));
+    check(`${moduleId}: other stores preserved`, TABLE_NAMES.filter(key => !erased.includes(key) && !(key==='cardReviews' && reviewPrefix)).every(key => JSON.stringify(db[key].rows) === before[key]));
+    if (reviewPrefix) check(`${moduleId}: only related reviews removed`, db.cardReviews.rows.length === 2 && db.cardReviews.rows.every(row => !row.cardKey.startsWith(reviewPrefix)));
+    check(`${moduleId}: preferences and key kept`, store.get('hamsa_gemini_api_key')==='fake' && store.get('hamsa_study_preferences').includes('HINDI'));
+  }
+  {
+    const { sandbox, db } = buildSandbox(); seed(db);
+    const before = JSON.stringify(TABLE_NAMES.map(key => db[key].rows));
+    db.questions.clear = async () => { throw new Error('injected clear failure'); };
+    let rejected = false; try { await sandbox.clearModuleData('QUIZZES'); } catch { rejected = true; }
+    check('failed module reset reports failure and rolls back all stores', rejected && JSON.stringify(TABLE_NAMES.map(key => db[key].rows)) === before);
+    rejected = false; try { await sandbox.clearModuleData('UNKNOWN'); } catch { rejected = true; }
+    check('unknown module never erases data', rejected && JSON.stringify(TABLE_NAMES.map(key => db[key].rows)) === before);
+  }
+  {
+    const { sandbox, db, store, blobs } = buildSandbox(); seed(db);
+    store.set('hamsa_study_preferences','{"language":"HINGLISH","depth":"SIMPLE"}'); store.set('hamsa_textbook_font','SERIF');
+    await sandbox.exportDatabaseBackup(); const backup = blobs.at(-1);
+    store.delete('hamsa_study_preferences'); store.delete('hamsa_textbook_font');
+    await sandbox.importDatabaseBackup(backup);
+    check('study defaults and reader preferences survive backup round trip', store.get('hamsa_study_preferences').includes('HINGLISH') && store.get('hamsa_textbook_font')==='SERIF');
+  }
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);
   process.exit(fail ? 1 : 0);
 })();

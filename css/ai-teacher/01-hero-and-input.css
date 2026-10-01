@@ -38,6 +38,8 @@
    ========================================================================== */
 
 .teacher-hero {
+  --vh: var(--color-primary);
+  --vh-rgb: var(--color-primary-rgb);
   position: relative;
   overflow: hidden;
   border-radius: var(--radius-xl);
@@ -52,8 +54,7 @@
   isolation: isolate;
 }
 
-/* Soft colour wash. Static gradients rather than moving orbs, so the panel
-   reads as premium without competing with the content below it. */
+/* Shared live aurora, rays and title effects match the other tab heroes. */
 .teacher-hero-aurora {
   position: absolute;
   inset: 0;

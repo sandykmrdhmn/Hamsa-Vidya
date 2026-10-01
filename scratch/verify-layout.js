@@ -149,10 +149,15 @@ console.log('\n=== Every per-view width is released ===');
     /\.page-column \{\s*\n?\s*width: 100%;\s*\n?\s*max-width: 100%/.test(layoutCss) ||
     /width: 100%;[\s\S]{0,60}max-width: 100%;[\s\S]{0,60}margin-inline: auto;/.test(layoutCss));
 
-  // Long-form prose needs its own measure now that its container was released.
-  check('the AI Teacher lesson keeps a reading measure',
-    /\.teacher-book-folio \{[\s\S]{0,140}max-width: 1100px/.test(layoutCss),
-    'released from 1200px, it would otherwise inherit the full column');
+  // Teacher questions, answers and navigation must fill the same column.
+  const teacherPanels = layoutCss.match(/#view-ai-teacher :is\(([\s\S]*?)\) \{([\s\S]*?)\}/);
+  check('AI Teacher panels share the same full width',
+    !!teacherPanels && /width: 100%;/.test(teacherPanels[2]) &&
+    /max-width: 100%;/.test(teacherPanels[2]) &&
+    ['.teacher-hero', '.teacher-tabs-nav', '.teacher-input-card',
+      '.teacher-book-folio', '.teacher-loading-card', '.teacher-actions-bar']
+      .every(selector => teacherPanels[1].includes(selector)),
+    'the generated answer must not have a narrower cap than the question');
   check('the quiz report stays centred',
     /\.result-container \{[\s\S]{0,120}margin-inline: auto/.test(layoutCss));
 

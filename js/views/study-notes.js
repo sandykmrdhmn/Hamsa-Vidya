@@ -28,6 +28,209 @@ class StudyNotesView {
     { label: '📋 Only tables & data', text: 'only the tables, lists and tabulated data' }
   ];
 
+  _clone(value) { return JSON.parse(JSON.stringify(value)); }
+
+  _controller() { const controller=new AbortController();this._controllers.add(controller);return controller; }
+
+  _checkRun(controller) {
+    if(controller.signal.aborted || window.app?.isGenerationCancelled()) throw new DOMException('Cancelled','AbortError');
+  }
+
+  _endNoteSession() {
+    this._viewVersion++;this._renderVersion++;
+    this._controllers.forEach(controller=>controller.abort());this._controllers.clear();
+    this._chatPending=false;this._recallPending=false;this._masteryPending=false;this.searchInNoteQuery='';this.activeGlossaryTerm=null;this.activeExampleData=null;
+    clearTimeout(this._readingTimer);window.removeEventListener('scroll',this._scrollHandler);
+    window.speechSynthesis?.cancel();this.isSpeaking=false;
+    document.getElementById('floating-selection-toolbar')?.remove();
+    this._sourceURLs.forEach(url=>URL.revokeObjectURL(url));this._sourceURLs.clear();
+  }
+
+  async _persistReadingProgress() {
+    const note=this.activeNote;if(!note)return;
+    const data={recallAnswers:this._clone(this.microQuizAnswers||{})};
+    if(note.readingPosition)data.readingPosition=this._clone(note.readingPosition);
+    await updateNote(note.id,data);
+  }
+
+  onLeaveView() {
+    this.flushAutoSave().catch(error=>window.app?.showToast(`Your notes could not be saved: ${error.message}`,'error'));
+    this._persistReadingProgress().catch(error=>window.app?.showToast(`Reading progress could not be saved: ${error.message}`,'warning'));
+    this._endNoteSession();document.body.classList.remove('in-textbook-focus-mode');
+  }
+
+  _rememberEdit() {
+    if(!this._editBaseline && this.activeNote) this._editBaseline=this._clone({title:this.activeNote.title,sections:this.activeNote.sections,summary:this.activeNote.summary,glossaryTerms:this.activeNote.glossaryTerms});
+  }
+
+  async flushAutoSave() {
+    clearTimeout(this.autoSaveTimer);
+    if(!this._dirty || !this.activeNote) return await this._savePromise;
+    const note=this.activeNote,id=note.id,sequence=this._editSequence||0;
+    if(this._savingSequence===sequence&&this._savingNoteId===id)return await this._savePromise;
+    this._savingSequence=sequence;this._savingNoteId=id;
+    const baseline=this._editBaseline,history=[...(note.editHistory||[])];
+    if(baseline)history.push({...this._clone(baseline),savedAt:new Date().toISOString()});
+    const snapshot={title:note.title,sections:this._clone(note.sections),glossaryTerms:this._clone(note.glossaryTerms||[]),editHistory:history.slice(-20),
+      summary:window.geminiService.generateFallbackComprehensiveSummary({title:note.title,subject:note.subject,sections:note.sections}),
+      metadata:{...(note.metadata||{}),studentEdited:true},recallAnswers:this._clone(this.microQuizAnswers||{})};
+    const task=this._savePromise.catch(()=>{}).then(()=>updateNote(id,snapshot));this._savePromise=task;
+    try {
+      await task;
+      if(Number(this.activeNote?.id)===Number(id)) {
+        note.editHistory=snapshot.editHistory;note.summary=snapshot.summary;note.metadata=snapshot.metadata;note.recallAnswers=snapshot.recallAnswers;
+        if(sequence===(this._editSequence||0)){this._dirty=false;this._editBaseline=null;this.autoSaveStatus='Saved ✓';}
+        else this._editBaseline={title:snapshot.title,sections:snapshot.sections,summary:snapshot.summary,glossaryTerms:note.glossaryTerms};
+        const badge=document.getElementById('auto-save-status-badge');if(badge)badge.textContent=this.autoSaveStatus;
+      }
+    }catch(error){this.autoSaveStatus='Save failed · draft kept';const badge=document.getElementById('auto-save-status-badge');if(badge)badge.textContent=this.autoSaveStatus;throw error;}
+    finally{if(this._savingSequence===sequence){this._savingSequence=null;this._savingNoteId=null;}}
+  }
+
+  async undoLastEdit() {
+    try {
+      await this.flushAutoSave();const note=this.activeNote,history=[...(note?.editHistory||[])];const previous=history.pop();if(!previous)return;
+      const data={title:previous.title,sections:previous.sections,summary:previous.summary,glossaryTerms:previous.glossaryTerms||[],editHistory:history,recallAnswers:{}};
+      await updateNote(note.id,data);Object.assign(note,data);this._cachedSectionQuizzes={};this.microQuizAnswers={};await this.render();
+      window.app?.showToast('Previous saved version restored.','success');
+    }catch(error){window.app?.showToast(`Undo failed: ${error.message}`,'error');}
+  }
+
+  _settingsHTML() {
+    const select=(name,label,options)=>`<label>${label}<select class="vault-filter-select" onchange="studyNotesView.noteSettings.${name}=this.value">${options.map(([key,text])=>`<option value="${key}" ${this.noteSettings[name]===key?'selected':''}>${text}</option>`).join('')}</select></label>`;
+    return `<div class="study-settings">${select('language','Notes & practice language',[['AUTO','Keep source language'],['ENGLISH','English'],['HINDI','हिन्दी'],['HINGLISH','Hinglish'],['BILINGUAL','English + हिन्दी']])}${select('level','Learning level',[['AUTO','Match source'],['SCHOOL','School'],['COLLEGE','College'],['COMPETITIVE','Competitive exams'],['ADVANCED','Advanced']])}<label>Target exam (optional)<input value="${this.escapeHtml(this.noteSettings.exam)}" maxlength="120" placeholder="e.g. CBSE Class 10, SSC, UPSC" oninput="studyNotesView.noteSettings.exam=this.value"></label></div>`;
+  }
+
+  _creationErrorHTML() {
+    const error=this._creationError;if(!error)return '';
+    return `<div class="study-error" role="alert"><strong>${this.escapeHtml(error.message)}</strong>${error.failures?.length?`<ul>${error.failures.map(failure=>`<li>Batch ${failure.batch}: ${this.escapeHtml(failure.sourceRefs.map(ref=>`${ref.fileName}${ref.page?' · page '+ref.page:''}`).join(', '))} — ${this.escapeHtml(failure.reason)}</li>`).join('')}</ul>`:''}<button class="btn btn-secondary btn-sm" onclick="studyNotesView.triggerCreateStructuredNote()">Retry unfinished work</button></div>`;
+  }
+
+  _noteStatusHTML(note) {
+    const local=note.metadata?.generationSource==='LOCAL_FORMATTER'||note.metadata?.generatedByAI===false;
+    const coverage=note.coverage;
+    return `<div class="study-note-status"><span>${local?'Source organised locally · AI teaching not generated':note.metadata?.generationSource==='GEMINI_AI'?'AI textbook':'Saved study note'}${coverage?` · ${coverage.processedBatches}/${coverage.totalBatches} source batches processed`:''}</span>${note.metadata?.studentEdited?'<span>Edited by you · refresh teaching aids where the explanation changed</span>':''}</div>
+      <div class="study-reader-tools"><button class="btn btn-secondary btn-sm" onclick="studyNotesView.toggleMobileSidebar()">Contents & highlights</button><label class="study-note-search"><span>Find in this note</span><input id="study-find-input" type="search" value="${this.escapeHtml(this.searchInNoteQuery)}" oninput="studyNotesView.findInNote(this.value)" placeholder="Concept, formula, definition…"></label><span id="study-find-status" role="status"></span><button class="btn btn-secondary btn-sm" ${note.editHistory?.length?'':'disabled'} onclick="studyNotesView.undoLastEdit()">Undo last saved edit</button></div>`;
+  }
+
+  findInNote(query) {
+    this.searchInNoteQuery=query;const text=query.trim().toLocaleLowerCase();let matches=0;
+    document.querySelectorAll('[data-study-section]').forEach(section=>{const match=!text||section.textContent.toLocaleLowerCase().includes(text);section.hidden=!match;if(match)matches++;});
+    const status=document.getElementById('study-find-status');if(status)status.textContent=text?`${matches} matching section${matches===1?'':'s'}`:'';
+  }
+
+  toggleMobileSidebar() {
+    if(this.readerActiveTab!=='TEXTBOOK'){this.readerActiveTab='TEXTBOOK';this.render().then(()=>this.toggleMobileSidebar());return;}
+    const sidebar=document.querySelector('.textbook-toc-sidebar');if(!sidebar)return;
+    const open=sidebar.classList.toggle('study-sidebar-open');
+    if(open){sidebar.setAttribute('tabindex','-1');sidebar.focus();}
+  }
+
+  setRevisionMode(mode) {if(['QUICK','DETAILED','EXAM'].includes(mode)){this.revisionMode=mode;this.render();}}
+
+  returnToSection(id) {this.readerActiveTab='TEXTBOOK';this.render().then(()=>this.scrollToSection(id));}
+
+  _sourceRefsHTML(refs) {
+    return refs.length?`<div class="study-source-refs">${refs.map(ref=>`<button type="button" onclick="studyNotesView.openSourceReference('${this.escapeHtml(this.escapeJs(ref.fileName))}',${Number(ref.page)||0})">${this.escapeHtml(ref.fileName)}${ref.page?` · p. ${Number(ref.page)}`:''}${ref.method==='OCR'?' · OCR':''}</button>`).join('')}</div>`:'';
+  }
+
+  openSourceReference(fileName,page) {this._sourceSelection={fileName,page};this.setReaderTab('SOURCE');}
+
+  _sourceURL(file) {
+    if(!file?.data || !/^data:(application\/pdf|image\/(?:jpeg|png|webp));base64,/.test(file.data))return null;
+    const key=file.name+':'+file.data.length;
+    if(!this._sourceURLs.has(key)) {
+      const [header,encoded]=file.data.split(',');const raw=atob(encoded);const bytes=Uint8Array.from(raw,char=>char.charCodeAt(0));
+      this._sourceURLs.set(key,URL.createObjectURL(new Blob([bytes],{type:header.slice(5,header.indexOf(';'))})));
+    }
+    return this._sourceURLs.get(key);
+  }
+
+  _quizDialogHTML() {
+    const note=this._quizNote||this.activeNote;if(!note)return '';
+    const option=(name,label,values)=>`<label>${label}<select class="vault-filter-select" onchange="studyNotesView.quizConfig.${name}=${name==='questionCount'?'Number(this.value)':'this.value'}">${values.map(value=>`<option value="${value}" ${this.quizConfig[name]===value?'selected':''}>${value}</option>`).join('')}</select></label>`;
+    return `<div class="modal-overlay active study-quiz-dialog" role="dialog" aria-modal="true" aria-label="Practice settings"><div class="modal-content"><h2>Practice from ${this.escapeHtml(note.title)}</h2><p>Questions use the selected sections and your note's language.</p><div class="study-settings">${option('questionCount','Questions',[5,10,15,20,25,30])}${option('difficulty','Difficulty',['EASY','MEDIUM','HARD','MIXED'])}${option('questionType','Question style',['MCQ','TRUE_FALSE','MIXED'])}</div><div class="study-chapter-picker">${(note.sections||[]).map(section=>`<label><input type="checkbox" ${this.selectedQuizSections==null||this.selectedQuizSections.includes(section.id)?'checked':''} onchange="studyNotesView.selectQuizSection('${this.escapeHtml(this.escapeJs(section.id))}',this.checked)">${this.escapeHtml(section.heading)}</label>`).join('')}</div><p class="study-muted">Short quizzes rotate across sections; question count determines how many sections can be sampled.</p><div class="study-revision-actions"><button class="btn btn-secondary" onclick="studyNotesView.closeQuizModal()">Cancel</button><button class="btn btn-primary" onclick="studyNotesView.launchGeneratedQuizForNote(${Number(note.id)})">Generate & Start</button></div></div></div>`;
+  }
+
+  _practiceSections(note) {return (note.sections||[]).filter(section=>this.selectedQuizSections==null||this.selectedQuizSections.includes(section.id));}
+
+  selectQuizSection(id,selected) {
+    const note=this.isQuizModalOpen?(this._quizNote||this.activeNote):this.activeNote;
+    this.selectedQuizSections ||= (note?.sections||[]).map(section=>section.id);
+    this.selectedQuizSections=this.selectedQuizSections.filter(sectionId=>sectionId!==id);if(selected)this.selectedQuizSections.push(id);
+  }
+
+  keepRecallDraft(id,draft) {this.microQuizAnswers[id]={...(this.microQuizAnswers[id]||{}),draft};}
+
+  async checkRecall(id,useAI) {
+    if(this._recallPending)return;
+    const section=this.activeNote?.sections?.find(section=>section.id===id),input=document.getElementById(`recall-${id}`);if(!section||!input?.value.trim())return;
+    const note=this.activeNote,version=this._viewVersion,recall=this.getOrGenerateSectionQuiz(section,0,note),draft=input.value;
+    const controller=this._controller();this._recallPending=true;
+    try {
+      const feedback=useAI?await window.geminiService.askAiAboutNote({noteTopic:note.title,sections:[section],settings:note.settings,signal:controller.signal,userQuestion:`Assess my explanation against EACH of these expected points: ${JSON.stringify(recall.expectedPoints)}. Say what is right, correct specific misunderstandings, suggest one concrete revision and ask one focused follow-up. Do not claim mastery. Question: ${recall.question}. My explanation: ${draft}`}):`Compare your explanation with these source-supported points:\n\n${recall.expectedPoints.map(point=>`- ${point}`).join('\n')}`;
+      if(version!==this._viewVersion||controller.signal.aborted)return;
+      this.microQuizAnswers[id]={draft,feedback,method:useAI?'AI_FEEDBACK':'SELF_CHECK',reviewedAt:new Date().toISOString()};note.recallAnswers=this._clone(this.microQuizAnswers);
+      await updateNote(note.id,{recallAnswers:note.recallAnswers});await this.render();
+    }catch(error){if(error.name!=='AbortError'&&version===this._viewVersion)window.app?.showToast(`Feedback failed; your draft is kept. ${error.message}`,'error');}
+    finally{this._controllers.delete(controller);if(version===this._viewVersion)this._recallPending=false;}
+  }
+
+  _applySavedHighlight(container,highlight) {
+    const text=container.textContent,quote=String(highlight.text||'');if(!quote)return;
+    let start=Number.isInteger(highlight.start)&&text.slice(highlight.start,highlight.start+quote.length)===quote?highlight.start:-1;
+    if(start<0){let index=text.indexOf(quote);while(index>=0){if(!highlight.prefix||text.slice(Math.max(0,index-highlight.prefix.length),index)===highlight.prefix){start=index;break;}index=text.indexOf(quote,index+1);}}
+    if(start<0)return;
+    const end=start+quote.length,walker=document.createTreeWalker(container,NodeFilter.SHOW_TEXT),nodes=[];let offset=0;
+    while(walker.nextNode()){const node=walker.currentNode,length=node.data.length;if(offset<end&&offset+length>start)nodes.push({node,from:Math.max(0,start-offset),to:Math.min(length,end-offset)});offset+=length;}
+    for(const {node,from,to} of nodes){const fragment=document.createDocumentFragment();fragment.append(document.createTextNode(node.data.slice(0,from)));const mark=document.createElement('mark');mark.className=`hamsa-highlight hl-${['yellow','green','purple'].includes(highlight.color)?highlight.color:'yellow'}`;mark.dataset.highlightId=highlight.id;mark.textContent=node.data.slice(from,to);fragment.append(mark,document.createTextNode(node.data.slice(to)));node.replaceWith(fragment);}
+  }
+
+  showGlossaryByIndex(event,index) {const term=this.activeNote?.glossaryTerms?.[index];if(term)this.showGlossaryPopover(event,term.term);}
+
+  _fileData(file) {
+    return new Promise((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(reader.result);reader.onerror=()=>reject(new Error(`Could not read ${file.name}`));reader.readAsDataURL(file);});
+  }
+
+  async _extractSources(files,manual,controller) {
+    const pages=manual.trim()?[{fileName:'Pasted text',page:null,text:manual,method:'TEXT'}]:[];
+    const originals=[];
+    for(const item of files) {
+      this._checkRun(controller);
+      const data=await this._fileData(item.file);originals.push({name:item.name,type:item.type,size:item.size,data});
+      if(item.type==='PDF') {
+        const bytes=new Uint8Array(await item.file.arrayBuffer());
+        if(new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw new Error(`${item.name} is not a valid PDF.`);
+        if(!window.pdfjsLib)throw new Error('PDF reader is unavailable. Reload and retry.');
+        const task=window.pdfjsLib.getDocument({data:bytes});let doc;
+        const stop=()=>task.destroy();controller.signal.addEventListener('abort',stop,{once:true});
+        try {
+          doc=await task.promise;const from=Number(item.fromPage)||1,to=Number(item.toPage)||doc.numPages;
+          if(!Number.isInteger(from)||!Number.isInteger(to)||from<1||to<from||to>doc.numPages)throw new Error(`Choose pages 1–${doc.numPages} for ${item.name}.`);
+          for(let pageNumber=from;pageNumber<=to;pageNumber++) {
+            this._checkRun(controller);app.handleGenerationProgress({message:`Reading ${item.name} · page ${pageNumber}/${to}`,percent:10,showBatchCard:true});
+            const page=await doc.getPage(pageNumber),content=await page.getTextContent();let lastY=null;
+            let text=content.items.map(item=>{const newline=lastY!=null&&Math.abs(item.transform[5]-lastY)>5;lastY=item.transform[5];return `${newline?'\n':' '}${item.str}`;}).join('').trim();let method='TEXT';
+            if(text.replace(/\s/g,'').length<30 || /[\u0000\ufffd]/u.test(text)) {
+              if(!window.geminiService.isAiAvailable())throw new Error(`${item.name}, page ${pageNumber}, needs OCR. Configure Gemini or upload readable text.`);
+              const viewport=page.getViewport({scale:Math.min(1.5,1800/page.getViewport({scale:1}).width)}),canvas=document.createElement('canvas');canvas.width=viewport.width;canvas.height=viewport.height;
+              const rendering=page.render({canvasContext:canvas.getContext('2d'),viewport,background:'#ffffff'});await rendering.promise;this._checkRun(controller);
+              text=await window.geminiService.extractTextFromImage({base64Data:canvas.toDataURL('image/png'),mimeType:'image/png',signal:controller.signal});method='OCR';canvas.width=canvas.height=0;
+            }
+            if(!text.trim())throw new Error(`No readable text on ${item.name}, page ${pageNumber}.`);
+            pages.push({fileName:item.name,page:pageNumber,text,method});page.cleanup();
+          }
+        }finally{controller.signal.removeEventListener('abort',stop);if(doc)await doc.destroy();else await task.destroy();}
+      }else{
+        const prefix=data.split(',')[1]?.slice(0,24)||'',magic=atob(prefix);const valid=magic.startsWith('\x89PNG')||magic.startsWith('\xff\xd8\xff')||(magic.startsWith('RIFF')&&magic.includes('WEBP'));
+        if(!valid)throw new Error(`${item.name} is not a supported image.`);
+        const text=await window.geminiService.extractTextFromImage({base64Data:data,mimeType:item.file.type||({'jpg':'image/jpeg','jpeg':'image/jpeg','png':'image/png','webp':'image/webp'}[item.name.split('.').pop().toLowerCase()]),signal:controller.signal});
+        pages.push({fileName:item.name,page:1,text,method:'OCR'});
+      }
+    }
+    return {pages,originals};
+  }
+
   constructor() {
     this.container = document.getElementById('view-study-notes');
     this.notes = [];
@@ -95,58 +298,64 @@ class StudyNotesView {
     this.isSpeaking = false;
     this.speechUtterance = null;
     this.microQuizAnswers = {};
+    this.noteSettings = { language: 'AUTO', level: 'AUTO', exam: '' };
+    this.revisionMode = 'QUICK';
+    this._viewVersion = 0;
+    this._renderVersion = 0;
+    this._controllers = new Set();
+    this._savePromise = Promise.resolve();
+    this._dirty = false;
+    this._sourceURLs = new Map();
+    this.selectedQuizSections = null;
+    this._savingSequence=null;this._savingNoteId=null;
+    this._retryState = null;
+    this._creationError = null;
+    this._sourcePages = null;
+    this._sourceSelection = null;
 
     // Bind global selection handler for floating toolbar & menu close
     this.initTextSelectionListener();
+    window.addEventListener('resize',()=>{if(window.innerWidth>600){const tools=this.container?.querySelector('.study-toolbar-details');if(tools)tools.open=true;}});
   }
 
   // =========================================================================
   // VIEW RENDERER DISPATCHER
   // =========================================================================
   async render() {
-    if (!this.container) {
-      this.container = document.getElementById('view-study-notes');
+    if (!this.activeNote && !this.isCreating) {
+      window.studyPreferences?.applyDefaults(this.noteSettings, window.studyPreferences.noteDefaults(), '_studyDefaults');
     }
+    this.container ||= document.getElementById('view-study-notes');
     if (!this.container) return;
-
-    // Fetch notes from IndexedDB
+    const token = ++this._renderVersion;
+    const scroll = window.scrollY;
+    try { this.notes = await getAllNotes(); }
+    catch (error) { window.app?.showToast(`Notes could not be loaded: ${error.message}`, 'error'); return; }
+    if (token !== this._renderVersion) return;
     try {
-      this.notes = await getAllNotes();
-    } catch (e) {
-      console.warn('Failed to load study notes:', e);
-      this.notes = [];
-    }
-
-    try {
-      // Render corresponding view mode
-      if (this.currentViewMode === 'READER' && this.activeNoteId) {
-        await this.renderReaderView();
-      } else if (this.currentViewMode === 'CREATE') {
-        this.renderCreateView();
-      } else {
-        this.currentViewMode = 'DASHBOARD';
-        this.renderDashboardView();
-      }
-    } catch (viewErr) {
-      console.error('Error rendering study notes sub-view:', viewErr);
-    }
-
-    if (window.app) window.app.refreshIcons();
+      if (this.currentViewMode === 'READER' && this.activeNoteId) await this.renderReaderView();
+      else if (this.currentViewMode === 'CREATE') this.renderCreateView();
+      else { this.currentViewMode = 'DASHBOARD'; this.renderDashboardView(); }
+      if (this.currentViewMode === 'DASHBOARD' && this.isQuizModalOpen) this.container.insertAdjacentHTML('beforeend', this._quizDialogHTML());
+      this.container.querySelectorAll('input[data-notes-search]').forEach(input => { input.value = this.searchQuery; });
+      window.app?.refreshIcons();
+      if(this.isQuizModalOpen) this.container.querySelector('.study-quiz-dialog select')?.focus();
+      if (this.currentViewMode === 'READER') {if(this.searchInNoteQuery)this.findInNote(this.searchInNoteQuery);window.scrollTo({ top: scroll, behavior: 'instant' });}
+    } catch (error) { console.error(error); window.app?.showToast(`Notes could not be displayed: ${error.message}`, 'error'); }
   }
 
-  // =========================================================================
-  // 1. STUDY NOTES HOME (DASHBOARD)
-  // =========================================================================
   renderDashboardView() {
     // Filter notes
     let filtered = this.notes.filter(n => {
       const matchSubj = this.activeSubjectFilter === 'ALL' || n.subject === this.activeSubjectFilter;
       const matchFav = !this.showOnlyFavorites || n.isFavorite;
       const q = this.searchQuery.toLowerCase().trim();
-      const matchQ = !q || 
+      const matchQ = !q ||
         (n.title && n.title.toLowerCase().includes(q)) ||
         (n.subject && n.subject.toLowerCase().includes(q)) ||
-        (n.description && n.description.toLowerCase().includes(q));
+        (n.description && n.description.toLowerCase().includes(q)) ||
+        (n.sections || []).some(section => `${section.heading} ${section.content}`.toLocaleLowerCase().includes(q)) ||
+        (n.glossaryTerms || []).some(term => `${term.term} ${term.simpleMeaning}`.toLocaleLowerCase().includes(q));
       return matchSubj && matchFav && matchQ;
     });
 
@@ -209,8 +418,8 @@ class StudyNotesView {
           <!-- Search Bar -->
           <div class="vault-search-box">
             <i data-lucide="search"></i>
-            <input type="text" placeholder="Search notes by topic, concept, subject..." 
-              value="${this.escapeHtml(this.searchQuery)}" 
+            <input type="text" placeholder="Search notes by topic, concept, subject..."
+              data-notes-search value="${this.escapeHtml(this.searchQuery)}"
               oninput="studyNotesView.onSearchInput(this.value)">
             ${this.searchQuery ? `
               <button class="search-clear-btn" onclick="studyNotesView.clearSearch()" style="position:absolute; right:1.2rem;">
@@ -222,8 +431,8 @@ class StudyNotesView {
           <!-- Subject Dropdown Filter -->
           <select class="vault-filter-select" onchange="studyNotesView.setSubjectFilter(this.value)">
             ${subjects.map(s => `
-              <option value="${s}" ${this.activeSubjectFilter === s ? 'selected' : ''}>
-                ${s === 'ALL' ? '🌐 All Subjects' : s} (${s === 'ALL' ? this.notes.length : this.notes.filter(n => n.subject === s).length})
+              <option value="${this.escapeHtml(s)}" ${this.activeSubjectFilter === s ? 'selected' : ''}>
+                ${s === 'ALL' ? '🌐 All Subjects' : this.escapeHtml(s)} (${s === 'ALL' ? this.notes.length : this.notes.filter(n => n.subject === s).length})
               </option>
             `).join('')}
           </select>
@@ -237,9 +446,9 @@ class StudyNotesView {
           </select>
 
           <!-- Starred Toggle Button -->
-          <button class="btn ${this.showOnlyFavorites ? 'btn-primary' : 'btn-secondary'}" 
+          <button class="btn ${this.showOnlyFavorites ? 'btn-primary' : 'btn-secondary'}"
             style="min-height:50px; padding:0 1.25rem; border-radius:var(--radius-xl);"
-            onclick="studyNotesView.toggleFavoritesFilter()" 
+            onclick="studyNotesView.toggleFavoritesFilter()"
             title="Filter Starred Notes">
             <i data-lucide="star" style="width:18px;height:18px; color:${this.showOnlyFavorites ? '#ffffff' : '#f59e0b'};"></i>
             <span>${this.showOnlyFavorites ? 'Favorites Only' : 'All'}</span>
@@ -291,7 +500,7 @@ class StudyNotesView {
     const hasSummary = Boolean(note.summary);
     const hasQuiz = Array.isArray(note.quizzes) && note.quizzes.length > 0;
 
-    const preview = note.sections && note.sections[0] 
+    const preview = note.sections && note.sections[0]
       ? (note.sections[0].content || '').slice(0, 240) + '...'
       : (note.content || '').slice(0, 240) + '...';
 
@@ -303,7 +512,7 @@ class StudyNotesView {
             <span class="badge badge-primary" style="font-weight:700;">
               ${this.escapeHtml(note.subject || 'General Study')}
             </span>
-            
+
             <div style="display:flex; align-items:center; gap:0.5rem;">
               <!-- Star / Favorite Toggle -->
               <button class="icon-btn" onclick="studyNotesView.toggleFavorite(${note.id})" title="${isFav ? 'Remove from favorites' : 'Star this note'}" style="color:${isFav ? '#f59e0b' : 'var(--text-muted)'};">
@@ -417,6 +626,7 @@ class StudyNotesView {
         </div>
 
         <div class="study-studio-card cascade-card" style="padding:2.5rem;">
+          ${this._creationErrorHTML()}
           <!-- Creation Progress Overlay -->
           ${this.isCreating ? `
             <div style="padding:3rem 2rem; text-align:center;">
@@ -456,7 +666,7 @@ class StudyNotesView {
                       ${this.isCustomSubject ? '📋 Choose from List' : '✏️ Write Custom'}
                     </button>
                   </div>
-                  
+
                   ${this.isCustomSubject ? `
                     <div style="display:flex; flex-direction:column; gap:0.4rem; animation:fadeIn 0.2s ease;">
                       <input type="text" id="create-input-custom-subject" class="reading-input-title" style="min-height:52px; font-size:0.95rem;"
@@ -537,6 +747,7 @@ class StudyNotesView {
                           <span style="font-weight:600; color:var(--text-main);">${this.escapeHtml(f.name)}</span>
                           <span style="font-size:0.78rem; color:var(--text-muted);">(${(f.size / 1024).toFixed(1)} KB)</span>
                         </div>
+                        ${f.type === 'PDF' ? `<div class="study-page-range"><label>From <input type="number" min="1" value="${f.fromPage || 1}" oninput="studyNotesView.newFiles[${fIdx}].fromPage=Math.max(1,Number(this.value)||1)"></label><label>To <input type="number" min="1" placeholder="Last page" value="${f.toPage || ''}" oninput="studyNotesView.newFiles[${fIdx}].toPage=Number(this.value)||null"></label></div>` : ''}
                         <button class="icon-btn" onclick="studyNotesView.removeAttachedFile(${fIdx})" title="Remove file" style="color:var(--color-danger);">
                           <i data-lucide="x" style="width:14px;height:14px;"></i>
                         </button>
@@ -553,14 +764,15 @@ class StudyNotesView {
                     ✍️ Or Paste Text / Coaching Notes Manually
                   </summary>
                   <div style="margin-top:0.85rem;">
-                    <textarea id="create-input-manual" class="live-reading-canvas" style="min-height:160px; font-size:0.95rem; line-height:1.6;" 
-                      placeholder="Paste syllabus topics, lecture notes, textbook excerpts here..." 
+                    <textarea id="create-input-manual" class="live-reading-canvas" style="min-height:160px; font-size:0.95rem; line-height:1.6;"
+                      placeholder="Paste syllabus topics, lecture notes, textbook excerpts here..."
                       oninput="studyNotesView.manualText = this.value">${this.escapeHtml(this.manualText)}</textarea>
                   </div>
                 </details>
               </div>
             </div>
 
+            ${this._settingsHTML()}
             <!-- Step 3: Extraction Scope -->
             <div style="margin-bottom:2rem;">
               <h3 style="font-size:1.15rem; font-weight:800; color:var(--text-main); margin-bottom:0.5rem; display:flex; align-items:center; gap:0.5rem;">
@@ -639,7 +851,8 @@ class StudyNotesView {
   // 3. BOOK-LIKE READING EXPERIENCE (DIGITAL TEXTBOOK VIEW)
   // =========================================================================
   async renderReaderView() {
-    let note = await getNoteById(this.activeNoteId);
+    const version = this._viewVersion;
+    let note = Number(this.activeNote?.id) === Number(this.activeNoteId) ? this.activeNote : await getNoteById(this.activeNoteId);
     if (!note) {
       await new Promise(r => setTimeout(r, 100));
       note = await getNoteById(this.activeNoteId);
@@ -651,6 +864,7 @@ class StudyNotesView {
       await this.render();
       return;
     }
+    if (version !== this._viewVersion || this.currentViewMode !== 'READER') return;
     this.activeNote = note;
 
     if (!this.quizConfig) {
@@ -674,29 +888,30 @@ class StudyNotesView {
             <i data-lucide="arrow-left" style="width:14px;height:14px;"></i>
             <span>Notes</span>
           </button>
-          <span style="font-weight:750; font-size:0.95rem; color:var(--text-main); max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+          <span class="study-toolbar-title" style="font-weight:750; font-size:0.95rem; color:var(--text-main); max-width:220px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
             ${this.escapeHtml(note.title)}
           </span>
-          <span class="badge badge-primary" style="font-size:0.75rem;">${this.escapeHtml(note.subject || 'General')}</span>
+          <span class="badge badge-primary study-toolbar-subject" style="font-size:0.75rem;">${this.escapeHtml(note.subject || 'General')}</span>
 
           <!-- 3-Tab Reader Navigation Pills -->
           <div class="reader-tabs-pill-bar" style="margin-left:0.5rem;">
             <button class="reader-tab-pill ${this.readerActiveTab === 'TEXTBOOK' ? 'active' : ''}" onclick="studyNotesView.setReaderTab('TEXTBOOK')" title="Read structured digital textbook">
               <i data-lucide="book-open" style="width:14px;height:14px;"></i>
-              <span>📖 Digital Textbook</span>
+              <span>Textbook</span>
             </button>
-            <button class="reader-tab-pill ${this.readerActiveTab === 'SUMMARY' ? 'active' : ''}" onclick="studyNotesView.setReaderTab('SUMMARY')" title="View comprehensive AI 40% deep-dive revision summary">
+            <button class="reader-tab-pill ${this.readerActiveTab === 'SUMMARY' ? 'active' : ''}" onclick="studyNotesView.setReaderTab('SUMMARY')" title="View quick, detailed or exam revision notes">
               <i data-lucide="zap" style="width:14px;height:14px; color:${this.readerActiveTab === 'SUMMARY' ? '#ffffff' : '#10b981'};"></i>
-              <span>⚡ AI Study Summary (40% Deep Dive)</span>
+              <span>Revision</span>
             </button>
             <button class="reader-tab-pill ${this.readerActiveTab === 'SOURCE' ? 'active' : ''}" onclick="studyNotesView.setReaderTab('SOURCE')" title="View original untouched source material">
               <i data-lucide="file-text" style="width:14px;height:14px;"></i>
-              <span>📄 Original Source</span>
+              <span>Source</span>
             </button>
           </div>
         </div>
 
-        <div style="display:flex; align-items:center; gap:0.6rem;">
+        <details class="study-toolbar-details" ${window.innerWidth>600?'open':''}><summary>Reading tools · Edit, Quiz, Ask AI & Export</summary>
+        <div class="study-toolbar-actions" style="display:flex; align-items:center; gap:0.6rem;">
           <!-- Auto-save Status Indicator -->
           <span id="auto-save-status-badge" style="font-size:0.8rem; color:var(--text-muted); font-weight:600; margin-right:0.5rem;">
             ${this.autoSaveStatus}
@@ -758,7 +973,7 @@ class StudyNotesView {
               </button>
               <button class="vault-menu-action-item" onclick="studyNotesView.exportSummarySheetPdf(${note.id})">
                 <i data-lucide="file-text" style="width:15px;height:15px;"></i>
-                <span>1-Page Summary PDF</span>
+                <span>Compact Exam Sheet PDF</span>
               </button>
               <div style="border-top:1px solid var(--border-subtle); margin:0.35rem 0;"></div>
               <button class="vault-menu-action-item btn-danger-item" onclick="studyNotesView.deleteNoteConfirm(${note.id})">
@@ -768,6 +983,7 @@ class StudyNotesView {
             </div>
           </div>
         </div>
+        </details>
 
         <!-- Real-time Reading Progress Fill Track -->
         <div class="textbook-reading-progress-track">
@@ -776,19 +992,20 @@ class StudyNotesView {
       </div>
 
       ${this.renderFocusScopeBanner(note)}
+      ${this._noteStatusHTML(note)}
 
       <!-- Main Reader Content: Digital Textbook | High-Yield Summary | Original Source -->
-      ${this.readerActiveTab === 'SOURCE' 
+      ${this.readerActiveTab === 'SOURCE'
         ? this.renderOriginalSourceView(note)
         : this.readerActiveTab === 'SUMMARY'
           ? this.renderSummaryTabView(note)
           : `
-      <div class="textbook-reader-view ${this.isAskAiOpen && window.innerWidth >= 1100 ? 'split-active' : ''}" 
-           data-reading-theme="${this.readingTheme}" 
-           data-reading-font="${this.readingFont}" 
+      <div class="textbook-reader-view ${this.isAskAiOpen && window.innerWidth >= 1100 ? 'split-active' : ''}"
+           data-reading-theme="${this.readingTheme}"
+           data-reading-font="${this.readingFont}"
            data-reading-size="${this.readingSize}">
         <!-- A. Table of Contents (TOC) & Workspace Sidebar -->
-        <aside class="textbook-toc-sidebar">
+        <aside class="textbook-toc-sidebar"><button class="btn btn-secondary btn-sm study-sidebar-close" onclick="studyNotesView.toggleMobileSidebar()">Close contents</button>
           <!-- Multi-Tab Navigation Bar -->
           <div class="sidebar-nav-tabs-bar">
             <button class="sidebar-tab-btn ${this.sidebarActiveTab === 'TOC' ? 'active' : ''}" data-tab="TOC" onclick="studyNotesView.setSidebarTab('TOC')" title="Table of Contents">
@@ -835,7 +1052,7 @@ class StudyNotesView {
                 <div class="top-quiz-chips-group">
                   <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary);">Qs:</span>
                   ${[5, 10, 15, 20, 25].map(cnt => `
-                    <button class="select-chip select-chip-sm ${this.quizConfig.questionCount === cnt ? 'active' : ''}" 
+                    <button class="select-chip select-chip-sm ${this.quizConfig.questionCount === cnt ? 'active' : ''}"
                       style="min-width:38px; justify-content:center; padding:0.35rem 0.65rem;"
                       onclick="studyNotesView.setQuizCount(${cnt})">
                       <span>${cnt}</span>
@@ -844,7 +1061,7 @@ class StudyNotesView {
                 </div>
 
                 <div style="display:flex; align-items:center; gap:0.6rem;">
-                  <select class="vault-filter-select" 
+                  <select class="vault-filter-select"
                     style="min-height:40px; padding:0.35rem 2rem 0.35rem 0.85rem; font-size:0.82rem; min-width:125px;"
                     onchange="studyNotesView.quizConfig.difficulty = this.value">
                     <option value="EASY" ${this.quizConfig.difficulty === 'EASY' ? 'selected' : ''}>🌱 Easy</option>
@@ -875,8 +1092,8 @@ class StudyNotesView {
               </div>
 
               ${this.isEditMode ? `
-                <input type="text" class="reading-input-title" style="font-size:1.85rem; margin:0.5rem 0;" 
-                  value="${this.escapeHtml(note.title)}" 
+                <input type="text" class="reading-input-title" style="font-size:1.85rem; margin:0.5rem 0;"
+                  value="${this.escapeHtml(note.title)}"
                   onchange="studyNotesView.updateActiveNoteTitle(this.value)">
               ` : `
                 <h1 class="textbook-chapter-title">
@@ -892,7 +1109,7 @@ class StudyNotesView {
                 <span>📚 ${sections.length} Chapters/Sections</span>
                 ${note.sourceFiles && note.sourceFiles.length > 0 ? `
                   <span>•</span>
-                  <span>📎 ${note.sourceFiles.map(f => f.name).join(', ')}</span>
+                  <span>📎 ${note.sourceFiles.map(f => this.escapeHtml(f.name)).join(', ')}</span>
                 ` : ''}
               </div>
             </header>
@@ -903,7 +1120,7 @@ class StudyNotesView {
             </div>
 
             <!-- Bottom Navigation Bar -->
-            <div style="display:flex; justify-content:space-between; align-items:center; border-top:2px solid var(--border-subtle); padding-top:1.75rem; margin-top:3rem;">
+            <div class="study-bottom-navigation" style="display:flex; justify-content:space-between; align-items:center; border-top:2px solid var(--border-subtle); padding-top:1.75rem; margin-top:3rem;">
               <button class="btn btn-secondary" onclick="window.scrollTo({ top: 0, behavior: 'smooth' })">
                 <i data-lucide="arrow-up"></i>
                 <span>Back to Top</span>
@@ -1097,91 +1314,7 @@ class StudyNotesView {
         </div>
       ` : ''}
 
-      <!-- AI Quiz Configuration Modal -->
-      ${this.isQuizModalOpen ? `
-        <div class="modal-overlay modal-top-align active" onclick="studyNotesView.closeQuizModal()">
-          <div class="modal-content modal-top-content" style="max-width:680px; width:92%; padding:2.25rem; border-radius:24px; border:1.5px solid var(--color-primary);" onclick="event.stopPropagation()">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1.25rem;">
-              <div style="display:flex; align-items:center; gap:0.5rem;">
-                <i data-lucide="zap" style="color:var(--color-primary-light); width:22px;height:22px;"></i>
-                <h3 style="font-size:1.35rem; font-weight:800; color:var(--text-main); margin:0;">
-                  Generate Practice Quiz
-                </h3>
-              </div>
-              <button class="icon-btn" onclick="studyNotesView.closeQuizModal()">
-                <i data-lucide="x"></i>
-              </button>
-            </div>
-
-            <!-- Smart AI Recommendation Banner -->
-            ${(() => {
-              const rec = window.geminiService.recommendQuizConfig(note);
-              return `
-                <div style="background:rgba(99,102,241,0.12); border:1px solid rgba(99,102,241,0.3); border-radius:14px; padding:1rem 1.25rem; margin-bottom:1.5rem;">
-                  <div style="font-size:0.85rem; font-weight:800; color:var(--color-primary-light); margin-bottom:0.35rem; display:flex; align-items:center; gap:0.4rem;">
-                    <i data-lucide="sparkles" style="width:14px;height:14px;"></i>
-                    <span>AI Recommended: ${rec.recommendedCount} Questions</span>
-                  </div>
-                  <div style="font-size:0.88rem; color:var(--text-main); line-height:1.5;">
-                    ${rec.rationale}
-                  </div>
-                </div>
-              `;
-            })()}
-
-            <!-- Question Count Options -->
-            <div style="margin-bottom:1.25rem;">
-              <label style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); display:block; margin-bottom:0.5rem;">
-                Number of Questions
-              </label>
-              <div style="display:flex; flex-wrap:wrap; gap:0.6rem;">
-                ${[5, 10, 15, 20, 25, 30].map(cnt => `
-                  <button class="select-chip ${this.quizConfig.questionCount === cnt ? 'active' : ''}" 
-                    style="flex:1; min-width:65px; justify-content:center; padding:0.65rem 0;"
-                    onclick="studyNotesView.setQuizCount(${cnt})">
-                    <span>${cnt}</span>
-                  </button>
-                `).join('')}
-              </div>
-            </div>
-
-            <!-- Difficulty & Type Row (Responsive Grid - Never Overflowing) -->
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:1.25rem; margin-bottom:1.75rem;">
-              <div style="min-width:0;">
-                <label style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); display:block; margin-bottom:0.35rem;">
-                  Difficulty
-                </label>
-                <select class="vault-filter-select" style="width:100%; min-height:48px;" onchange="studyNotesView.quizConfig.difficulty = this.value">
-                  <option value="EASY" ${this.quizConfig.difficulty === 'EASY' ? 'selected' : ''}>Easy (Foundational)</option>
-                  <option value="MEDIUM" ${this.quizConfig.difficulty === 'MEDIUM' ? 'selected' : ''}>Medium (Standard Exam)</option>
-                  <option value="HARD" ${this.quizConfig.difficulty === 'HARD' ? 'selected' : ''}>Hard (Deep Multi-Statement)</option>
-                  <option value="MIXED" ${this.quizConfig.difficulty === 'MIXED' ? 'selected' : ''}>Mixed Difficulty</option>
-                </select>
-              </div>
-
-              <div style="min-width:0;">
-                <label style="font-size:0.85rem; font-weight:700; color:var(--text-secondary); display:block; margin-bottom:0.35rem;">
-                  Question Style
-                </label>
-                <select class="vault-filter-select" style="width:100%; min-height:48px;" onchange="studyNotesView.quizConfig.questionType = this.value">
-                  <option value="MCQ" ${this.quizConfig.questionType === 'MCQ' ? 'selected' : ''}>Multiple Choice (MCQs)</option>
-                  <option value="TRUE_FALSE" ${this.quizConfig.questionType === 'TRUE_FALSE' ? 'selected' : ''}>True / False Concept Check</option>
-                  <option value="MIXED" ${this.quizConfig.questionType === 'MIXED' ? 'selected' : ''}>Mixed Exam Format</option>
-                </select>
-              </div>
-            </div>
-
-            <!-- Start Button -->
-            <div style="display:flex; justify-content:flex-end; gap:0.75rem; flex-wrap:wrap;">
-              <button class="btn btn-secondary" onclick="studyNotesView.closeQuizModal()">Cancel</button>
-              <button class="btn btn-primary" style="font-weight:700; box-shadow:0 6px 20px rgba(99,102,241,0.4);" onclick="studyNotesView.launchGeneratedQuizForNote(${note.id})">
-                <i data-lucide="zap"></i>
-                <span>Generate & Start Quiz</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      ` : ''}
+      ${this.isQuizModalOpen ? this._quizDialogHTML() : ''}
 
       <!-- Interactive Smart Glossary Popover -->
       ${this.activeGlossaryTerm && this.activeGlossaryPos ? `
@@ -1211,6 +1344,8 @@ class StudyNotesView {
 
     // Attach scroll listener to update TOC active item and reading progress bar
     this.initScrollspyListener();
+    this.findInNote(this.searchInNoteQuery);
+    this.renderAskAiMessages();
   }
 
   setReaderTab(tab) {
@@ -1225,327 +1360,35 @@ class StudyNotesView {
   }
 
   renderOriginalSourceView(note) {
-    const original = note.originalSource || {
-      text: note.content || 'No original source text recorded.',
-      files: note.sourceFiles || [],
-      importedAt: note.createdAt
-    };
-
-    const sourceFiles = Array.isArray(original.files) ? original.files : (note.sourceFiles || []);
-    const sourceText = (original.text || note.content || '').trim();
-    const wordCount = sourceText ? sourceText.split(/\s+/).length : 0;
-    const charCount = sourceText.length;
-    const importDate = original.importedAt ? new Date(original.importedAt).toLocaleString() : 'N/A';
-
-    return `
-      <div class="original-source-panel cascade-card">
-        <!-- Source Header Information -->
-        <div class="original-source-header">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1rem;">
-            <div>
-              <div style="display:inline-flex; align-items:center; gap:6px; background:rgba(99,102,241,0.12); color:var(--color-primary-light); padding:4px 10px; border-radius:999px; font-size:0.75rem; font-weight:750; margin-bottom:0.5rem;">
-                <i data-lucide="shield-check" style="width:13px;height:13px;"></i>
-                <span>Original Unedited Source Material</span>
-              </div>
-              <h2 style="font-size:1.4rem; font-weight:800; color:var(--text-main); margin-bottom:0.35rem;">
-                ${this.escapeHtml(note.title)}
-              </h2>
-              <p style="color:var(--text-muted); font-size:0.85rem; margin:0;">
-                Imported on ${importDate} • Subject: <strong>${this.escapeHtml(note.subject || 'General Study')}</strong>
-              </p>
-            </div>
-
-            <!-- Action Buttons -->
-            <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
-              <button class="btn btn-secondary btn-sm" onclick="studyNotesView.copySourceText()" title="Copy raw source text">
-                <i data-lucide="copy" style="width:14px;height:14px;"></i>
-                <span>Copy Source Text</span>
-              </button>
-              <button class="btn btn-secondary btn-sm" onclick="studyNotesView.downloadSourceText(${note.id})" title="Download as text file">
-                <i data-lucide="download" style="width:14px;height:14px;"></i>
-                <span>Download .txt</span>
-              </button>
-              <button class="btn btn-primary btn-sm" onclick="studyNotesView.setSourceViewMode(false)" title="Switch to AI Digital Textbook">
-                <i data-lucide="book-open" style="width:14px;height:14px;"></i>
-                <span>Back to AI Textbook ✨</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Source Files Chips & Metadata -->
-          <div style="display:flex; gap:0.6rem; flex-wrap:wrap; margin-top:1.1rem; padding-top:0.85rem; border-top:1px solid var(--border-subtle); align-items:center;">
-            <span style="font-size:0.8rem; color:var(--text-muted); font-weight:700;">Source Files:</span>
-            ${sourceFiles.length > 0 ? sourceFiles.map(f => `
-              <span class="badge" style="background:rgba(255,255,255,0.06); border:1px solid var(--border-medium); padding:4px 10px; font-size:0.75rem; display:inline-flex; align-items:center; gap:5px;">
-                <i data-lucide="${f.type === 'PDF' ? 'file-text' : (f.type === 'IMAGE' ? 'image' : 'file')}" style="width:13px;height:13px; color:var(--color-primary-light);"></i>
-                <span>${this.escapeHtml(f.name || 'Attached File')}</span>
-                ${f.size ? `<small style="opacity:0.6;">(${Math.round(f.size / 1024)} KB)</small>` : ''}
-              </span>
-            `).join('') : `
-              <span class="badge" style="background:rgba(255,255,255,0.06); padding:4px 10px; font-size:0.75rem;">
-                ✍️ Direct Text Ingestion
-              </span>
-            `}
-            <span style="margin-left:auto; font-size:0.8rem; color:var(--text-muted);">
-              <strong>${wordCount.toLocaleString()}</strong> words • <strong>${charCount.toLocaleString()}</strong> characters
-            </span>
-          </div>
-        </div>
-
-        <!-- Explanatory Banner -->
-        <div class="original-source-banner">
-          <i data-lucide="info" style="width:18px;height:18px; flex-shrink:0; color:#38bdf8;"></i>
-          <span style="font-size:0.86rem; line-height:1.5; color:var(--text-main);">
-            <strong>Integrity Guarantee:</strong> This is your original source material preserved intact without any AI alterations. The Hamsa AI engine read and digested this content to formulate your structured, color-coded Digital Textbook format available in the <em>AI Digital Textbook</em> tab.
-          </span>
-        </div>
-
-        <!-- Raw Text Content Area -->
-        <div class="original-source-content">
-          <pre id="raw-source-text-box" style="margin:0; font-family:var(--font-mono, monospace); font-size:0.9rem; line-height:1.75; white-space:pre-wrap; word-break:break-word; color:var(--text-main);">${this.escapeHtml(sourceText || 'No source text available.')}</pre>
-        </div>
-      </div>
-    `;
+    const original=note.originalSource||{text:note.content,files:[],pages:[]};
+    const files=original.files||[],pages=original.pages||[];
+    const selected=this._sourceSelection||{fileName:files[0]?.name||pages[0]?.fileName,page:0};
+    const file=files.find(file=>file.name===selected.fileName)||files[0],url=this._sourceURL(file);
+    return `<div class="original-source-panel study-original"><h1>Source material · ${this.escapeHtml(note.title)}</h1><p>Original uploaded files are available below. Extracted text may differ from the document's layout; OCR text should be checked against the page.</p>
+      <div class="study-source-refs">${files.map(file=>`<button onclick="studyNotesView.openSourceReference('${this.escapeHtml(this.escapeJs(file.name))}',0)">${this.escapeHtml(file.name)}</button>`).join('')}</div>
+      ${url?`<div class="study-source-document">${file.type==='PDF'?`<iframe title="Original PDF" src="${this.escapeHtml(url)}#page=${Number(selected.page)||1}"></iframe>`:`<img src="${this.escapeHtml(url)}" alt="Original uploaded study page">`}<a class="btn btn-secondary btn-sm" href="${this.escapeHtml(url)}" download="${this.escapeHtml(file.name)}">Download original file</a></div>`:'<p class="study-muted">This older note stores extracted text only; the original file was not saved.</p>'}
+      <div class="study-revision-actions"><button class="btn btn-secondary btn-sm" onclick="studyNotesView.copySourceText()">Copy extracted text</button><button class="btn btn-secondary btn-sm" onclick="studyNotesView.downloadSourceText(${Number(note.id)})">Download extracted text</button></div>
+      ${pages.length?pages.filter(page=>!selected.fileName||page.fileName===selected.fileName).map(page=>`<details class="study-extra" ${Number(selected.page)===Number(page.page)&&selected.page?'open':''}><summary>${this.escapeHtml(page.fileName)}${page.page?' · page '+Number(page.page):''} · ${page.method==='OCR'?'OCR transcription':'Extracted text'}</summary><pre>${this.escapeHtml(page.text)}</pre></details>`).join(''):''}
+      <details class="study-extra"><summary>All extracted source text</summary><pre id="raw-source-text-box">${this.escapeHtml(original.text||'')}</pre></details>
+    </div>`;
   }
 
-  // =========================================================================
-  // DEDICATED FULL-PAGE AI HIGH-YIELD SUMMARY TAB VIEW
-  // =========================================================================
   renderSummaryTabView(note) {
-    const summary = note.summary;
-    const words = note.metadata?.wordCount || (note.content ? note.content.split(/\s+/).length : 500);
-    const readTime = note.metadata?.readingTimeMin || Math.max(1, Math.ceil(words / 200));
-
-    if (!summary) {
-      return `
-        <div class="textbook-summary-view">
-          <div class="summary-empty-state-card">
-            <div style="width:68px; height:68px; border-radius:20px; background:linear-gradient(135deg, rgba(99,102,241,0.2), rgba(16,185,129,0.2)); border:1.5px solid rgba(16,185,129,0.4); display:flex; align-items:center; justify-content:center; color:#10b981;">
-              <i data-lucide="zap" style="width:34px; height:34px;"></i>
-            </div>
-            <h2 style="font-size:1.85rem; font-weight:850; color:var(--text-main); margin:0;">
-              High-Yield AI Summary Not Yet Generated
-            </h2>
-            <p style="font-size:1.05rem; line-height:1.7; color:var(--text-secondary); max-width:560px; margin:0;">
-              Generate a comprehensive, topic-wide revision suite for <strong>"${this.escapeHtml(note.title)}"</strong>. Hamsa AI will extract 8–10 key exam takeaways, definitions index, standard rules, and critical exam pitfalls.
-            </p>
-            <div style="display:flex; gap:1rem; margin-top:0.75rem; flex-wrap:wrap; justify-content:center;">
-              <button class="btn btn-primary btn-hero-import" onclick="studyNotesView.generateFreshSummary(${note.id})">
-                <i data-lucide="sparkles"></i>
-                <span>Generate High-Yield AI Summary ✨</span>
-              </button>
-              <button class="btn btn-secondary" onclick="studyNotesView.setReaderTab('TEXTBOOK')">
-                <i data-lucide="book-open"></i>
-                <span>Read Digital Textbook</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    const takeaways = Array.isArray(summary.takeaways) ? summary.takeaways : [];
-    const definitions = Array.isArray(summary.keyDefinitions) ? summary.keyDefinitions : [];
-    const formulas = Array.isArray(summary.formulasOrRules) ? summary.formulasOrRules : (Array.isArray(summary.formulas) ? summary.formulas : []);
-    const traps = Array.isArray(summary.examTraps) ? summary.examTraps : [];
-
-    return `
-      <div class="textbook-summary-view">
-        <!-- Hero Header Card -->
-        <div class="summary-hero-header-card">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:1.25rem;">
-            <div>
-              <div class="summary-badge-live">
-                <i data-lucide="zap" style="width:14px; height:14px;"></i>
-                <span>High-Yield AI Revision Suite • Topic Mastery</span>
-              </div>
-              <h1 class="summary-hero-title">
-                ${this.escapeHtml(note.title)}
-              </h1>
-              <div style="display:flex; align-items:center; gap:0.75rem; font-size:0.88rem; color:var(--text-muted); margin-bottom:1.15rem; flex-wrap:wrap;">
-                <span class="badge badge-primary">${this.escapeHtml(note.subject || 'General Study')}</span>
-                <span>•</span>
-                <span>⏱️ ~${readTime} min read (~${words} words)</span>
-                <span>•</span>
-                <span>📚 ${takeaways.length} Key Takeaways</span>
-                <span>•</span>
-                <span>⚡ Auto-saved in Vault</span>
-              </div>
-              <p class="summary-hero-concept">
-                ${this.escapeHtml(summary.coreConcept || 'Executive conceptual synthesis')}
-              </p>
-            </div>
-
-            <!-- Action Buttons -->
-            <div style="display:flex; gap:0.65rem; flex-wrap:wrap; align-self:flex-start;">
-              <button class="btn btn-secondary btn-sm" onclick="studyNotesView.generateFreshSummary(${note.id})" title="Regenerate fresh summary with AI">
-                <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i>
-                <span>Regenerate Summary</span>
-              </button>
-              <button class="btn btn-secondary btn-sm" onclick="studyNotesView.exportSummarySheetPdf(${note.id})" title="Download 1-Page Summary PDF">
-                <i data-lucide="download" style="width:14px;height:14px;"></i>
-                <span>Summary PDF</span>
-              </button>
-              <button class="btn btn-primary btn-sm" onclick="studyNotesView.openQuizModal()" title="Practice Quiz from this Summary">
-                <i data-lucide="zap" style="width:14px;height:14px;"></i>
-                <span>Practice Quiz</span>
-              </button>
-              <button class="btn btn-ghost btn-sm" onclick="studyNotesView.setReaderTab('TEXTBOOK')" title="Return to Textbook">
-                <i data-lucide="book-open" style="width:14px;height:14px;"></i>
-                <span>Textbook</span>
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Section 1: 📚 Section-by-Section 40% Deep Dive Breakdown -->
-        ${Array.isArray(summary.sectionBreakdowns) && summary.sectionBreakdowns.length > 0 ? `
-          <div class="summary-deepdive-container">
-            <div class="summary-section-title">
-              <i data-lucide="layers" style="color:#6366f1; width:22px; height:22px;"></i>
-              <span>Section-by-Section Comprehensive Deep Dive (Minimum 40% Depth)</span>
-            </div>
-            ${summary.sectionBreakdowns.map((sec, sIdx) => `
-              <div class="summary-section-breakdown-card">
-                <div class="summary-section-breakdown-header">
-                  <div class="summary-section-breakdown-title">
-                    <span style="background:var(--color-primary); color:#ffffff; width:26px; height:26px; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; font-size:0.82rem; font-weight:800;">${sIdx + 1}</span>
-                    <span>${this.escapeHtml(sec.sectionTitle || `Chapter Section ${sIdx + 1}`)}</span>
-                  </div>
-                  <span class="summary-depth-badge">
-                    <i data-lucide="check-circle" style="width:12px; height:12px;"></i>
-                    <span>40% Depth Analytical Synthesis</span>
-                  </span>
-                </div>
-                <div class="summary-section-deepdive-text">${this.escapeHtml(sec.deepDiveSummary || '')}</div>
-                ${Array.isArray(sec.highYieldPointers) && sec.highYieldPointers.length > 0 ? `
-                  <div class="summary-section-subbox">
-                    <div class="summary-section-subbox-title">
-                      <i data-lucide="check-square" style="width:14px; height:14px;"></i>
-                      <span>Critical Exam Pointers for this Section:</span>
-                    </div>
-                    <ul style="margin:0; padding-left:1.25rem; font-size:0.98rem; line-height:1.75; color:var(--text-main);">
-                      ${sec.highYieldPointers.map(p => `<li>${this.escapeHtml(p)}</li>`).join('')}
-                    </ul>
-                  </div>
-                ` : ''}
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-
-        <!-- Section 1: 📌 8-10 High-Yield Takeaways -->
-        <div class="summary-takeaways-container">
-          <div class="summary-section-title">
-            <i data-lucide="check-circle-2" style="color:#10b981; width:22px; height:22px;"></i>
-            <span>High-Yield Key Takeaways (${takeaways.length})</span>
-          </div>
-          <div class="summary-takeaways-grid">
-            ${takeaways.map((t, idx) => `
-              <div class="summary-takeaway-item">
-                <div class="summary-takeaway-num">${idx + 1}</div>
-                <div class="summary-takeaway-text">${this.escapeHtml(t)}</div>
-              </div>
-            `).join('')}
-          </div>
-        </div>
-
-        <!-- Section 2: ⚖️ Core Definitions & Terms -->
-        ${definitions.length > 0 ? `
-          <div style="display:flex; flex-direction:column; gap:1.25rem;">
-            <div class="summary-section-title">
-              <i data-lucide="bookmark" style="color:#6366f1; width:22px; height:22px;"></i>
-              <span>Core Definitions & Key Terminology</span>
-            </div>
-            <div class="summary-def-grid">
-              ${definitions.map(d => `
-                <div class="summary-def-card">
-                  <div class="summary-def-title">${this.escapeHtml(typeof d === 'string' ? d : d.term)}</div>
-                  <div class="summary-def-body">${this.escapeHtml(typeof d === 'string' ? 'Core concept in this chapter.' : d.definition)}</div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-
-        <!-- Section 3: 📐 Formulas, Provisions & Standard Rules -->
-        ${formulas.length > 0 ? `
-          <div style="display:flex; flex-direction:column; gap:1.25rem;">
-            <div class="summary-section-title">
-              <i data-lucide="binary" style="color:#0284c7; width:22px; height:22px;"></i>
-              <span>Formulas, Provisions & Standard Rules</span>
-            </div>
-            <div class="summary-takeaways-grid">
-              ${formulas.map(f => `
-                <div class="semantic-formula-box" style="margin:0;">
-                  <div class="semantic-formula-name">${this.escapeHtml(typeof f === 'string' ? 'Key Formula' : f.name)}</div>
-                  <div class="semantic-formula-math">${this.escapeHtml(typeof f === 'string' ? f : f.rule || f.formula)}</div>
-                  ${f.significance || f.explanation ? `
-                    <div style="font-size:0.92rem; color:var(--text-secondary); margin-top:0.45rem;">
-                      ${this.escapeHtml(f.significance || f.explanation)}
-                    </div>
-                  ` : ''}
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-
-        <!-- Section 4: ⚠️ Critical Exam Pitfalls & Examiner Distractors -->
-        ${traps.length > 0 ? `
-          <div style="display:flex; flex-direction:column; gap:1.25rem;">
-            <div class="summary-section-title">
-              <i data-lucide="alert-triangle" style="color:#ef4444; width:22px; height:22px;"></i>
-              <span>Critical Exam Pitfalls & Student Misconceptions</span>
-            </div>
-            <div class="summary-traps-grid">
-              ${traps.map(trap => `
-                <div class="summary-trap-card">
-                  <div class="summary-trap-header">
-                    <i data-lucide="alert-circle" style="width:16px;height:16px;"></i>
-                    <span>Examiner Trap Alert</span>
-                  </div>
-                  <div class="summary-trap-text">${this.escapeHtml(trap)}</div>
-                </div>
-              `).join('')}
-            </div>
-          </div>
-        ` : ''}
-
-        <!-- Section 5: 🎯 Golden Memory Anchor -->
-        ${summary.finalTakeaway ? `
-          <div class="summary-memory-card">
-            <div style="font-size:2.2rem; line-height:1;">🎯</div>
-            <div>
-              <div style="font-size:0.85rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:#d97706; margin-bottom:0.35rem;">
-                Golden Memory Anchor for Exam Day
-              </div>
-              <div class="summary-memory-text">
-                "${this.escapeHtml(summary.finalTakeaway)}"
-              </div>
-            </div>
-          </div>
-        ` : ''}
-
-        <!-- Bottom Return Actions -->
-        <div style="display:flex; justify-content:space-between; align-items:center; border-top:1.5px solid var(--border-subtle); padding-top:2rem; margin-top:1rem; flex-wrap:wrap; gap:1rem;">
-          <button class="btn btn-secondary" onclick="studyNotesView.setReaderTab('TEXTBOOK')">
-            <i data-lucide="book-open"></i>
-            <span>Back to Digital Textbook</span>
-          </button>
-          <div style="display:flex; gap:0.75rem;">
-            <button class="btn btn-secondary" onclick="studyNotesView.exportSummarySheetPdf(${note.id})">
-              <i data-lucide="download"></i>
-              <span>Export Summary PDF</span>
-            </button>
-            <button class="btn btn-primary" onclick="studyNotesView.openQuizModal()">
-              <i data-lucide="zap"></i>
-              <span>Practice AI Quiz</span>
-            </button>
-          </div>
-        </div>
-      </div>
-    `;
+    const summary = note.summary || window.geminiService.generateFallbackComprehensiveSummary({ title: note.title, subject: note.subject, sections: note.sections || [] });
+    const escape = value => this.escapeHtml(value || '');
+    const prose=value=>window.marked?SecurityUtils.sanitizeHtml(window.marked.parse(escape(value))):escape(value);
+    const quick = this.revisionMode === 'QUICK', exam = this.revisionMode === 'EXAM';
+    const breakdowns = summary.sectionBreakdowns || [];
+    return `<div class="study-revision notebook-revision">
+      <div class="study-revision-header"><div><h1>${escape(note.title)}</h1><p>${summary.generationSource === 'GEMINI_AI' ? 'AI revision · all sections processed' : 'Revision extracted from your notes · AI synthesis not generated'}</p></div>
+      <div class="study-revision-actions"><button class="btn btn-secondary btn-sm" onclick="studyNotesView.generateFreshSummary(${Number(note.id)})">Refresh with AI</button><button class="btn btn-secondary btn-sm" onclick="studyNotesView.exportSummarySheetPdf(${Number(note.id)})">Export this revision</button></div></div>
+      <div class="study-revision-tabs" role="group" aria-label="Revision length">${[['QUICK','Quick Revision'],['DETAILED','Detailed Revision'],['EXAM','Exam Sheet']].map(([key,label]) => `<button class="btn btn-sm ${this.revisionMode === key ? 'btn-primary' : 'btn-secondary'}" aria-pressed="${this.revisionMode === key}" onclick="studyNotesView.setRevisionMode('${key}')">${label}</button>`).join('')}</div>
+      ${quick ? `<div class="study-revision-intro study-prose">${prose(summary.coreConcept)}</div><ol>${(summary.takeaways || []).slice(0, 8).map(point => `<li>${escape(point)}</li>`).join('')}</ol><p class="study-muted">Quick revision shows selected highlights. Open Detailed Revision for every section.</p>` : ''}
+      ${!quick && !exam ? breakdowns.map(section => `<section class="study-revision-section"><h2>${escape(section.sectionTitle)}</h2><div class="study-prose">${prose(section.deepDiveSummary)}</div><ul>${(section.highYieldPointers || []).map(point => `<li>${escape(point)}</li>`).join('')}</ul>${this._sourceRefsHTML(section.sourceRefs || [])}${section.sectionId ? `<button class="btn btn-secondary btn-xs" onclick="studyNotesView.returnToSection('${this.escapeHtml(this.escapeJs(section.sectionId))}')">Read full explanation</button>` : ''}</section>`).join('') : ''}
+      ${exam ? `<div class="study-exam-outline">${breakdowns.map(section => `<section><h3>${escape(section.sectionTitle)}</h3><ul>${(section.highYieldPointers || []).slice(0, 3).map(point => `<li>${escape(point)}</li>`).join('')}</ul></section>`).join('')}</div>` : ''}
+      ${!quick ? `<div class="study-reference-grid">${(summary.keyDefinitions || []).map(item => `<div><strong>${escape(item.term)}</strong><p>${escape(item.definition)}</p></div>`).join('')}${(summary.formulasOrRules || []).map(item => `<div><strong>${escape(item.name)}</strong><p class="study-formula">${escape(item.rule)}</p><p>${escape(item.significance)}</p></div>`).join('')}</div>${(summary.examTraps || []).length ? `<details class="study-extra"><summary>Misconceptions to avoid</summary><ul>${summary.examTraps.map(trap => `<li>${escape(trap)}</li>`).join('')}</ul></details>` : ''}` : ''}
+      <button class="btn btn-secondary" onclick="studyNotesView.setReaderTab('TEXTBOOK')">Back to textbook</button>
+    </div>`;
   }
 
   copySourceText() {
@@ -1576,151 +1419,55 @@ class StudyNotesView {
   // =========================================================================
   // SECTION CONTENT BUILDER (COLOR-CODED BLOCKS & INTERACTIVE GLOSSARY)
   // =========================================================================
-  renderSectionContent(sec, sIdx, note) {
-    // Process text paragraphs to wrap glossary terms with interactive spans
-    const processedParagraphs = this.injectGlossarySpans(sec.content || '', note.glossaryTerms || []);
-
-    return `
-      <section class="textbook-section-block" id="${sec.id}">
-        <!-- Section Heading & Quick Action Header -->
-        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:0.5rem; margin-bottom:0.35rem;">
-          <div>
-            <h2 class="textbook-section-heading" style="margin-bottom:0;">
-              <span>${this.escapeHtml(sec.heading || `Section ${sIdx + 1}`)}</span>
-            </h2>
-            ${sec.subheading ? `
-              <div class="textbook-section-subheading" style="margin-top:0.25rem;">${this.escapeHtml(sec.subheading)}</div>
-            ` : ''}
-          </div>
-          <div class="section-actions-row" style="display:flex; align-items:center; gap:0.45rem;">
-            <button class="btn btn-secondary btn-xs btn-section-flashcards" onclick="studyNotesView.createFlashcardsFromSection('${sec.id}')" title="Practice 3D Flashcards for this section">
-              <i data-lucide="layers" style="width:12px;height:12px;color:#ec4899;"></i>
-              <span>🎴 Flashcards</span>
-            </button>
-            <button class="btn btn-secondary btn-xs" onclick="studyNotesView.readSectionAloud('${sec.id}')" title="Listen to this section">
-              <i data-lucide="volume-2" style="width:12px;height:12px;color:#06b6d4;"></i>
-              <span>Listen</span>
-            </button>
-          </div>
-        </div>
-
-        <!-- Body Paragraphs -->
-        ${this.isEditMode ? `
-          <textarea class="live-reading-canvas" style="min-height:220px; font-size:1.05rem; line-height:1.8;"
-            oninput="studyNotesView.onSectionTextEdit('${sec.id}', this.value)">${this.escapeHtml(sec.content || '')}</textarea>
-        ` : `
-          <div class="textbook-body-paragraph">
-            ${processedParagraphs}
-          </div>
-        `}
-
-        <!-- A. Key Points Block (Indigo) -->
-        ${sec.keyPoints && sec.keyPoints.length > 0 ? `
-          <div class="semantic-keypoints-box">
-            <div class="semantic-block-title-indigo">
-              <i data-lucide="check-circle-2" style="width:16px;height:16px;"></i>
-              <span>Core Key Points</span>
-            </div>
-            <ul class="semantic-keypoints-list">
-              ${sec.keyPoints.map(kp => `<li>${this.escapeHtml(kp)}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-
-        <!-- B. Definitions Card (Emerald) -->
-        ${sec.definitions && sec.definitions.length > 0 ? `
-          <div class="semantic-definitions-card">
-            <div class="semantic-block-title-emerald">
-              <i data-lucide="book" style="width:16px;height:16px;"></i>
-              <span>Essential Definitions</span>
-            </div>
-            ${sec.definitions.map(d => `
-              <div class="semantic-def-item">
-                <span class="semantic-def-term">${this.escapeHtml(d.term)}:</span>
-                <span style="color:var(--text-secondary);">${this.escapeHtml(d.definition)}</span>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-
-        <!-- C. Important Facts (Amber) -->
-        ${sec.importantFacts && sec.importantFacts.length > 0 ? `
-          <div class="semantic-facts-box">
-            <div class="semantic-block-title-amber">
-              <i data-lucide="alert-circle" style="width:16px;height:16px;"></i>
-              <span>High-Yield Exam Facts</span>
-            </div>
-            <ul style="margin:0; padding-left:1.25rem; font-size:1rem; line-height:1.7; color:var(--text-main);">
-              ${sec.importantFacts.map(f => `<li>${this.escapeHtml(f)}</li>`).join('')}
-            </ul>
-          </div>
-        ` : ''}
-
-        <!-- D. Formulas (Monospace Math) -->
-        ${sec.formulas && sec.formulas.length > 0 ? `
-          <div class="semantic-formula-box">
-            <div style="font-size:0.85rem; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:#38bdf8; margin-bottom:0.75rem;">
-              📐 Formulas & Technical Relations
-            </div>
-            ${sec.formulas.map(f => `
-              <div style="margin-bottom:1rem;">
-                <div class="semantic-formula-name">${this.escapeHtml(f.name)}</div>
-                <div class="semantic-formula-math">${this.escapeHtml(f.formula)}</div>
-                <div style="font-size:0.9rem; color:var(--text-muted);">${this.escapeHtml(f.explanation)}</div>
-              </div>
-            `).join('')}
-          </div>
-        ` : ''}
-
-        <!-- E. Interactive Examples (Click to explore modal) -->
-        ${sec.examples && sec.examples.length > 0 ? `
-          ${sec.examples.map(ex => `
-            <div class="semantic-example-card" onclick="studyNotesView.openExampleModal('${sec.id}', '${ex.id || 'ex-1'}')">
-              <span class="semantic-example-badge">
-                <i data-lucide="lightbulb" style="width:14px;height:14px;"></i> Interactive Example — Click to Explore Analogy
-              </span>
-              <h4 style="font-size:1.15rem; font-weight:800; color:var(--text-main); margin:0.35rem 0 0.5rem 0;">
-                ${this.escapeHtml(ex.title)}
-              </h4>
-              <p style="font-size:0.95rem; line-height:1.65; color:var(--text-secondary); margin:0;">
-                ${this.escapeHtml(ex.content.slice(0, 180))}... <span style="color:#c084fc; font-weight:700;">[Read Step-by-Step Logic & Analogy →]</span>
-              </p>
-            </div>
-          `).join('')}
-        ` : ''}
-
-        <!-- F. Inline Micro-Quiz (Rapid Active Recall) -->
-        ${this.renderSectionMicroQuiz(sec, sIdx, note)}
-
-        <!-- G. Section Mastery Footer & Progression -->
-        ${this.renderSectionMasteryFooter(sec, sIdx, note)}
-      </section>
-    `;
+  renderSectionContent(sec, index, note) {
+    const escape = value => this.escapeHtml(value || '');
+    const id = escape(sec.id), argument = escape(this.escapeJs(sec.id));
+    const selected = this.selectedQuizSections == null || this.selectedQuizSections.includes(sec.id);
+    const extra = (title, content) => `<details class="study-extra"><summary>${title}</summary>${content}</details>`;
+    const refs = this._sourceRefsHTML(sec.sourceRefs || []);
+    let body = this.injectGlossarySpans(sec.content || '', note.glossaryTerms || []);
+    const wrapper = document.createElement('div'); wrapper.innerHTML = body;
+    for (const highlight of note.annotations?.highlights || []) if (highlight.sectionId === sec.id) this._applySavedHighlight(wrapper, highlight);
+    body = wrapper.innerHTML;
+    return `<section class="textbook-section-block study-compact-section" id="${id}" data-study-section="${id}">
+      <div class="study-section-heading"><h2>${escape(sec.heading || `Section ${index + 1}`)}</h2><div class="study-section-tools"><button class="btn btn-secondary btn-xs" onclick="studyNotesView.createFlashcardsFromSection('${argument}')">Flashcards</button><button class="btn btn-secondary btn-xs" onclick="studyNotesView.readSectionAloud('${argument}')">Listen</button></div></div>
+      ${sec.supportingContentStale?`<div class="study-edited-notice">Explanation edited. Rebuild teaching aids to match your changes.<button class="btn btn-secondary btn-sm" onclick="studyNotesView.refreshSectionTeaching('${argument}')">Refresh teaching aids with AI</button></div>`:''}
+      ${refs}${this.isEditMode ? `<textarea class="live-reading-canvas" aria-label="Edit ${escape(sec.heading)}" oninput="studyNotesView.onSectionTextEdit('${argument}',this.value)">${escape(sec.content)}</textarea>` : `<div class="textbook-body-paragraph study-prose">${body}</div>`}
+      ${(sec.keyPoints || []).length ? `<div class="study-keypoints"><strong>Remember</strong><ul>${sec.keyPoints.map(point => `<li>${escape(point)}</li>`).join('')}</ul></div>` : ''}
+      ${(sec.definitions || []).length ? extra('Definitions & terms', `<dl>${sec.definitions.map(item => `<dt>${escape(item.term)}</dt><dd>${escape(item.definition)}</dd>`).join('')}</dl>`) : ''}
+      ${(sec.formulas || []).length ? `<div class="study-formulas">${sec.formulas.map(item => `<div><strong>${escape(item.name)}</strong><p class="study-formula">${escape(item.formula)}</p><p>${escape(item.explanation)}</p></div>`).join('')}</div>` : ''}
+      ${(sec.tables || []).map(table => `<div class="study-table-scroll"><table><caption>${escape(table.title)}</caption><thead><tr>${table.headers.map(cell => `<th>${escape(cell)}</th>`).join('')}</tr></thead><tbody>${table.rows.map(row => `<tr>${row.map(cell => `<td>${escape(cell)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`).join('')}
+      ${sec.flowchart?.nodes?.length ? `<figure class="study-flow"><figcaption>${escape(sec.flowchart.title)}</figcaption><ol>${sec.flowchart.nodes.map(node => `<li><strong>${escape(node.label)}</strong><span>${escape(node.description)}</span></li>`).join('')}</ol></figure>` : ''}
+      ${sec.diagram?.svgContent ? `<figure class="study-diagram"><figcaption>${escape(sec.diagram.title)}</figcaption>${window.SecurityUtils.sanitizeSvg(sec.diagram.svgContent)}<p>${escape(sec.diagram.caption)}</p></figure>` : ''}
+      ${(sec.examples || []).length ? extra('Worked examples & analogies', sec.examples.map(example => `<article class="study-example"><h3>${escape(example.title)}</h3><span class="study-muted">${example.origin === 'TEACHING_EXAMPLE' ? 'Additional teaching example' : 'Example from this note'}</span><p>${escape(example.content)}</p>${example.stepByStep?.length ? `<ol>${example.stepByStep.map(step => `<li>${escape(step)}</li>`).join('')}</ol>` : ''}${example.realWorldAnalogy ? `<p>${escape(example.realWorldAnalogy)}</p>` : ''}</article>`).join('')) : ''}
+      ${(sec.importantFacts || []).length ? extra('Facts & exam pointers', `<ul>${sec.importantFacts.map(point => `<li>${escape(point)}</li>`).join('')}</ul>`) : ''}
+      ${this.renderSectionMicroQuiz(sec,index,note)}
+      <label class="study-practice-choice"><input type="checkbox" ${selected ? 'checked' : ''} onchange="studyNotesView.selectQuizSection('${argument}',this.checked)"> Include this section in practice</label>
+      ${this.renderSectionMasteryFooter(sec,index,note)}
+    </section>`;
   }
 
-  /**
-   * Injects interactive glossary spans with hover/click listeners
-   */
   injectGlossarySpans(text, glossaryTerms) {
-    if (!glossaryTerms || glossaryTerms.length === 0) {
-      return this.escapeHtml(text);
+    const wrapper = document.createElement('div');
+    wrapper.innerHTML = window.marked ? SecurityUtils.sanitizeHtml(window.marked.parse(String(text || ''))) : this.escapeHtml(text);
+    const terms = (glossaryTerms || []).map((term,index) => ({ ...term,index })).filter(term => typeof term.term === 'string' && term.term.trim().length >= 2).sort((a,b) => b.term.length-a.term.length);
+    if (!terms.length) return wrapper.innerHTML;
+    const regex = new RegExp(`(?<![\\p{L}\\p{M}\\p{N}])(${terms.map(term => this.escapeRegex(term.term)).join('|')})(?![\\p{L}\\p{M}\\p{N}])`,'giu');
+    const walker = document.createTreeWalker(wrapper, NodeFilter.SHOW_TEXT);const nodes=[];
+    while(walker.nextNode()) if(!walker.currentNode.parentElement.closest('code,pre,button,a')) nodes.push(walker.currentNode);
+    for(const node of nodes) {
+      let start=0, match;const fragment=document.createDocumentFragment();regex.lastIndex=0;
+      while((match=regex.exec(node.data))) {
+        fragment.append(document.createTextNode(node.data.slice(start,match.index)));
+        const term=terms.find(term => term.term.toLocaleLowerCase()===match[0].toLocaleLowerCase());
+        const button=document.createElement('button');button.type='button';button.className='glossary-interactive-term';button.textContent=match[0];button.setAttribute('onclick',`studyNotesView.showGlossaryByIndex(event,${term.index})`);
+        fragment.append(button);start=match.index+match[0].length;
+      }
+      if(start) {fragment.append(document.createTextNode(node.data.slice(start)));node.replaceWith(fragment);}
     }
-
-    let escaped = this.escapeHtml(text);
-    for (const g of glossaryTerms) {
-      const term = g.term;
-      if (!term || term.length < 3) continue;
-      const regex = new RegExp(`\\b(${this.escapeRegex(term)})\\b`, 'gi');
-      escaped = escaped.replace(regex, (match) => {
-        return `<span class="glossary-interactive-term" onclick="studyNotesView.showGlossaryPopover(event, '${this.escapeJs(term)}')">${match}</span>`;
-      });
-    }
-    return escaped;
+    return wrapper.innerHTML;
   }
 
-  // =========================================================================
-  // GLOSSARY & TEXT SELECTION TOOLBAR
-  // =========================================================================
   showGlossaryPopover(e, termName) {
     e.stopPropagation();
     const g = this.activeNote?.glossaryTerms?.find(t => t.term.toLowerCase() === termName.toLowerCase());
@@ -1728,7 +1475,7 @@ class StudyNotesView {
       const rect = e.target.getBoundingClientRect();
       this.activeGlossaryTerm = g;
       this.activeGlossaryPos = {
-        x: Math.min(window.innerWidth - 340, Math.max(20, rect.left + window.scrollX - 40)),
+        x: Math.max(8, Math.min(window.innerWidth - Math.min(320,window.innerWidth-16) - 8, Math.max(8, rect.left + window.scrollX - 40))),
         y: rect.bottom + window.scrollY + 8
       };
       this.render();
@@ -1737,183 +1484,67 @@ class StudyNotesView {
   }
 
   closeGlossaryPopover() {
-    this.activeGlossaryTerm = null;
-    this.activeGlossaryPos = null;
-    this.render();
+    const wasOpen=!!this.activeGlossaryTerm;this.activeGlossaryTerm=null;this.activeGlossaryPos=null;
+    if(wasOpen)this.render();
   }
 
   initTextSelectionListener() {
-    document.addEventListener('mouseup', () => {
-      if (this.currentViewMode !== 'READER') return;
-      const selection = window.getSelection();
-      const selectedText = selection ? selection.toString().trim() : '';
-
-      // Remove existing floating selection toolbar if any
-      const existing = document.getElementById('floating-selection-toolbar');
-      if (existing) existing.remove();
-
-      if (selectedText.length > 2 && selectedText.length < 90) {
-        const range = selection.getRangeAt(0);
-        const rect = range.getBoundingClientRect();
-
-        const toolbar = document.createElement('div');
-        toolbar.id = 'floating-selection-toolbar';
-        toolbar.className = 'text-selection-toolbar';
-        toolbar.style.left = `${rect.left + rect.width / 2 + window.scrollX}px`;
-        toolbar.style.top = `${Math.max(10, rect.top + window.scrollY - 44)}px`;
-
-        toolbar.innerHTML = `
-          <button class="hl-color-btn hl-yellow" onclick="studyNotesView.highlightSelectedText('yellow')" title="Highlight Yellow"></button>
-          <button class="hl-color-btn hl-green" onclick="studyNotesView.highlightSelectedText('green')" title="Highlight Green"></button>
-          <button class="hl-color-btn hl-purple" onclick="studyNotesView.highlightSelectedText('purple')" title="Highlight Purple"></button>
-          <div style="width:1px; height:16px; background:var(--border-subtle); margin:0 2px;"></div>
-          <button class="floating-btn" onclick="studyNotesView.explainSelectedText('${this.escapeJs(selectedText)}')">
-            <i data-lucide="sparkles" style="width:12px;height:12px; color:#c084fc;"></i> Explain
-          </button>
-          <button class="floating-btn" onclick="studyNotesView.bookmarkSelectedText('${this.escapeJs(selectedText)}')">
-            <i data-lucide="bookmark" style="width:12px;height:12px; color:#f59e0b;"></i> Save
-          </button>
-        `;
-
-        document.body.appendChild(toolbar);
-        if (window.app) window.app.refreshIcons();
-      }
+    const show=()=>{
+      if(this.currentViewMode!=='READER'||window.app?.currentView!=='study-notes'||this.isEditMode)return;
+      const selection=window.getSelection();if(!selection?.rangeCount)return;
+      const range=selection.getRangeAt(0),text=selection.toString().trim();
+      const body=range.startContainer.parentElement?.closest('.textbook-body-paragraph');
+      if(!body||!body.contains(range.endContainer)||text.length<3||text.length>5000)return;
+      this._selection={range:range.cloneRange(),body,text,sectionId:body.closest('[data-study-section]').dataset.studySection};
+      const old=document.getElementById('floating-selection-toolbar');old?.remove();
+      const rect=range.getBoundingClientRect?.()||{left:16,top:180,width:0};const toolbar=document.createElement('div');
+      toolbar.id='floating-selection-toolbar';toolbar.className='text-selection-toolbar';
+      toolbar.style.left=`${Math.max(8,Math.min(window.innerWidth-280,rect.left))}px`;toolbar.style.top=`${Math.max(8,rect.top+window.scrollY-48)}px`;
+      toolbar.addEventListener('pointerdown',event=>event.preventDefault());
+      toolbar.innerHTML=`<button class="hl-color-btn hl-yellow" aria-label="Highlight yellow" onclick="studyNotesView.highlightSelectedText('yellow')"></button><button class="hl-color-btn hl-green" aria-label="Highlight green" onclick="studyNotesView.highlightSelectedText('green')"></button><button class="hl-color-btn hl-purple" aria-label="Highlight purple" onclick="studyNotesView.highlightSelectedText('purple')"></button><button class="floating-btn" onclick="studyNotesView.explainSelectedText(studyNotesView._selection.text)">Explain</button><button class="floating-btn" onclick="studyNotesView.bookmarkSelectedText(studyNotesView._selection.text)">Bookmark</button>`;
+      document.body.append(toolbar);
+    };
+    document.addEventListener('mouseup',event=>{if(!event.target.closest('#floating-selection-toolbar'))show();});
+    document.addEventListener('touchend',()=>setTimeout(show,80),{passive:true});
+    document.addEventListener('click',event=>{
+      if(!event.target.closest('[id^="card-menu-"],button[onclick*="toggleCardMenu"]'))document.querySelectorAll('[id^="card-menu-"]').forEach(menu=>menu.style.display='none');
+      if(!event.target.closest('#export-dropdown-menu,button[onclick*="toggleExportMenu"]')){const menu=document.getElementById('export-dropdown-menu');if(menu)menu.style.display='none';}
+      if(!event.target.closest('#reading-appearance-menu,button[onclick*="toggleAppearanceMenu"]')){const menu=document.getElementById('reading-appearance-menu');if(menu)menu.style.display='none';this.isAppearanceMenuOpen=false;}
     });
-
-    // Close open menus when clicking anywhere outside
-    document.addEventListener('click', (e) => {
-      if (!e.target.closest('[id^="card-menu-"]') && !e.target.closest('button[onclick*="toggleCardMenu"]')) {
-        document.querySelectorAll('[id^="card-menu-"]').forEach(el => {
-          el.style.display = 'none';
-        });
-      }
-      if (!e.target.closest('#export-dropdown-menu') && !e.target.closest('button[onclick*="toggleExportMenu"]')) {
-        const expMenu = document.getElementById('export-dropdown-menu');
-        if (expMenu) expMenu.style.display = 'none';
-      }
-      if (!e.target.closest('#reading-appearance-menu') && !e.target.closest('button[onclick*="toggleAppearanceMenu"]')) {
-        const appMenu = document.getElementById('reading-appearance-menu');
-        if (appMenu) appMenu.style.display = 'none';
-        this.isAppearanceMenuOpen = false;
-      }
-    });
-
-    // Close Ask AI drawer on Escape key press
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.isAskAiOpen) {
-        this.closeAskAiDrawer();
-      }
+    document.addEventListener('keydown',event=>{
+      if(event.key==='Escape'){this.closeAskAiDrawer();document.querySelector('.textbook-toc-sidebar')?.classList.remove('study-sidebar-open');if(this.isQuizModalOpen)this.closeQuizModal();this.closeGlossaryPopover();}
+      const dialog=document.querySelector('.study-quiz-dialog');if(event.key==='Tab'&&dialog){const controls=[...dialog.querySelectorAll('button,input,select')].filter(el=>!el.disabled),first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}
     });
   }
 
-  highlightSelectedText(color) {
-    const existing = document.getElementById('floating-selection-toolbar');
-    if (existing) existing.remove();
-
-    if (!this.activeNote) return;
-    const selection = window.getSelection();
-    const text = selection ? selection.toString().trim() : '';
-    if (!text) return;
-
-    if (!this.activeNote.annotations) {
-      this.activeNote.annotations = { highlights: [], bookmarks: [], personalNotes: [] };
-    }
-    if (!Array.isArray(this.activeNote.annotations.highlights)) {
-      this.activeNote.annotations.highlights = [];
-    }
-
-    const hlItem = {
-      id: `hl-${Date.now()}`,
-      sectionId: this.activeTOCSectionId || (this.activeNote.sections?.[0]?.id || 'sec-1'),
-      text: text,
-      color: color,
-      createdAt: new Date().toISOString()
-    };
-
-    this.activeNote.annotations.highlights.push(hlItem);
-    updateNoteAnnotations(this.activeNote.id, this.activeNote.annotations);
-
-    try {
-      if (selection.rangeCount > 0) {
-        const range = selection.getRangeAt(0);
-        const span = document.createElement('mark');
-        span.className = `hamsa-highlight hl-${color}`;
-        span.textContent = text;
-        range.deleteContents();
-        range.insertNode(span);
-      }
-    } catch (e) {
-      // Range.surroundContents() throws when the selection crosses element
-      // boundaries. The highlight is already persisted, so only the immediate
-      // visual feedback is lost — it reappears on the next render.
-      console.warn('Could not apply highlight visually; it is still saved.', e);
-    }
-
-    selection.removeAllRanges();
-
-    if (window.audioEngine) window.audioEngine.playClick();
-    app.showToast(`✨ Highlight saved in ${color}!`, 'success');
-
-    if (this.sidebarActiveTab === 'ANNOTATIONS') {
-      this.refreshSidebarTab();
-    }
+  async highlightSelectedText(color) {
+    if(!this.activeNote)return;
+    const selection=this._selection;if(!selection||!document.contains(selection.body))return;
+    const note=this.activeNote,range=selection.range,prefix=range.cloneRange();prefix.selectNodeContents(selection.body);prefix.setEnd(range.startContainer,range.startOffset);
+    const text=range.toString();const start=prefix.toString().length;
+    const item={id:`hl-${Date.now()}`,sectionId:selection.sectionId,text,color:['yellow','green','purple'].includes(color)?color:'yellow',start,prefix:selection.body.textContent.slice(Math.max(0,start-32),start),createdAt:new Date().toISOString()};
+    const annotations=this._clone(note.annotations||{highlights:[],bookmarks:[],personalNotes:[]});annotations.highlights||=[];annotations.highlights.push(item);
+    try{await updateNoteAnnotations(note.id,annotations);if(Number(this.activeNote?.id)!==Number(note.id))return;note.annotations=annotations;window.getSelection()?.removeAllRanges();document.getElementById('floating-selection-toolbar')?.remove();await this.render();}
+    catch(error){window.app?.showToast(`Highlight could not be saved: ${error.message}`,'error');}
   }
 
   async explainSelectedText(term) {
-    const existing = document.getElementById('floating-selection-toolbar');
-    if (existing) existing.remove();
-
-    app.showToast(`Analyzing "${term}" in context...`, 'info');
-    if (window.audioEngine) window.audioEngine.playClick();
-
-    try {
-      const expl = await window.geminiService.explainTermContextually({
-        term,
-        noteTopic: this.activeNote?.title || 'Study Material'
-      });
-
-      this.activeGlossaryTerm = expl;
-      this.activeGlossaryPos = {
-        x: Math.min(window.innerWidth - 340, Math.max(20, window.innerWidth / 2 - 160)),
-        y: window.scrollY + 180
-      };
-      this.render();
-    } catch (e) {
-      app.showToast(`Could not explain term: ${e.message}`, 'error');
-    }
+    const note=this.activeNote;if(!note)return;const version=this._viewVersion,controller=this._controller();
+    const section=note.sections.find(section=>section.id===(this._selection?.sectionId||this.activeTOCSectionId));
+    document.getElementById('floating-selection-toolbar')?.remove();
+    try{const explanation=await window.geminiService.explainTermContextually({term,contextSentence:section?.content||'',noteTopic:note.title,signal:controller.signal});if(version!==this._viewVersion||controller.signal.aborted)return;this.activeGlossaryTerm=explanation;this.activeGlossaryPos={x:Math.max(8,Math.min(window.innerWidth-328,window.innerWidth/2-160)),y:window.scrollY+180};await this.render();}
+    catch(error){if(error.name!=='AbortError'&&version===this._viewVersion)window.app?.showToast(`Explanation failed: ${error.message}`,'error');}
+    finally{this._controllers.delete(controller);}
   }
 
-  bookmarkSelectedText(text) {
-    const existing = document.getElementById('floating-selection-toolbar');
-    if (existing) existing.remove();
-
-    if (!this.activeNote) return;
-    if (!this.activeNote.annotations) {
-      this.activeNote.annotations = { highlights: [], bookmarks: [], personalNotes: [] };
-    }
-    if (!Array.isArray(this.activeNote.annotations.bookmarks)) {
-      this.activeNote.annotations.bookmarks = [];
-    }
-
-    this.activeNote.annotations.bookmarks.push({
-      id: `bm-${Date.now()}`,
-      sectionId: this.activeTOCSectionId || (this.activeNote.sections?.[0]?.id || 'sec-1'),
-      note: text,
-      createdAt: new Date().toISOString()
-    });
-
-    updateNoteAnnotations(this.activeNote.id, this.activeNote.annotations);
-    app.showToast(`📌 Bookmarked: "${text}"`, 'success');
-    if (window.audioEngine) window.audioEngine.playFanfare();
-
-    if (this.sidebarActiveTab === 'ANNOTATIONS') {
-      this.refreshSidebarTab();
-    }
+  async bookmarkSelectedText(text) {
+    const note=this.activeNote;if(!note)return;
+    const annotations=this._clone(note.annotations||{highlights:[],bookmarks:[],personalNotes:[]});annotations.bookmarks||=[];
+    annotations.bookmarks.push({id:`bm-${Date.now()}`,sectionId:this._selection?.sectionId||this.activeTOCSectionId,note:text,createdAt:new Date().toISOString()});
+    try{await updateNoteAnnotations(note.id,annotations);if(Number(this.activeNote?.id)!==Number(note.id))return;note.annotations=annotations;document.getElementById('floating-selection-toolbar')?.remove();this.refreshSidebarTab();}
+    catch(error){window.app?.showToast(`Bookmark could not be saved: ${error.message}`,'error');}
   }
 
-  // =========================================================================
-  // INTERACTIVE EXAMPLE MODAL
-  // =========================================================================
   openExampleModal(sectionId, exampleId) {
     const sec = this.activeNote?.sections?.find(s => s.id === sectionId);
     const ex = sec?.examples?.find(e => (e.id || 'ex-1') === exampleId) || sec?.examples?.[0];
@@ -1944,6 +1575,7 @@ class StudyNotesView {
   }
 
   toggleAskAiDrawer() {
+    if(this.readerActiveTab!=='TEXTBOOK'){this.readerActiveTab='TEXTBOOK';this.isAskAiOpen=true;this.render();return;}
     this.isAskAiOpen = !this.isAskAiOpen;
     const el = document.getElementById('ask-ai-drawer');
     if (el) el.classList.toggle('active', this.isAskAiOpen);
@@ -2124,7 +1756,8 @@ class StudyNotesView {
     utterance.pitch = 1.0;
 
     const voices = window.speechSynthesis.getVoices();
-    const preferredVoice = voices.find(v => v.lang === 'en-IN' || v.lang === 'hi-IN' || v.name.includes('India')) || voices[0];
+    const lang=/[\u0900-\u097f]/.test(clean)?'hi-IN':'en-IN';utterance.lang=lang;
+    const preferredVoice = voices.find(v => v.lang === lang) || voices.find(v=>v.lang.startsWith(lang.slice(0,2))) || voices[0];
     if (preferredVoice) {
       utterance.voice = preferredVoice;
     }
@@ -2147,6 +1780,7 @@ class StudyNotesView {
     };
 
     this.speechUtterance = utterance;
+    window.studyPreferences?.applySpeech(utterance, clean);
     window.speechSynthesis.speak(utterance);
   }
 
@@ -2166,26 +1800,19 @@ class StudyNotesView {
   // SECTION MASTERY & PROGRESS CONTROLLER
   // =========================================================================
   async toggleSectionMastery(secId) {
-    if (!this.activeNote) return;
-    if (!Array.isArray(this.activeNote.masteredSections)) {
-      this.activeNote.masteredSections = [];
-    }
-
-    const list = this.activeNote.masteredSections;
-    const idx = list.indexOf(secId);
-    const isMastered = idx === -1;
-
-    if (isMastered) {
-      list.push(secId);
-      if (window.audioEngine) window.audioEngine.playFanfare();
-      app.showToast('🎉 Section marked as Mastered!', 'success');
-    } else {
-      list.splice(idx, 1);
-      if (window.audioEngine) window.audioEngine.playClick();
-      app.showToast('Section marked as incomplete', 'info');
-    }
-
-    await updateNoteMastery(this.activeNote.id, list);
+    const note=this.activeNote,version=this._viewVersion;
+    if(!note||this._masteryPending||!note.sections?.some(section=>section.id===secId))return;
+    const list=[...(note.masteredSections||[])].filter(id=>note.sections.some(section=>section.id===id));
+    const idx=list.indexOf(secId),isMastered=idx===-1;
+    if(isMastered)list.push(secId);else list.splice(idx,1);
+    this._masteryPending=true;
+    try{await updateNoteMastery(note.id,list);}
+    catch(error){if(version===this._viewVersion)window.app?.showToast(`Review status could not be saved: ${error.message}`,'error');return;}
+    finally{if(version===this._viewVersion)this._masteryPending=false;}
+    if(version!==this._viewVersion)return;
+    note.masteredSections=list;
+    window.app?.showToast(isMastered?'Section marked as reviewed.':'Review mark removed.','success');
+    if(window.audioEngine){if(isMastered)window.audioEngine.playFanfare();else window.audioEngine.playClick();}
 
     // Update UI elements dynamically without full reload
     const sections = this.activeNote.sections || [];
@@ -2197,7 +1824,7 @@ class StudyNotesView {
     const barEl = document.getElementById('toc-mastery-progress-bar-fill');
     if (barEl) barEl.style.width = `${pct}%`;
 
-    const tocItem = document.querySelector(`.toc-link-item[data-sec-id="${secId}"]`);
+    const tocItem = [...document.querySelectorAll('.toc-link-item')].find(item=>item.dataset.secId===secId);
     if (tocItem) {
       tocItem.classList.toggle('mastered', isMastered);
       const cb = tocItem.querySelector('.toc-mastery-checkbox');
@@ -2207,12 +1834,12 @@ class StudyNotesView {
       }
     }
 
-    const footerBtn = document.querySelector(`.btn-toggle-mastery[data-sec-id="${secId}"]`);
+    const footerBtn = [...document.querySelectorAll('.btn-toggle-mastery')].find(item=>item.dataset.secId===secId);
     if (footerBtn) {
       footerBtn.classList.toggle('mastered', isMastered);
       footerBtn.innerHTML = `
         <i data-lucide="${isMastered ? 'check-circle-2' : 'circle'}" style="width:15px;height:15px;"></i>
-        <span>${isMastered ? '✓ Section Mastered' : 'Mark Section as Mastered'}</span>
+        <span>${isMastered ? '✓ Section Reviewed' : 'Mark Section as Reviewed'}</span>
       `;
     }
 
@@ -2228,15 +1855,15 @@ class StudyNotesView {
     return `
       <div class="section-mastery-footer-row">
         <div style="display:flex; align-items:center; gap:0.6rem;">
-          <button class="btn-toggle-mastery ${isMastered ? 'mastered' : ''}" data-sec-id="${sec.id}" onclick="studyNotesView.toggleSectionMastery('${sec.id}')">
+          <button class="btn-toggle-mastery ${isMastered ? 'mastered' : ''}" data-sec-id="${this.escapeHtml(sec.id)}" onclick="studyNotesView.toggleSectionMastery('${this.escapeHtml(this.escapeJs(sec.id))}')">
             <i data-lucide="${isMastered ? 'check-circle-2' : 'circle'}" style="width:15px;height:15px;"></i>
-            <span>${isMastered ? '✓ Section Mastered' : 'Mark Section as Mastered'}</span>
+            <span>${isMastered ? '✓ Section Reviewed' : 'Mark Section as Reviewed'}</span>
           </button>
-          ${isMastered ? '<span style="font-size:0.8rem; color:var(--color-success); font-weight:700;">Section Completed! 🎉</span>' : ''}
+          ${isMastered ? '<span style="font-size:0.8rem; color:var(--color-success); font-weight:700;">Section Reviewed! 🎉</span>' : ''}
         </div>
 
         ${nextSec ? `
-          <button class="btn btn-secondary btn-sm" onclick="studyNotesView.scrollToSection('${nextSec.id}')" style="font-size:0.82rem;">
+          <button class="btn btn-secondary btn-sm" onclick="studyNotesView.scrollToSection('${this.escapeHtml(this.escapeJs(nextSec.id))}')" style="font-size:0.82rem;">
             <span>Next: ${this.escapeHtml(nextSec.heading || `Section ${sIdx + 2}`)}</span>
             <i data-lucide="arrow-down" style="width:13px;height:13px;"></i>
           </button>
@@ -2250,134 +1877,20 @@ class StudyNotesView {
   // =========================================================================
   // INLINE SECTION MICRO-QUIZ (RAPID ACTIVE RECALL)
   // =========================================================================
-  renderSectionMicroQuiz(sec, sIdx, note) {
-    const quiz = this.getOrGenerateSectionQuiz(sec, sIdx, note);
-    if (!quiz) return '';
-
-    const answer = this.microQuizAnswers[sec.id];
-    const hasAnswered = !!answer;
-
-    return `
-      <div class="section-micro-quiz-card" id="micro-quiz-${sec.id}">
-        <div class="micro-quiz-header">
-          <div class="micro-quiz-badge">
-            <i data-lucide="help-circle" style="width:14px;height:14px;"></i>
-            <span>Active Recall • Self-Check</span>
-          </div>
-          <span style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">1-Click Quick Question</span>
-        </div>
-
-        <div class="micro-quiz-q-text">
-          ${this.escapeHtml(quiz.question)}
-        </div>
-
-        <div class="micro-quiz-options-grid">
-          ${quiz.options.map((opt, oIdx) => {
-            let extraClass = '';
-            if (hasAnswered) {
-              if (oIdx === quiz.correctIndex) extraClass = 'correct';
-              else if (oIdx === answer.selectedIdx) extraClass = 'wrong';
-            }
-            return `
-              <button class="micro-quiz-opt-btn ${extraClass}" 
-                ${hasAnswered ? 'disabled' : ''} 
-                onclick="studyNotesView.answerMicroQuiz('${sec.id}', ${oIdx}, ${quiz.correctIndex}, '${this.escapeJs(quiz.explanation)}')">
-                <span style="font-weight:700; color:var(--text-muted); font-size:0.8rem;">${['A', 'B', 'C', 'D'][oIdx]}.</span>
-                <span>${this.escapeHtml(opt)}</span>
-              </button>
-            `;
-          }).join('')}
-        </div>
-
-        ${hasAnswered ? `
-          <div class="micro-quiz-feedback-box ${answer.isCorrect ? 'correct' : 'wrong'}">
-            <strong>${answer.isCorrect ? '🎉 Excellent! That is correct.' : '⚠️ Review needed:'}</strong>
-            <div style="margin-top:0.25rem;">${this.escapeHtml(answer.explanation)}</div>
-          </div>
-        ` : ''}
-      </div>
-    `;
+  renderSectionMicroQuiz(sec, index, note) {
+    const recall = this.getOrGenerateSectionQuiz(sec,index,note);
+    const saved = this.microQuizAnswers[sec.id]; const arg=this.escapeHtml(this.escapeJs(sec.id));
+    return `<details class="study-extra study-recall"><summary>Check your understanding</summary><p>${this.escapeHtml(recall.question)}</p>
+      <textarea id="recall-${this.escapeHtml(sec.id)}" aria-label="Your explanation" placeholder="Explain in your own words…" oninput="studyNotesView.keepRecallDraft('${arg}',this.value)">${this.escapeHtml(saved?.draft || '')}</textarea>
+      <div class="study-recall-actions"><button class="btn btn-secondary btn-sm" onclick="studyNotesView.checkRecall('${arg}',false)">Compare with key points</button><button class="btn btn-primary btn-sm" onclick="studyNotesView.checkRecall('${arg}',true)">Get AI feedback</button></div>
+      ${saved?.feedback ? `<div class="study-recall-feedback">${window.marked ? SecurityUtils.sanitizeHtml(window.marked.parse(saved.feedback)) : this.escapeHtml(saved.feedback)}</div>` : ''}
+    </details>`;
   }
 
-  getOrGenerateSectionQuiz(sec, sIdx, note) {
-    if (!this._cachedSectionQuizzes) this._cachedSectionQuizzes = {};
-    if (this._cachedSectionQuizzes[sec.id]) return this._cachedSectionQuizzes[sec.id];
-
-    // 1. Check if section has definitions
-    if (Array.isArray(sec.definitions) && sec.definitions.length > 0) {
-      const def = sec.definitions[0];
-      const otherDefs = (note.glossaryTerms || []).filter(g => g.term !== def.term);
-      const distractor1 = otherDefs[0]?.definition || `A secondary condition governing this process.`;
-      const distractor2 = otherDefs[1]?.definition || `An outdated procedural rule no longer in primary practice.`;
-      const distractor3 = `A variable that remains constant regardless of system dynamics.`;
-
-      const rawOptions = [
-        { text: def.definition, isCorrect: true },
-        { text: distractor1, isCorrect: false },
-        { text: distractor2, isCorrect: false },
-        { text: distractor3, isCorrect: false }
-      ];
-
-      const correctIndex = sIdx % 4;
-      const item = rawOptions.shift();
-      rawOptions.splice(correctIndex, 0, item);
-
-      this._cachedSectionQuizzes[sec.id] = {
-        question: `According to this section, how is "${def.term}" best defined?`,
-        options: rawOptions.map(o => o.text),
-        correctIndex: correctIndex,
-        explanation: `${def.term}: ${def.definition}`
-      };
-      return this._cachedSectionQuizzes[sec.id];
-    }
-
-    // 2. Check if section has formulas
-    if (Array.isArray(sec.formulas) && sec.formulas.length > 0) {
-      const form = sec.formulas[0];
-      const rawOptions = [
-        { text: form.formula, isCorrect: true },
-        { text: form.formula.replace('=', '≠').replace('+', '-'), isCorrect: false },
-        { text: `Δ (${form.formula.split('=')[1] || 'k · x'}) = 0`, isCorrect: false },
-        { text: `None of the standard relationships apply directly`, isCorrect: false }
-      ];
-
-      const correctIndex = (sIdx + 1) % 4;
-      const item = rawOptions.shift();
-      rawOptions.splice(correctIndex, 0, item);
-
-      this._cachedSectionQuizzes[sec.id] = {
-        question: `Which formula accurately captures "${form.name}"?`,
-        options: rawOptions.map(o => o.text),
-        correctIndex: correctIndex,
-        explanation: form.explanation ? `${form.name}: ${form.formula} (${form.explanation})` : `${form.name}: ${form.formula}`
-      };
-      return this._cachedSectionQuizzes[sec.id];
-    }
-
-    // 3. Check if section has key points
-    if (Array.isArray(sec.keyPoints) && sec.keyPoints.length > 0) {
-      const kp = sec.keyPoints[0];
-      const rawOptions = [
-        { text: kp, isCorrect: true },
-        { text: `This concept is solely applicable in non-standard scenarios and has no general utility.`, isCorrect: false },
-        { text: `Historical data disproves the core assertion made in this chapter.`, isCorrect: false },
-        { text: `The principle requires external verification before any real-world conclusion.`, isCorrect: false }
-      ];
-
-      const correctIndex = sIdx % 4;
-      const item = rawOptions.shift();
-      rawOptions.splice(correctIndex, 0, item);
-
-      this._cachedSectionQuizzes[sec.id] = {
-        question: `Which fundamental principle is highlighted in "${sec.heading || `Section ${sIdx + 1}`}"?`,
-        options: rawOptions.map(o => o.text),
-        correctIndex: correctIndex,
-        explanation: kp
-      };
-      return this._cachedSectionQuizzes[sec.id];
-    }
-
-    return null;
+  getOrGenerateSectionQuiz(sec, index, note) {
+    const key = `${note.id}:${sec.id}:${sec.content}:${JSON.stringify(sec.recall || null)}`;
+    this._cachedSectionQuizzes ||= {};
+    return this._cachedSectionQuizzes[key] ||= sec.recall || { question: `Explain the central idea of “${sec.heading}” and why it matters.`, expectedPoints: sec.keyPoints?.length ? sec.keyPoints : [String(sec.content || '').split(/(?<=[.!?।])\s+/)[0]].filter(Boolean) };
   }
 
   answerMicroQuiz(secId, selectedIdx, correctIdx, explanation) {
@@ -2439,7 +1952,7 @@ class StudyNotesView {
     return `
       <div class="toc-mastery-progress-header">
         <div class="toc-progress-label-row" style="display:flex; justify-content:space-between; align-items:center;">
-          <span style="font-size:0.78rem; font-weight:750; color:var(--text-main);">Chapter Mastery</span>
+          <span style="font-size:0.78rem; font-weight:750; color:var(--text-main);">Reading reviewed</span>
           <span id="toc-mastery-stat-label" style="font-size:0.78rem; font-weight:800; color:var(--color-success);">${pct}% (${mastered.length}/${sections.length})</span>
         </div>
         <div style="width:100%; height:6px; background:var(--bg-card); border-radius:var(--radius-full); overflow:hidden; border:1px solid var(--border-subtle); margin-top:0.25rem;">
@@ -2451,15 +1964,15 @@ class StudyNotesView {
         ${sections.map((sec, sIdx) => {
           const isDone = mastered.includes(sec.id);
           return `
-            <div class="toc-link-item ${this.activeTOCSectionId === sec.id ? 'active' : ''} ${isDone ? 'mastered' : ''}" 
-                 data-sec-id="${sec.id}" 
+            <div class="toc-link-item ${this.activeTOCSectionId === sec.id ? 'active' : ''} ${isDone ? 'mastered' : ''}"
+                 data-sec-id="${this.escapeHtml(sec.id)}"
                  style="display:flex; align-items:center; gap:0.5rem; padding:0.45rem 0.6rem; border-radius:var(--radius-md); margin-bottom:0.25rem; transition:background 0.15s ease;">
-              <button class="toc-mastery-checkbox ${isDone ? 'mastered' : ''}" 
-                      onclick="event.stopPropagation(); studyNotesView.toggleSectionMastery('${sec.id}')" 
-                      title="${isDone ? 'Mark Incomplete' : 'Mark as Mastered'}">
+              <button class="toc-mastery-checkbox ${isDone ? 'mastered' : ''}"
+                      onclick="event.stopPropagation(); studyNotesView.toggleSectionMastery('${this.escapeHtml(this.escapeJs(sec.id))}')"
+                      title="${isDone ? 'Mark Incomplete' : 'Mark as Reviewed'}">
                 ${isDone ? '<i data-lucide="check" style="width:12px;height:12px; stroke-width:3;"></i>' : ''}
               </button>
-              <a class="toc-link-text" href="javascript:void(0)" onclick="studyNotesView.scrollToSection('${sec.id}')" 
+              <a class="toc-link-text" href="javascript:void(0)" onclick="studyNotesView.scrollToSection('${this.escapeHtml(this.escapeJs(sec.id))}')"
                  style="flex:1; text-decoration:none; color:inherit; font-size:0.85rem; font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">
                 ${this.escapeHtml(sec.heading || `Section ${sIdx + 1}`)}
               </a>
@@ -2496,7 +2009,7 @@ class StudyNotesView {
     if (Array.isArray(note.glossaryTerms)) {
       note.glossaryTerms.forEach(g => {
         if (!allDefs.some(d => d.term.toLowerCase() === g.term.toLowerCase())) {
-          allDefs.push({ term: g.term, definition: g.definition, secHeading: 'Glossary' });
+          allDefs.push({ term: g.term, definition: g.simpleMeaning || g.contextMeaning || g.definition || '', secHeading: 'Glossary' });
         }
       });
     }
@@ -2616,21 +2129,13 @@ class StudyNotesView {
     `;
   }
 
-  deleteAnnotation(id, type) {
-    if (!this.activeNote?.annotations) return;
-    if (type === 'highlight') {
-      this.activeNote.annotations.highlights = (this.activeNote.annotations.highlights || []).filter(h => h.id !== id);
-    } else if (type === 'bookmark') {
-      this.activeNote.annotations.bookmarks = (this.activeNote.annotations.bookmarks || []).filter(b => b.id !== id);
-    }
-    updateNoteAnnotations(this.activeNote.id, this.activeNote.annotations);
-    app.showToast('Annotation removed', 'info');
-    this.refreshSidebarTab();
+  async deleteAnnotation(id,type) {
+    const note=this.activeNote;if(!note?.annotations)return;
+    const annotations=this._clone(note.annotations),key=type==='highlight'?'highlights':'bookmarks';annotations[key]=(annotations[key]||[]).filter(item=>item.id!==id);
+    try{await updateNoteAnnotations(note.id,annotations);if(Number(this.activeNote?.id)!==Number(note.id))return;note.annotations=annotations;await this.render();}
+    catch(error){window.app?.showToast(`Annotation could not be removed: ${error.message}`,'error');}
   }
 
-  // =========================================================================
-  // 1-CLICK 3D FLASHCARDS BRIDGE
-  // =========================================================================
   createFlashcardsFromSection(secId) {
     const sec = this.activeNote?.sections?.find(s => s.id === secId);
     if (!sec) return;
@@ -2687,24 +2192,20 @@ class StudyNotesView {
       type: 'SECTION',
       subject: this.activeNote.subject || 'General'
     };
-    window.flashcardsView.cards = cards;
+    window.flashcardsView.cards = cards.map((card,index)=>({...card,id:`note-${this.activeNote.id}-${secId}-${index}`,cardKey:`note:${this.activeNote.id}:${secId}:${card.front}`}));
     window.flashcardsView.startStudySession();
 
     if (window.app) {
-      window.app.navigateToView('flashcards');
+      window.app.navigate('flashcards');
       app.showToast(`Loaded ${cards.length} 3D flashcards for "${sec.heading}"!`, 'success');
     }
   }
 
-  createFlashcardsFromNote() {
-    if (!this.activeNote) return;
-    if (!window.flashcardsView) {
-      window.flashcardsView = new FlashcardsView();
-    }
-    window.flashcardsView.loadNotesDeck(this.activeNote.id);
-    if (window.app) {
-      window.app.navigateToView('flashcards');
-    }
+  async createFlashcardsFromNote() {
+    if(!this.activeNote)return;
+    if(!window.flashcardsView)window.flashcardsView=new FlashcardsView();
+    await window.flashcardsView.loadNotesDeck(this.activeNote.id);
+    if(window.flashcardsView.cards.length)window.app?.navigate('flashcards');
   }
 
   sendQuickAiQuestion(question) {
@@ -2714,54 +2215,32 @@ class StudyNotesView {
   }
 
   async sendAiMessage() {
-    const inp = document.getElementById('ask-ai-input-field');
-    const msg = inp ? inp.value.trim() : '';
-    if (!msg) return;
-
-    this.askAiMessages.push({ role: 'user', text: msg });
-    if (inp) inp.value = '';
-    this.renderAskAiMessages();
-
-    if (window.audioEngine) window.audioEngine.playClick();
-
+    if(!this.activeNote||this._chatPending)return;
+    const input=document.getElementById('ask-ai-input-field'),query=input?.value.trim();if(!query)return;
+    const note=this.activeNote,id=note.id,version=this._viewVersion,controller=this._controller();
+    this._chatPending=true;const conversation=this.askAiMessages;
+    conversation.push({role:'user',text:query});input.value='';this.renderAskAiMessages();
     try {
-      const fullContent = this.activeNote?.sections?.map(s => `${s.heading}\n${s.content}`).join('\n\n') || this.activeNote?.content || '';
-      const reply = await window.geminiService.askAiAboutNote({
-        noteContent: fullContent,
-        noteTopic: this.activeNote?.title || 'Study Guide',
-        userQuestion: msg,
-        chatHistory: this.askAiMessages
-      });
-
-      this.askAiMessages.push({ role: 'ai', text: reply });
-      this.renderAskAiMessages();
-      if (window.audioEngine) window.audioEngine.playBatchPing();
-    } catch (err) {
-      this.askAiMessages.push({ role: 'ai', text: `Sorry, I could not answer that right now: ${err.message}` });
-      this.renderAskAiMessages();
-    }
+      const reply=await window.geminiService.askAiAboutNote({noteContent:note.content,noteTopic:note.title,sections:note.sections,settings:note.settings, userQuestion:query,chatHistory:conversation.slice(0,-1),signal:controller.signal});
+      if(version!==this._viewVersion||controller.signal.aborted)return;
+      conversation.push({role:'ai',text:reply});this.renderAskAiMessages();
+      note.chatHistory=conversation.slice(-100);
+      try{await updateNote(id,{chatHistory:note.chatHistory});}catch(error){if(version===this._viewVersion)window.app?.showToast(`Reply received, but chat history could not be saved: ${error.message}`,'warning');}
+    } catch(error) {
+      if(version!==this._viewVersion||controller.signal.aborted||error.name==='AbortError')return;
+      if(conversation.at(-1)?.role==='user')conversation.pop();
+      const current=document.getElementById('ask-ai-input-field');if(current&&!current.value)current.value=query;
+      this.renderAskAiMessages();window.app?.showToast(`Tutor reply failed: ${error.message}`,'error');
+    } finally {this._controllers.delete(controller);if(version===this._viewVersion){this._chatPending=false;this.renderAskAiMessages();}}
   }
 
   renderAskAiMessages() {
-    const list = document.getElementById('ask-ai-msg-list');
-    if (!list) return;
-
-    list.innerHTML = `
-      <div class="ask-ai-msg ai">
-        👋 Hello! I am your AI study mentor for <strong>"${this.escapeHtml(this.activeNote?.title)}"</strong>. Ask me to clarify any concept, give an analogy, or explain exam-relevant questions grounded directly in this note!
-      </div>
-      ${this.askAiMessages.map(m => `
-        <div class="ask-ai-msg ${m.role}">
-          ${this.escapeHtml(m.text)}
-        </div>
-      `).join('')}
-    `;
-    list.scrollTop = list.scrollHeight;
+    const list=document.getElementById('ask-ai-msg-list');if(!list)return;
+    list.innerHTML=`<div class="ask-ai-msg ai">Ask about ${this.escapeHtml(this.activeNote?.title)}. Answers use relevant sections from the whole note.</div>${this.askAiMessages.map(message=>`<div class="ask-ai-msg ${message.role==='user'?'user':'ai'}">${message.role==='ai'&&window.marked?SecurityUtils.sanitizeHtml(window.marked.parse(message.text)):this.escapeHtml(message.text)}</div>`).join('')}${this._chatPending?'<div class="ask-ai-msg ai" role="status">Thinking…</div>':''}`;
+    const send=document.querySelector('.ask-ai-input-box button');if(send)send.disabled=!!this._chatPending;
+    list.scrollTop=list.scrollHeight;
   }
 
-  // =========================================================================
-  // AI SUMMARY & QUIZ CONFIG MODALS
-  // =========================================================================
   openSummaryModal() {
     this.setReaderTab('SUMMARY');
   }
@@ -2771,90 +2250,39 @@ class StudyNotesView {
   }
 
   async generateFreshSummary(noteId) {
-    if (window.audioEngine) window.audioEngine.playClick();
-
-    // Shared lifecycle rather than a hand-rolled overlay toggle, so Cancel
-    // actually aborts this request instead of only hiding the overlay while it
-    // kept running and then reported a failure.
-    if (!app.beginGeneration('Reading textbook chapters & concepts...')) return;
-
-    // Setup waiting motion card
-    const batchCard = document.getElementById('batch-progress-card');
-    if (batchCard) batchCard.style.display = 'flex';
-    const batchFill = document.getElementById('batch-progress-fill');
-    if (batchFill) batchFill.style.width = '20%';
-
-    app.handleGenerationProgress({
-      message: 'Reading textbook chapters & concepts...',
-      badgeText: 'Summary Extraction',
-      countText: 'Extracting key takeaways & definitions...',
-      percent: 25,
-      showBatchCard: true,
-      stepId: 'step-reading'
-    });
-
+    if(!app.beginGeneration('Preparing revision notes…'))return;
+    const controller=this._controller(),version=this._viewVersion;
     try {
-      const note = await getNoteById(noteId);
-
-      app.handleGenerationProgress({
-        message: 'Synthesizing High-Yield Takeaways, Definitions & Traps...',
-        badgeText: 'AI Synthesis',
-        countText: 'Distilling essential exam pointers across chapter...',
-        percent: 65,
-        showBatchCard: true,
-        stepId: 'step-formulating'
-      });
-
-      const summary = await window.geminiService.summarizeStudyNote({
-        title: note.title,
-        content: note.content || note.sections?.map(s => s.content).join('\n\n'),
-        subject: note.subject,
-        sections: note.sections || []
-      });
-
-      // Save summary permanently in IndexedDB
-      await updateNote(noteId, { summary });
-
-      app.handleGenerationProgress({
-        message: 'High-Yield Summary Ready & Saved! ✨',
-        badgeText: 'Complete',
-        countText: '100% Complete',
-        percent: 100,
-        showBatchCard: true,
-        stepId: 'step-crafting',
-        completedStepId: 'step-crafting'
-      });
-
-      await new Promise(r => setTimeout(r, 350));
+      await this.flushAutoSave();const note=await getNoteById(Number(noteId));if(!note)throw new Error('Note not found.');
+      const summary=await window.geminiService.summarizeStudyNote({title:note.title,subject:note.subject,sections:note.sections,settings:note.settings,signal:controller.signal,onProgress:status=>app.handleGenerationProgress(status)});
+      this._checkRun(controller);await updateNote(note.id,{summary});
+      if(version===this._viewVersion&&Number(this.activeNoteId)===Number(note.id)){this.activeNote.summary=summary;this.readerActiveTab='SUMMARY';await this.render();}
+      app.showToast(summary.generationSource==='GEMINI_AI'?'Revision updated for all sections.':'Revision extracted locally from source text.','success');
       app.endGeneration();
-
-      this.activeNote = await getNoteById(noteId);
-      this.readerActiveTab = 'SUMMARY';
-      await this.render();
-      if (window.audioEngine) window.audioEngine.playFanfare();
-      app.showToast('High-yield revision summary generated and saved! ✨', 'success');
-    } catch (e) {
-      app.endGeneration();
-      if (app.isGenerationCancelled() || e.name === 'AbortError') return;
-      app.showToast(`Summary failed: ${e.message}`, 'error');
-    }
+    } catch(error) {
+      app.endGeneration();if(app.isGenerationCancelled()||error.name==='AbortError')return;
+      app.showToast(`Revision failed: ${error.message}`,'error');
+    } finally{this._controllers.delete(controller);}
   }
 
   openQuizModal() {
+    this._quizNote=this.activeNote;
     this.isQuizModalOpen = true;
     this.render();
     if (window.audioEngine) window.audioEngine.playClick();
   }
 
-  openQuizModalForNote(noteId) {
-    this.activeNoteId = noteId;
-    this.isQuizModalOpen = true;
-    this.render();
-    if (window.audioEngine) window.audioEngine.playClick();
+  async openQuizModalForNote(noteId) {
+    if(this._dirty) await this.flushAutoSave();
+    this._quizNote = await getNoteById(Number(noteId));
+    if(!this._quizNote) return;
+    this.isQuizModalOpen=true; this.selectedQuizSections=null;
+    await this.render();
   }
 
   closeQuizModal() {
     this.isQuizModalOpen = false;
+    this._quizNote=null;
     this.render();
   }
 
@@ -2865,61 +2293,21 @@ class StudyNotesView {
   }
 
   async launchGeneratedQuizForNote(noteId) {
-    const note = await getNoteById(noteId);
-    if (!note) return;
-
-    this.closeQuizModal();
-    if (window.audioEngine) window.audioEngine.playClick();
-
-    const count = this.quizConfig.questionCount || 10;
-    app.showToast(`Synthesizing ${count}-Question AI Quiz from "${note.title}"...`, 'info');
-
-    if (!app.beginGeneration(`Synthesizing ${count}-question quiz...`)) return;
-
+    if(!app.beginGeneration('Preparing source-based practice…'))return;
+    const controller=this._controller();
     try {
-      const fullText = note.sections?.map(s => `${s.heading}\n${s.content}`).join('\n\n') || note.content || '';
-      const generated = await window.geminiService.generateQuiz({
-        sourceContent: fullText,
-        sourceTitle: note.title,
-        subject: note.subject || 'General Study',
-        difficulty: this.quizConfig.difficulty || 'MEDIUM',
-        questionCount: count,
-        quizMode: 'PRACTICE',
-        language: 'ENGLISH',
-        allowDemoFallback: false,
-        onStatusUpdate: (status) => app.handleGenerationProgress(status)
-      });
-
-      const quizId = await saveNewQuiz({
-        title: `${note.title} AI Practice Drill`,
-        subject: note.subject,
-        difficulty: this.quizConfig.difficulty || 'MEDIUM',
-        quizMode: 'PRACTICE',
-        language: 'ENGLISH',
-        sourceType: 'TEXT_NOTES',
-        sourceTitle: note.title
-      }, generated.questions);
-
-      // Record quiz ID in note
-      if (!note.quizzes) note.quizzes = [];
-      note.quizzes.push(quizId);
-      await updateNote(note.id, { quizzes: note.quizzes });
-
-      app.endGeneration();
-      if (window.audioEngine) window.audioEngine.playFanfare();
-      app.showToast('AI Quiz formulated from your textbook!', 'success');
-      app.startQuiz(quizId);
-    } catch (err) {
-      app.endGeneration();
-      if (app.isGenerationCancelled() || err.name === 'AbortError') return;
-      console.error(err);
-      app.showToast(`Quiz generation failed: ${err.message}`, 'error');
-    }
+      await this.flushAutoSave();const note=await getNoteById(Number(noteId));if(!note)throw new Error('Note not found.');
+      const sections=this._practiceSections(note);if(!sections.length)throw new Error('Select at least one section.');
+      this.closeQuizModal();
+      const generated=await window.geminiService.generateStudyQuiz({sections,sourceTitle:note.title,subject:note.subject,questionCount:this.quizConfig.questionCount,questionType:this.quizConfig.questionType,difficulty:this.quizConfig.difficulty,language:note.settings?.language||'AUTO',settings:note.settings,offset:(note.quizzes?.length||0)*this.quizConfig.questionCount,signal:controller.signal,onStatusUpdate:status=>app.handleGenerationProgress(status)});
+      this._checkRun(controller);
+      const quizId=await saveNewQuiz({title:`${note.title} · Practice`,subject:note.subject,difficulty:this.quizConfig.difficulty,quizMode:'PRACTICE',language:note.settings?.language||'AUTO',sourceType:'TEXT_NOTES',sourceTitle:note.title},generated.questions);
+      await updateNote(note.id,{quizzes:[...(note.quizzes||[]),quizId]});
+      app.endGeneration();app.startQuiz(quizId);
+    }catch(error){app.endGeneration();if(app.isGenerationCancelled()||error.name==='AbortError')return;app.showToast(`Practice failed: ${error.message}`,'error');}
+    finally{this._controllers.delete(controller);}
   }
 
-  // =========================================================================
-  // PDF EXPORT INTEGRATION
-  // =========================================================================
   toggleExportMenu() {
     const menu = document.getElementById('export-dropdown-menu');
     if (menu) {
@@ -2930,135 +2318,124 @@ class StudyNotesView {
     }
   }
 
-  exportStudyNotesPdf(noteId) {
-    const note = this.notes.find(n => n.id === noteId) || this.activeNote;
-    if (note && window.pdfGenerator) {
-      if (window.audioEngine) window.audioEngine.playClick();
-      app.showToast('Generating professional Study Notes Booklet PDF...', 'info');
-      window.pdfGenerator.exportStudyNotesBookletPdf(note);
-    }
+  async _exportSavedNote(noteId,summary) {
+    // Reserve the tab during the click, before asynchronous saves lose browser user activation.
+    const printWindow=window.open('','_blank');
+    if(!printWindow){window.app?.showToast('Allow pop-ups for this site to export your notes.','warning');return;}
+    printWindow.document.body.textContent='Preparing your study notes…';
+    try{
+      await this.flushAutoSave();const note=await getNoteById(Number(noteId));
+      if(!note)throw new Error('Note not found.');
+      if(!window.pdfGenerator)throw new Error('PDF export is unavailable. Reload and retry.');
+      if(summary)window.pdfGenerator.exportSummarySheetPdf(note,this.revisionMode,printWindow);
+      else window.pdfGenerator.exportStudyNotesBookletPdf(note,printWindow);
+    }catch(error){printWindow.close();window.app?.showToast(`Export failed: ${error.message}`,'error');}
   }
 
-  exportSummarySheetPdf(noteId) {
-    const note = this.notes.find(n => n.id === noteId) || this.activeNote;
-    if (note && window.pdfGenerator) {
-      if (window.audioEngine) window.audioEngine.playClick();
-      app.showToast('Generating 1-Page Summary Cheat-Sheet PDF...', 'info');
-      window.pdfGenerator.exportSummarySheetPdf(note);
-    }
-  }
+  exportStudyNotesPdf(noteId) {return this._exportSavedNote(noteId,false);}
+
+  exportSummarySheetPdf(noteId) {return this._exportSavedNote(noteId,true);}
 
   async exportPrintableQuizPrompt(noteId) {
-    const note = this.notes.find(n => n.id === noteId) || this.activeNote;
-    if (!note) return;
-
-    if (window.audioEngine) window.audioEngine.playClick();
-    app.showToast('Synthesizing questions for printable exam paper...', 'info');
-
+    const printWindow=window.open('','_blank');
+    if(!printWindow){window.app?.showToast('Allow pop-ups for this site to export the quiz.','warning');return;}
+    if(!app.beginGeneration('Preparing your printable practice paper…')){printWindow.close();return;}
+    printWindow.document.body.textContent='Preparing source-based practice questions…';
+    const controller=this._controller(),config={...this.quizConfig};
     try {
-      const fullText = note.sections?.map(s => `${s.heading}\n${s.content}`).join('\n\n') || note.content || '';
-      const generated = await window.geminiService.generateQuiz({
-        sourceContent: fullText,
-        sourceTitle: note.title,
-        subject: note.subject,
-        difficulty: 'MEDIUM',
-        questionCount: 10,
-        quizMode: 'EXAM',
-        language: 'ENGLISH',
-        allowDemoFallback: true
-      });
-
-      window.pdfGenerator.exportPrintableQuizPdf({ title: `${note.title} Examination Paper` }, generated.questions);
-    } catch (e) {
-      app.showToast(`Printable quiz error: ${e.message}`, 'error');
-    }
+      await this.flushAutoSave();const note=await getNoteById(Number(noteId));if(!note)throw new Error('Note not found.');
+      const generated=await window.geminiService.generateStudyQuiz({sections:this._practiceSections(note),sourceTitle:note.title,subject:note.subject,questionCount:config.questionCount,questionType:config.questionType,difficulty:config.difficulty,language:note.settings?.language||'AUTO',settings:note.settings,signal:controller.signal,onStatusUpdate:status=>app.handleGenerationProgress(status)});
+      this._checkRun(controller);
+      window.pdfGenerator.exportPrintableQuizPdf({title:`${note.title} · Practice Paper`},generated.questions,printWindow);
+    }catch(error){printWindow.close();if(error.name!=='AbortError')app.showToast(`Printable quiz failed: ${error.message}`,'error');}
+    finally{this._controllers.delete(controller);app.endGeneration();}
   }
 
-  // =========================================================================
-  // EDIT & AUTO-SAVE LOGIC
-  // =========================================================================
-  toggleEditMode() {
-    this.isEditMode = !this.isEditMode;
-    this.render();
-    if (window.audioEngine) window.audioEngine.playClick();
-    if (!this.isEditMode) {
-      app.showToast('Changes auto-saved to your personal vault! ✓', 'success');
+  async toggleEditMode() {
+    if(this.isEditMode) {
+      try {await this.flushAutoSave();} catch(error) {window.app?.showToast(error.message,'error');return;}
     }
+    this.isEditMode=!this.isEditMode;await this.render();
   }
 
   onSectionTextEdit(secId, newText) {
     if (!this.activeNote || !this.activeNote.sections) return;
     const sec = this.activeNote.sections.find(s => s.id === secId);
     if (sec) {
-      sec.content = newText;
+      this._rememberEdit();
+      if(sec.content===newText)return;
+      const oldTerms=new Set((sec.definitions||[]).map(item=>item.term.toLocaleLowerCase()));
+      const oldContent=sec.content.toLocaleLowerCase();
+      this.activeNote.glossaryTerms=(this.activeNote.glossaryTerms||[]).filter(term=>{const key=term.term.toLocaleLowerCase();return (!oldContent.includes(key)&&!oldTerms.has(key))||this.activeNote.sections.some(other=>other!==sec&&(other.content.toLocaleLowerCase().includes(key)||(other.definitions||[]).some(item=>item.term.toLocaleLowerCase()===key)));});
+      sec.content = newText;sec.supportingContentStale=true;
+      for(const key of ['keyPoints','definitions','formulas','examples','tables','importantFacts'])sec[key]=[];
+      sec.flowchart=null;sec.diagram=null;sec.recall=null;
+      this._cachedSectionQuizzes={};delete this.microQuizAnswers[secId];
       this.triggerAutoSave();
     }
   }
 
+  async refreshSectionTeaching(id) {
+    if(!window.geminiService.isAiAvailable()){window.app?.showToast('Configure Gemini in Settings to rebuild teaching aids.','warning');return;}
+    try{await this.flushAutoSave();}catch(error){window.app?.showToast(error.message,'error');return;}
+    const note=this.activeNote,section=note?.sections?.find(section=>section.id===id);if(!section)return;
+    if(!window.app?.beginGeneration('Rebuilding teaching aids from your explanation…'))return;
+    const version=this._viewVersion,content=section.content,controller=this._controller();
+    try{
+      const result=await window.geminiService.generateStructuredStudyBook({topic:section.heading,subject:note.subject,rawText:content,settings:note.settings,signal:controller.signal,onProgress:progress=>window.app?.handleGenerationProgress(progress)});
+      this._checkRun(controller);if(version!==this._viewVersion)return;
+      if(section.content!==content)throw new Error('The explanation changed during the refresh. Retry using your latest text.');
+      this._rememberEdit();
+      for(const key of ['keyPoints','definitions','formulas','examples','tables','importantFacts'])section[key]=result.sections.flatMap(item=>item[key]||[]);
+      section.examples.forEach((example,index)=>example.id=`${id}-example-${index+1}`);
+      section.flowchart=result.sections.find(item=>item.flowchart)?.flowchart||null;
+      section.diagram=result.sections.find(item=>item.diagram)?.diagram||null;
+      section.recall=result.sections.find(item=>item.recall)?.recall||null;
+      const terms=[...(note.glossaryTerms||[]),...(result.glossaryTerms||[])];note.glossaryTerms=[...new Map(terms.map(term=>[term.term.toLocaleLowerCase(),term])).values()];
+      section.supportingContentStale=false;this.triggerAutoSave();await this.flushAutoSave();await this.render();
+      window.app?.showToast('Teaching aids rebuilt from your explanation.','success');
+    }catch(error){if(error.name!=='AbortError'&&version===this._viewVersion)window.app?.showToast(`Teaching aids could not be refreshed: ${error.message}`,'error');}
+    finally{this._controllers.delete(controller);window.app?.endGeneration();}
+  }
+
   updateActiveNoteTitle(newTitle) {
     if (!this.activeNote || !newTitle.trim()) return;
+    this._rememberEdit();
     this.activeNote.title = newTitle.trim();
     this.triggerAutoSave();
   }
 
   triggerAutoSave() {
-    this.autoSaveStatus = 'Saving...';
-    const badge = document.getElementById('auto-save-status-badge');
-    if (badge) badge.textContent = this.autoSaveStatus;
-
+    this._editSequence=(this._editSequence||0)+1;
+    this._dirty=true;this.autoSaveStatus='Saving…';
+    const badge=document.getElementById('auto-save-status-badge');if(badge)badge.textContent=this.autoSaveStatus;
     clearTimeout(this.autoSaveTimer);
-    this.autoSaveTimer = setTimeout(async () => {
-      try {
-        await updateNote(this.activeNote.id, {
-          title: this.activeNote.title,
-          sections: this.activeNote.sections
-        });
-        this.autoSaveStatus = 'Saved ✓';
-        if (badge) badge.textContent = this.autoSaveStatus;
-      } catch (e) {
-        this.autoSaveStatus = 'Save failed';
-        if (badge) badge.textContent = this.autoSaveStatus;
-      }
-    }, 800);
+    this.autoSaveTimer=setTimeout(()=>this.flushAutoSave().catch(error=>window.app?.showToast(`Changes could not be saved: ${error.message}`,'error')),800);
   }
 
-  // =========================================================================
-  // SCROLLSPY & FOCUS MODE
-  // =========================================================================
   initScrollspyListener() {
-    window.onscroll = () => {
-      if (this.currentViewMode !== 'READER') return;
-
-      // Update Reading Progress Fill Bar
-      const winHeight = document.documentElement.scrollHeight - window.innerHeight;
-      const progress = winHeight > 0 ? Math.min(100, Math.max(0, (window.scrollY / winHeight) * 100)) : 0;
-      const fillEl = document.getElementById('reading-progress-fill');
-      if (fillEl) fillEl.style.width = `${progress}%`;
-
-      // Update Active TOC link
-      const sections = this.activeNote?.sections || [];
-      for (const s of sections) {
-        const el = document.getElementById(s.id);
-        if (el) {
-          const rect = el.getBoundingClientRect();
-          if (rect.top <= 180 && rect.bottom >= 180) {
-            if (this.activeTOCSectionId !== s.id) {
-              this.activeTOCSectionId = s.id;
-              document.querySelectorAll('.toc-link-item').forEach(link => {
-                link.classList.toggle('active', link.textContent.includes(s.heading));
-              });
-            }
-            break;
-          }
-        }
+    window.removeEventListener('scroll',this._scrollHandler);
+    this._scrollHandler=()=>{
+      if(this.currentViewMode!=='READER'||window.app?.currentView!=='study-notes')return;
+      const height=document.documentElement.scrollHeight-window.innerHeight;
+      const fill=document.getElementById('reading-progress-fill');if(fill)fill.style.width=`${height>0?Math.min(100,Math.max(0,window.scrollY/height*100)):0}%`;
+      let current=null;const readingTop=(document.querySelector('.textbook-sticky-bar')?.getBoundingClientRect().bottom||180)+36;
+      for(const section of this.activeNote?.sections||[]){const el=document.getElementById(section.id);if(el&&!el.hidden&&el.getBoundingClientRect().top<=readingTop)current=section;}
+      if(current&&this.activeTOCSectionId!==current.id){
+        this.activeTOCSectionId=current.id;document.querySelectorAll('.toc-link-item').forEach(link=>link.classList.toggle('active',link.dataset.secId===current.id));
+        const note=this.activeNote,id=note.id,position={sectionId:current.id};note.readingPosition=position;clearTimeout(this._readingTimer);
+        this._readingTimer=setTimeout(()=>updateNote(id,{readingPosition:position}).catch(error=>console.warn('Reading position not saved',error)),500);
       }
     };
+    window.addEventListener('scroll',this._scrollHandler,{passive:true});
   }
 
   scrollToSection(secId) {
     this.activeTOCSectionId = secId;
     const el = document.getElementById(secId);
     if (el) {
+      if(this.activeNote)this.activeNote.readingPosition={sectionId:secId};
+      document.querySelector('.textbook-toc-sidebar')?.classList.remove('study-sidebar-open');
       el.scrollIntoView({ behavior: 'smooth', block: 'start' });
       if (window.audioEngine) window.audioEngine.playClick();
     }
@@ -3084,6 +2461,7 @@ class StudyNotesView {
     this.newFiles = [];
     this.manualText = '';
     this.isCreating = false;
+    this._sourcePages=null;this._retryState=null;this._creationError=null;
     this.render();
     if (window.audioEngine) window.audioEngine.playClick();
   }
@@ -3120,44 +2498,28 @@ class StudyNotesView {
   }
 
   async openNote(noteId) {
-    const idNum = Number(noteId);
-    if (!idNum) return;
-
-    // Ensure the main study-notes view is active in app router
-    if (window.app) {
-      if (window.app.currentView !== 'study-notes') {
-        window.app.navigate('study-notes', { id: idNum }, true);
-        return;
-      } else {
-        try {
-          history.replaceState(null, '', `#study-notes?id=${idNum}`);
-        } catch(e) {}
-      }
-    }
-
-    this.currentViewMode = 'READER';
-    this.activeNoteId = idNum;
-    this.isFocusMode = false;
-    this.isEditMode = false;
-    this.isAskAiOpen = false; // Strictly hide Ask AI drawer by default
-    this.activeTOCSectionId = null;
-    this.askAiMessages = [];
+    const id=Number(noteId);if(!Number.isSafeInteger(id)||id<=0)return;
+    if(window.app&&window.app.currentView!=='study-notes'){window.app.navigate('study-notes',{id},true);return;}
+    try {await this.flushAutoSave();await this._persistReadingProgress();}catch(error){window.app?.showToast(error.message,'error');return;}
+    this._endNoteSession();const version=this._viewVersion;
+    const note=await getNoteById(id);if(version!==this._viewVersion||!note)return;
+    this.currentViewMode='READER';this.activeNoteId=id;this.activeNote=note;
+    this.noteSettings={language:'AUTO',level:'AUTO',exam:'',...(note.settings||{})};
+    this.readerActiveTab='TEXTBOOK';this.isFocusMode=false;this.isEditMode=false;this.isAskAiOpen=false;this.isQuizModalOpen=false;
+    const readingSectionId=note.readingPosition?.sectionId||note.sections?.[0]?.id;this.activeTOCSectionId=readingSectionId;
+    this.askAiMessages=Array.isArray(note.chatHistory)?note.chatHistory:[];this.microQuizAnswers=note.recallAnswers||{};
+    this._cachedSectionQuizzes={};this.selectedQuizSections=null;this._editBaseline=null;this._savePromise=Promise.resolve();this.autoSaveStatus='Saved ✓';
+    try{history.replaceState(null,'',`#study-notes?id=${id}`);}catch{}
     await this.render();
-    if (window.audioEngine) window.audioEngine.playClick();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    this.activeTOCSectionId=readingSectionId;const target=document.getElementById(readingSectionId);if(target)target.scrollIntoView?.({block:'start',behavior:'instant'});this._scrollHandler?.();
   }
 
-  backToDashboard() {
-    this.currentViewMode = 'DASHBOARD';
-    this.activeNoteId = null;
-    this.activeNote = null;
-    this.isAskAiOpen = false; // Strictly hide Ask AI drawer
-    document.body.classList.remove('in-textbook-focus-mode');
-    this.render();
-    if (window.audioEngine) window.audioEngine.playTabSwitch();
+  async backToDashboard() {
+    try{await this.flushAutoSave();await this._persistReadingProgress();}catch(error){window.app?.showToast(error.message,'error');return;}
+    this._endNoteSession();this.currentViewMode='DASHBOARD';this.activeNoteId=null;this.activeNote=null;this.isAskAiOpen=false;this.isQuizModalOpen=false;
+    document.body.classList.remove('in-textbook-focus-mode');await this.render();
   }
 
-  // Multi-file selection & drag drop
   handleDragOver(e, el) {
     e.preventDefault();
     e.stopPropagation();
@@ -3180,24 +2542,24 @@ class StudyNotesView {
   }
 
   onMultiFilesSelected(fileList) {
-    if (!fileList || fileList.length === 0) return;
-    for (const f of fileList) {
-      this.newFiles.push({
-        file: f,
-        name: f.name,
-        size: f.size,
-        type: f.name.endsWith('.pdf') ? 'PDF' : 'IMAGE'
-      });
-      if (!this.newTopic) {
-        this.newTopic = f.name.replace(/\.[^/.]+$/, "").replace(/[-_]/g, ' ');
-      }
+    const allowed = { pdf:'PDF',jpg:'IMAGE',jpeg:'IMAGE',png:'IMAGE',webp:'IMAGE' };
+    const rejected=[]; let total=this.newFiles.reduce((sum,item)=>sum+item.size,0);
+    for (const file of Array.from(fileList || [])) {
+      const extension=file.name.split('.').pop().toLowerCase(),type=allowed[extension];
+      if(!type || (file.type && !['application/pdf','image/jpeg','image/png','image/webp'].includes(file.type))) {rejected.push(`${file.name}: unsupported type`);continue;}
+      if(!file.size || file.size>12*1024*1024 || total+file.size>30*1024*1024 || this.newFiles.length>=12) {rejected.push(`${file.name}: use up to 12 files, 12 MB each and 30 MB total`);continue;}
+      if(this.newFiles.some(item=>item.name.toLocaleLowerCase()===file.name.toLocaleLowerCase())) {rejected.push(`${file.name}: already attached; rename different files with the same name`);continue;}
+      this.newFiles.push({file,name:file.name,size:file.size,type,fromPage:1,toPage:null});total+=file.size;
+      if(!this.newTopic) this.newTopic=file.name.replace(/\.[^/.]+$/,'').replace(/[-_]/g,' ');
     }
+    this._sourcePages=null;this._retryState=null;this._creationError=null;
+    if(rejected.length) window.app?.showToast(rejected.join('; '),'warning');
     this.render();
-    if (window.audioEngine) window.audioEngine.playClick();
   }
 
   removeAttachedFile(idx) {
     this.newFiles.splice(idx, 1);
+    this._sourcePages=null;this._retryState=null;this._creationError=null;
     this.render();
     if (window.audioEngine) window.audioEngine.playClick();
   }
@@ -3283,190 +2645,38 @@ class StudyNotesView {
 
   // Trigger Creation: Extract & Structure with AI
   async triggerCreateStructuredNote() {
-    const topic = (this.newTopic || '').trim();
-    if (!topic) {
-      app.showToast('Please enter a Topic or Chapter Title.', 'error');
-      return;
-    }
-
-    if (this.newFiles.length === 0 && !this.manualText.trim()) {
-      app.showToast('Please upload a PDF / Image or paste study text.', 'error');
-      return;
-    }
-
-    if (window.audioEngine) window.audioEngine.playClick();
-
-    const focus = (this.focusInstruction || '').trim();
-
-    // Use the shared generation lifecycle instead of poking #generating-overlay
-    // directly, which is what this method used to do. beginGeneration() also
-    // refuses a second concurrent run (double-clicking the button used to start
-    // two), arms the Cancel button, and resets the batch visuals — and it is the
-    // contract app.cancelGeneration() / isGenerationCancelled() work against.
-    if (!app.beginGeneration(
-      focus ? 'Building your focused notes...' : 'Hamsa AI Ingestion in Progress...'
-    )) return;
-
-    const batchCard = document.getElementById('batch-progress-card');
-    if (batchCard) batchCard.style.display = 'flex';
-    const batchFill = document.getElementById('batch-progress-fill');
-    if (batchFill) batchFill.style.width = '8%';
-
-    app.handleGenerationProgress({
-      message: 'Reading & parsing uploaded study material...',
-      badgeText: 'Document Ingestion',
-      countText: 'Extracting source text & formulas...',
-      percent: 8,
-      showBatchCard: true,
-      stepId: 'step-reading'
-    });
-
-    this.isCreating = true;
-
+    const topic=(this.newTopic||'').trim();
+    if(!topic){app.showToast('Please enter a Topic or Chapter Title.','error');return;}
+    if(!this.newFiles.length&&!this.manualText.trim()){app.showToast('Please upload a PDF / Image or paste study text.','error');return;}
+    const focus=(this.focusInstruction||'').trim();
+    if(!app.beginGeneration(focus?'Building your focused notes…':'Reading your study material…'))return;
+    const controller=this._controller(),version=this._viewVersion;
+    const files=this.newFiles.map(item=>({...item})),manual=this.manualText,settings={...this.noteSettings};
+    const subject=this.isCustomSubject?(this.customSubject.trim()||'General Study'):(this.newSubject||'General Study');
+    this.isCreating=true;this._creationError=null;
     try {
-      let combinedSourceText = this.manualText || '';
-
-      // Extract text from attached files
-      for (let fIdx = 0; fIdx < this.newFiles.length; fIdx++) {
-        const item = this.newFiles[fIdx];
-        if (item.type === 'PDF') {
-          app.handleGenerationProgress({
-            message: `Reading PDF document: "${item.name}"...`,
-            badgeText: 'PDF Parser',
-            countText: `Extracting all pages for file ${fIdx + 1} of ${this.newFiles.length}...`,
-            percent: Math.round(10 + (fIdx / this.newFiles.length) * 10),
-            showBatchCard: true,
-            stepId: 'step-reading'
-          });
-          const meta = await window.pdfExtractor.loadPdfFile(item.file);
-          const totalPages = meta.pageCount || 1;
-          const res = await window.pdfExtractor.extractTextFromPageRange(1, totalPages, (cur, tot) => {
-            app.handleGenerationProgress({
-              message: `Extracting pages from "${item.name}": Page ${cur} of ${tot}...`,
-              badgeText: 'PDF Extraction',
-              countText: `${Math.round((cur / tot) * 100)}% of document extracted`,
-              percent: Math.round(10 + (cur / tot) * 15),
-              showBatchCard: true,
-              stepId: 'step-reading'
-            });
-          });
-          combinedSourceText += `\n\n--- [DOCUMENT: ${item.name}] ---\n${res.text}\n`;
-        } else if (item.type === 'IMAGE') {
-          app.handleGenerationProgress({
-            message: `Transcribing notes via Gemini Vision AI: "${item.name}"...`,
-            badgeText: 'Vision AI OCR',
-            countText: `Deciphering text ${fIdx + 1} of ${this.newFiles.length}...`,
-            percent: Math.round(10 + (fIdx / this.newFiles.length) * 10),
-            showBatchCard: true,
-            stepId: 'step-reading'
-          });
-          const base64Data = await new Promise((res, rej) => {
-            const r = new FileReader();
-            r.onload = () => res(r.result);
-            r.onerror = rej;
-            r.readAsDataURL(item.file);
-          });
-          const transcribed = await window.geminiService.extractTextFromImage({
-            base64Data,
-            mimeType: item.file.type || 'image/jpeg'
-          });
-          combinedSourceText += `\n\n--- [PHOTO NOTE: ${item.name}] ---\n${transcribed}\n`;
-        }
-      }
-
-      const effectiveSubject = (this.isCustomSubject ? (this.customSubject.trim() || 'General Study') : (this.newSubject.trim() || 'General Study'));
-
-      // Call Gemini Service to structure digital textbook note
-      const structuredBook = await window.geminiService.generateStructuredStudyBook({
-        topic,
-        subject: effectiveSubject,
-        rawText: combinedSourceText,
-        files: this.newFiles,
-        // Empty string keeps the original "notes on everything" behaviour.
-        focus,
-        onProgress: (status) => {
-          app.handleGenerationProgress(status);
-        }
-      });
-      structuredBook.subject = effectiveSubject;
-      // saveNewNote() writes a fixed allow-list, so this has to be set on the
-      // object it receives or it is dropped without a warning.
-      structuredBook.focusInstruction = focus;
-
-      // Preserve original source explicitly
-      structuredBook.originalSource = {
-        text: combinedSourceText,
-        files: this.newFiles.map(f => ({ name: f.name, type: f.type, size: f.size })),
-        importedAt: new Date().toISOString()
-      };
-
-      // Guarantee authentic 40% Deep-Dive Summary is present before saving
-      if (!structuredBook.summary || !structuredBook.summary.sectionBreakdowns || structuredBook.summary.sectionBreakdowns.length === 0) {
-        structuredBook.summary = window.geminiService.generateFallbackComprehensiveSummary({
-          title: structuredBook.title,
-          subject: structuredBook.subject,
-          sections: structuredBook.sections || [],
-          content: combinedSourceText
-        });
-      }
-
-      // Save structured note to IndexedDB
-      const noteId = await saveNewNote(structuredBook);
-
-      app.handleGenerationProgress({
-        message: 'Digital Textbook Ready! ✨',
-        badgeText: 'Complete',
-        countText: '100% Progress • Opening your study note...',
-        percent: 100,
-        showBatchCard: true,
-        stepId: 'step-crafting',
-        completedStepId: 'step-crafting'
-      });
-
-      await new Promise(r => setTimeout(r, 400));
-      app.endGeneration();
-
-      this.isCreating = false;
-      this.newFiles = [];
-      this.manualText = '';
-      // The focus is intentionally KEPT. Building several scoped notes from
-      // different files with the same instruction is the common case, and
-      // clearing it would silently turn the next run into a full-notes run.
-      if (window.audioEngine) window.audioEngine.playFanfare();
-      app.showToast(
-        focus
-          ? `Focused notes ready — only "${focus}" ✨`
-          : 'Digital Textbook Study Note Ready! ✨',
-        'success'
-      );
-
-      // Open directly in reading view!
-      await this.openNote(noteId);
-
-    } catch (err) {
-      app.endGeneration();
-      this.isCreating = false;
-      this.render();
-
-      // Cancelling already told the user; don't also report it as a failure.
-      if (app.isGenerationCancelled() || err.name === 'AbortError') return;
-
-      console.error('Note creation failed:', err);
-
-      // A scoped request that matched nothing is not an error in the app — it is
-      // a real answer about the material, and the message already explains it.
-      // Reported as a warning, and at a length that can actually be read,
-      // because the alternative (silently saving unscoped notes) is worse.
-      if (err && err.code === 'SCOPE_NO_MATCH') {
-        app.showToast(err.message, 'warning');
-        return;
-      }
-
-      app.showToast(`Creation error: ${err.message}`, 'error');
-    }
+      const identity=JSON.stringify({manual,files:files.map(item=>[item.name,item.size,item.file.lastModified,item.fromPage,item.toPage])});
+      const extracted=this._sourcePages?.identity===identity?this._sourcePages:await this._extractSources(files,manual,controller);
+      this._sourcePages={...extracted,identity};this._checkRun(controller);
+      const combinedSourceText=extracted.pages.map(page=>`--- [${page.fileName}${page.page?' · PAGE '+page.page:''}] ---\n${page.text}`).join('\n\n');
+      const structuredBook=await window.geminiService.generateStructuredStudyBook({topic,subject,rawText:combinedSourceText,files,focus,sourcePages:extracted.pages,settings,retryState:this._retryState,signal:controller.signal,onProgress:status=>app.handleGenerationProgress(status)});
+      structuredBook.focusInstruction=focus;
+      structuredBook.originalSource = { text: combinedSourceText, pages:extracted.pages,files:extracted.originals,importedAt:new Date().toISOString() };
+      this._checkRun(controller);const noteId=await saveNewNote(structuredBook);
+      app.handleGenerationProgress({message:'All selected source batches processed · note saved',percent:100,showBatchCard:true});
+      app.endGeneration();this.isCreating=false;this.newFiles=[];this.manualText='';this._retryState=null;this._sourcePages=null;
+      // The focus is intentionally KEPT when building another focused note.
+      app.showToast(structuredBook.metadata?.generatedByAI?'Your textbook is ready.':'Source organised locally; AI teaching has not been generated.','success');
+      if(version===this._viewVersion)await this.openNote(noteId);
+    }catch(err){
+      app.endGeneration();this.isCreating=false;
+      if(app.isGenerationCancelled()||err.name==='AbortError')return;
+      this._retryState=err.retryState||null;this._creationError={message:err.message,failures:err.failures};await this.render();
+      if(err.code==='SCOPE_NO_MATCH'){app.showToast(err.message,'warning');return;}
+      app.showToast(`Creation error: ${err.message}`,'error');
+    }finally{this._controllers.delete(controller);}
   }
 
-  // Duplicate / Star / Rename / Delete
   async duplicateNote(noteId) {
     const idNum = Number(noteId);
     const menu = document.getElementById(`card-menu-${idNum}`);
@@ -3559,9 +2769,11 @@ class StudyNotesView {
   }
 
   // Search & Filters
-  onSearchInput(q) {
-    this.searchQuery = q;
-    this.render();
+  onSearchInput(query) {
+    this.searchQuery = query;
+    const input = this.container?.querySelector('[data-notes-search]');
+    const start=input?.selectionStart,end=input?.selectionEnd;
+    this.render().then(()=>{const next=this.container?.querySelector('[data-notes-search]');if(next){next.focus();next.setSelectionRange(start??query.length,end??query.length);}});
   }
 
   clearSearch() {

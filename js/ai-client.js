@@ -153,6 +153,12 @@ class AIClient {
    * @returns {{today: Object, session: Object}}
    */
   getUsage() {
+    if (this._usage.date !== this._todayKey()) {
+      const session = this._usage.session;
+      this._usage = this._emptyUsage();
+      this._usage.session = session;
+      this._saveUsage();
+    }
     const { session, ...today } = this._usage;
     return { today, session };
   }
@@ -306,7 +312,7 @@ class AIClient {
 
   /**
    * POST a generateContent request.
-   * @param {string} model   e.g. 'gemini-2.5-flash'
+   * @param {string} model   e.g. 'gemini-3.6-flash'
    * @param {Object} payload { contents, generationConfig, ... }
    * @param {Object} options { signal, timeoutMs, apiKey }
    * @returns {Promise<Response>}
@@ -324,15 +330,25 @@ class AIClient {
       );
     }
 
-    const safeModel = String(model || 'gemini-2.5-flash').replace(/^models\//, '');
+    const safeModel = String(model || window.geminiService?.getActiveModel() || 'gemini-3.6-flash').replace(/^models\//, '');
+    let requestPayload = payload;
+    if (/^gemini-3[.-]/.test(safeModel) && payload?.generationConfig) {
+      // Gemini 3 migration guidance removes sampling overrides. Keep the
+      // caller's payload intact so retrying with another model is safe.
+      const generationConfig = { ...payload.generationConfig };
+      for (const parameter of ['temperature', 'topP', 'topK', 'candidateCount']) {
+        delete generationConfig[parameter];
+      }
+      requestPayload = { ...payload, generationConfig };
+    }
     const init = {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(requestPayload)
     };
 
     let response;
-    if (this.useProxy()) {
+    if (this.useProxy() && !options.forceDirect) {
       response = await this._request(`${this.PROXY_BASE}/${encodeURIComponent(safeModel)}`, init, options);
     } else {
       const key = (options.apiKey || this.getUserKey()).trim();
@@ -357,7 +373,7 @@ class AIClient {
   async fetchListModels(options = {}) {
     await this.probeServerKey();
 
-    if (this.useProxy()) {
+    if (this.useProxy() && !options.forceDirect) {
       return this._request(`${this.PROXY_BASE}/models`, { method: 'GET' }, options);
     }
 

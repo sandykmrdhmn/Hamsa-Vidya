@@ -1,6 +1,6 @@
 /* ==========================================================================
    ai-teacher.css — part 03-loading.css
-   Holographic neural-mind waiting screen
+   Compact, theme-matched processing card
 
    Extracted from the original 4868-line ai-teacher.css
    (source lines 1119-1556).
@@ -10,23 +10,24 @@
    ========================================================================== */
 
 /* ==========================================================================
-   ULTRA-PREMIUM HOLOGRAPHIC AI NEURAL MIND WAITING SCREEN
+   COMPACT AI TEACHER PROCESSING CARD
    ========================================================================== */
 .teacher-loading-card {
-  background: linear-gradient(145deg, rgba(15, 23, 42, 0.85) 0%, rgba(13, 20, 36, 0.95) 100%);
-  border: 1px solid rgba(16, 185, 129, 0.3);
-  border-radius: var(--radius-2xl);
-  padding: 3rem 2rem;
-  text-align: center;
+  background: linear-gradient(120deg,
+    color-mix(in srgb, var(--color-primary) 5%, transparent),
+    color-mix(in srgb, var(--color-accent) 3%, transparent)), var(--bg-card);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 18%, var(--border-color));
+  border-radius: var(--radius-xl);
+  padding: 1.15rem 1.35rem;
+  text-align: left;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 1.5rem;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), 0 0 30px rgba(16, 185, 129, 0.12);
+  gap: 0.75rem;
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm), 0 5px 20px rgba(0, 0, 0, 0.04);
   position: relative;
   overflow: hidden;
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  isolation: isolate;
 }
 
 /* Top Laser Scan Line */
@@ -49,21 +50,21 @@
 .loading-ambient-mesh {
   position: absolute;
   inset: 0;
-  background: radial-gradient(circle at 50% 25%, rgba(16, 185, 129, 0.12) 0%, transparent 60%),
-              radial-gradient(circle at 80% 80%, rgba(99, 102, 241, 0.1) 0%, transparent 50%);
+  z-index: -1;
+  background: radial-gradient(ellipse at 5% 0%,
+    color-mix(in srgb, var(--color-primary) 7%, transparent), transparent 60%);
   pointer-events: none;
 }
 
 /* Central Hologram Stage: AI Neural Mind + Hamsa Wisdom */
 .loading-hologram-stage {
   position: relative;
-  width: 168px;
-  height: 168px;
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
   display: flex;
   align-items: center;
   justify-content: center;
-  perspective: 800px;
-  margin: 0 auto;
 }
 
 /* 3D Gyroscope Orbital Rings */
@@ -115,13 +116,13 @@
 /* Core Mind Orb */
 .mind-core-orb {
   position: relative;
-  width: 114px;
-  height: 114px;
-  border-radius: var(--radius-full);
-  border: 2px solid rgba(56, 189, 248, 0.65);
-  box-shadow: 0 0 28px rgba(56, 189, 248, 0.45), inset 0 0 18px rgba(16, 185, 129, 0.35);
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--color-primary) 24%, var(--border-color));
+  box-shadow: 0 3px 12px color-mix(in srgb, var(--color-primary) 12%, transparent);
   overflow: hidden;
-  background: #000000;
+  background: var(--bg-surface);
   z-index: 2;
   display: flex;
   align-items: center;
@@ -146,9 +147,8 @@
   top: -15%;
   left: 0;
   right: 0;
-  height: 3px;
-  background: linear-gradient(90deg, transparent, #38BDF8, #10B981, transparent);
-  box-shadow: 0 0 12px #38BDF8;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, var(--color-primary-light), transparent);
   animation: laserScanVertical 2.2s ease-in-out infinite alternate;
   z-index: 3;
   pointer-events: none;
@@ -262,38 +262,45 @@
   100% { cx: 520; cy: 35; opacity: 1; }
 }
 
+/* Keep the animated brand mark beside the status instead of above it. */
+.teacher-loading-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  position: relative;
+}
+
 /* Loading Content Stack */
 .loading-text-stack {
   display: flex;
+  flex: 1;
+  min-width: 0;
   flex-direction: column;
-  align-items: center;
-  gap: 0.95rem;
-  width: 100%;
-  max-width: 680px;
-  margin: 0 auto;
+  align-items: flex-start;
+  gap: 0.4rem;
 }
 
 .loading-active-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.32rem 0.95rem;
+  gap: 0.4rem;
+  max-width: 100%;
+  padding: 0.28rem 0.65rem;
   border-radius: var(--radius-full);
-  background: rgba(16, 185, 129, 0.12);
-  border: 1px solid rgba(16, 185, 129, 0.35);
-  color: #10B981;
-  font-size: 0.78rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--bg-card));
+  border: 1px solid color-mix(in srgb, var(--color-primary) 16%, var(--border-color));
+  color: var(--color-primary-hover);
+  font-size: 0.73rem;
+  font-weight: 650;
+  line-height: 1.4;
 }
 
 .pulse-beacon {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
   border-radius: var(--radius-full);
-  background: #10B981;
-  box-shadow: 0 0 8px #10B981;
+  background: var(--color-primary-light);
   animation: beaconPulse 1.6s infinite ease-in-out;
 }
 
@@ -303,71 +310,70 @@
 }
 
 .loading-step-message {
-  font-size: 1.22rem;
-  font-weight: 700;
-  color: var(--text-primary);
-  text-align: center;
-  min-height: 2.2rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  text-align: left;
   line-height: 1.5;
   margin: 0;
+  overflow-wrap: anywhere;
   transition: opacity 0.25s ease;
 }
 
 /* High-Tech Animated Progress Laser Bar */
 .loading-progress-panel {
   width: 100%;
-  background: rgba(255, 255, 255, 0.025);
+  background: color-mix(in srgb, var(--bg-surface) 80%, transparent);
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  padding: 0.85rem 1.15rem;
+  border-radius: var(--radius-md);
+  padding: 0.6rem 0.8rem;
 }
 
 .progress-meta-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 0.55rem;
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  gap: 0.5rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.64rem;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  color: var(--text-secondary);
 }
 
 .progress-percent {
-  color: #38BDF8;
-  font-size: 0.9rem;
-  font-family: var(--font-family-mono);
-  font-weight: 800;
+  color: var(--text-primary);
+  font-size: 0.73rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  letter-spacing: 0;
 }
 
 .loading-progress-track {
   width: 100%;
-  height: 8px;
-  background: rgba(0, 0, 0, 0.45);
+  height: 5px;
+  background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-surface-elevated));
   border-radius: var(--radius-full);
-  overflow: visible;
+  overflow: hidden;
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
 .loading-bar-fill {
   height: 100%;
-  background: linear-gradient(90deg, #10B981 0%, #38BDF8 50%, #6366F1 100%);
+  background: linear-gradient(90deg, var(--color-primary), var(--color-primary-light), var(--color-accent));
   border-radius: var(--radius-full);
   position: relative;
   transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 0 14px rgba(56, 189, 248, 0.5);
 }
 
 .laser-spark-head {
   position: absolute;
-  right: -4px;
-  top: -4px;
-  bottom: -4px;
-  width: 10px;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 8px;
   border-radius: var(--radius-full);
-  background: #ffffff;
-  box-shadow: 0 0 10px #ffffff, 0 0 18px #38BDF8;
+  background: rgba(255, 255, 255, 0.7);
   animation: sparkPulse 1.2s infinite alternate ease-in-out;
 }
 
@@ -380,69 +386,114 @@
 .loading-stages-stepper {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   width: 100%;
-  gap: 0.35rem;
-  margin-top: 0.45rem;
+  gap: 0.4rem;
   flex-wrap: wrap;
 }
 
 .stage-step-pill {
   display: flex;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.32rem 0.65rem;
+  gap: 0.3rem;
+  padding: 0.25rem 0.55rem;
   border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--bg-card);
   border: 1px solid var(--border-color);
-  font-size: 0.74rem;
-  color: var(--text-muted);
-  font-weight: 600;
-  transition: all 0.35s ease;
+  font-size: 0.71rem;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  font-weight: 550;
+  transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
 }
 
 .stage-step-pill.active {
-  background: rgba(16, 185, 129, 0.16);
-  border-color: rgba(16, 185, 129, 0.5);
-  color: #10B981;
-  font-weight: 700;
-  box-shadow: 0 2px 10px rgba(16, 185, 129, 0.25);
-  transform: translateY(-1px);
+  background: color-mix(in srgb, var(--color-primary) 9%, var(--bg-card));
+  border-color: color-mix(in srgb, var(--color-primary) 26%, var(--border-color));
+  color: var(--color-primary-hover);
+  font-weight: 650;
 }
 
 .stage-step-pill.active .step-num {
-  background: #10B981;
+  background: var(--color-primary);
   color: #ffffff;
 }
 
 .step-num {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
   border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--bg-surface-elevated);
   color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.68rem;
+  font-size: 0.6rem;
 }
 
 .stage-step-divider {
   flex: 1;
   height: 1px;
-  background: rgba(255, 255, 255, 0.1);
-  min-width: 6px;
+  background: var(--border-color);
+  min-width: 4px;
 }
 
 .loading-wisdom-quote {
-  font-size: 0.84rem;
-  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
   font-style: normal;
-  margin-top: 0.35rem;
+  margin: 0;
 }
 
 .loading-wisdom-quote em {
-  color: var(--color-gold);
+  color: var(--color-primary-hover);
   font-style: normal;
   font-weight: 600;
+}
+
+/* Match the surrounding tab in dark themes without using a fixed dark surface. */
+:is([data-theme="DARK"], [data-theme="MIDNIGHT_BLUE"], [data-theme="CHARCOAL"]) .teacher-loading-card {
+  background-color: var(--bg-surface-elevated);
+}
+
+:is([data-theme="DARK"], [data-theme="MIDNIGHT_BLUE"], [data-theme="CHARCOAL"]) .teacher-loading-card :is(.loading-active-badge, .stage-step-pill.active, .loading-wisdom-quote em) {
+  color: var(--text-primary);
+}
+
+@media (max-width: 640px) {
+  .teacher-loading-card {
+    padding: 1rem;
+    gap: 0.65rem;
+  }
+
+  .teacher-loading-header {
+    gap: 0.65rem;
+  }
+
+  .loading-hologram-stage {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .mind-core-orb {
+    width: 42px;
+    height: 42px;
+    border-radius: var(--radius-md);
+  }
+
+  .loading-active-badge { font-size: 0.69rem; }
+  .loading-step-message { font-size: 0.83rem; }
+  .stage-step-divider { display: none; }
+  .stage-step-pill { padding-inline: 0.45rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .teacher-loading-card *,
+  .teacher-loading-card *::before,
+  .teacher-loading-card *::after {
+    animation: none !important;
+    transition: none !important;
+  }
 }

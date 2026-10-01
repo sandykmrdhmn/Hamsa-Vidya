@@ -90,6 +90,10 @@ class CreateQuizView {
   }
 
   async render() {
+    const preferredLanguage = window.studyPreferences?.get().language;
+    if (preferredLanguage) {
+      window.studyPreferences.applyDefaults(this, { selectedLanguage: preferredLanguage === 'AUTO' ? 'ENGLISH' : preferredLanguage === 'HINGLISH' ? 'BILINGUAL' : preferredLanguage }, '_studyDefaults');
+    }
     if (!this.container) return;
 
     const heroHtml = await this._buildHero();

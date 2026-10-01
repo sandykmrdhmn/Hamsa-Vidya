@@ -14,6 +14,9 @@ const path = require('path');
 const SUITES = [
   { file: 'syntax-check.js', label: 'Syntax (all JS parses)' },
   { file: 'verify-ai-client.js', label: 'AI transport + API key safety' },
+  { file: 'verify-gemini-models.js', label: 'Gemini default + free-tier fallback + request compatibility' },
+  { file: 'verify-settings.js', label: 'Settings credentials, rendering, accessibility and data actions' },
+  { file: 'verify-ai-teacher.js', label: 'AI Teacher correctness + lifecycle + persistence' },
   { file: 'verify-backup.js', label: 'Backup / restore / rollback' },
   { file: 'verify-quiz-scoring.js', label: 'Marking scheme + timer + resume' },
   { file: 'verify-data-honesty.js', label: 'Data provenance + eligibility + attempts' },
@@ -33,6 +36,7 @@ const SUITES = [
   { file: 'verify-auth-gate.js', label: 'Pre-app login gate + social footer' },
   { file: 'verify-quiz-timer.js', label: 'Custom exam time limit' },
   { file: 'verify-library-bookmarks.js', label: 'Saved questions reach the Library, by subject' },
+  { file: 'verify-study-notes.js', label: 'Study Notes editing, coverage, revision, sources and practice' },
   { file: 'verify-notes-focus.js', label: 'Study Notes extraction scope ("only …")' },
 ];
 

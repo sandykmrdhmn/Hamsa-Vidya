@@ -8,14 +8,16 @@
 class AiTeacherView {
   constructor() {
     this.container = document.getElementById('view-ai-teacher');
+    this._advancedPanelOpen = false;
+    this._mentorshipIntent = 'question';
     this.activeTab = 'studio'; // 'studio', 'bookmarks', 'history'
 
     // Form & Controls State
     this.questionInput = '';
     this.selectedLanguage = 'BILINGUAL'; // 'BILINGUAL', 'HINDI', 'HINGLISH', 'ENGLISH'
-    this.selectedDepth = 'DETAILED'; // 'QUICK', 'STANDARD', 'DETAILED', 'DEEP_DIVE'
+    this.selectedDepth = 'DETAILED'; // Shared preferences can request concise or detailed teaching.
     this.selectedMode = 'STUDENT'; // 'STUDENT', 'EXAM'
-    this.selectedEducationLevel = 'AUTO'; // 'AUTO', 'CLASS_6', 'CLASS_10', 'CLASS_12_SCIENCE', 'UPSC', 'COLLEGE'
+    this.selectedEducationLevel = 'AUTO'; // 'AUTO','CLASS_6_8','CLASS_9_10','CLASS_11_12','CLASS_12_SCIENCE','SSC_CGL','BANKING_RAILWAY','UPSC','COLLEGE','ADVANCED'
 
     // Attachments
     this.attachedImage = null;
@@ -27,6 +29,14 @@ class AiTeacherView {
     this.currentRecordId = null;
     this.isBookmarked = false;
     this.isLoading = false;
+
+    this.advancedModes = {
+      socratic: false,
+      teachBack: false,
+      mindmap: false,
+      debate: false,
+      connections: false
+    };
     this.loadingMessageIndex = 0;
     this.loadingInterval = null;
 
@@ -46,12 +56,27 @@ class AiTeacherView {
     // Vault Filter State
     this.vaultSearchQuery = '';
     this.vaultSubjectFilter = 'ALL';
+    this._requestVersion = 0;
+    this._requestControllers = new Set();
+    this._renderVersion = 0;
+    this._tabRenderVersion = 0;
+    this._vaultVersion = 0;
+    this._attachmentVersion = 0;
+    this._saveQueue = Promise.resolve();
+    this._lessonQuestion = null;
+    this._lessonSettings = null;
+    this._recordCreatedAt = null;
+
   }
 
   /**
    * Main render entry point
    */
   async render() {
+    if (!this.isLoading && !this.currentExplanation) {
+      window.studyPreferences?.applyDefaults(this, window.studyPreferences.teacherDefaults(), '_studyDefaults');
+    }
+    const renderVersion = ++this._renderVersion;
     this.container = document.getElementById('view-ai-teacher');
     if (!this.container) return;
 
@@ -64,21 +89,22 @@ class AiTeacherView {
       console.warn('AI Teacher stats unavailable:', e);
     }
 
+    if (renderVersion !== this._renderVersion) return;
     this.container.innerHTML = `
       <div class="ai-teacher-container">
         ${this._buildHeroHTML(stats)}
 
         <!-- Sub-Navigation Bar -->
         <nav class="teacher-tabs-nav" role="tablist">
-          <button class="teacher-tab-btn ${this.activeTab === 'studio' ? 'active' : ''}" onclick="window.aiTeacherView.setTab('studio')">
+          <button role="tab" aria-selected="${this.activeTab === 'studio'}" class="teacher-tab-btn ${this.activeTab === 'studio' ? 'active' : ''}" onclick="window.aiTeacherView.setTab('studio')">
             <i data-lucide="sparkles" style="width:16px;height:16px;"></i>
             <span>Explain Studio</span>
           </button>
-          <button class="teacher-tab-btn ${this.activeTab === 'bookmarks' ? 'active' : ''}" onclick="window.aiTeacherView.setTab('bookmarks')">
+          <button role="tab" aria-selected="${this.activeTab === 'bookmarks'}" class="teacher-tab-btn ${this.activeTab === 'bookmarks' ? 'active' : ''}" onclick="window.aiTeacherView.setTab('bookmarks')">
             <i data-lucide="bookmark" style="width:16px;height:16px;"></i>
             <span>Saved Lessons</span>
           </button>
-          <button class="teacher-tab-btn ${this.activeTab === 'history' ? 'active' : ''}" onclick="window.aiTeacherView.setTab('history')">
+          <button role="tab" aria-selected="${this.activeTab === 'history'}" class="teacher-tab-btn ${this.activeTab === 'history' ? 'active' : ''}" onclick="window.aiTeacherView.setTab('history')">
             <i data-lucide="history" style="width:16px;height:16px;"></i>
             <span>Recent History</span>
           </button>
@@ -89,8 +115,10 @@ class AiTeacherView {
       </div>
     `;
 
-    this._renderActiveTabContent();
+    await this._renderActiveTabContent();
+    if (renderVersion !== this._renderVersion) return;
     if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
   }
 
   /**
@@ -121,8 +149,9 @@ class AiTeacherView {
       <header class="teacher-hero">
         <!-- Decorative only; hidden from assistive tech -->
         <div class="teacher-hero-aurora" aria-hidden="true">
-          <span class="hero-orb hero-orb-1"></span>
-          <span class="hero-orb hero-orb-2"></span>
+          <span class="vhero-rays"></span>
+          <span class="hero-orb hero-orb-1 vhero-orb vhero-orb-1"></span>
+          <span class="hero-orb hero-orb-2 vhero-orb vhero-orb-2"></span>
           <span class="hero-orb hero-orb-3"></span>
         </div>
         <div class="teacher-hero-grid-overlay" aria-hidden="true"></div>
@@ -136,7 +165,7 @@ class AiTeacherView {
 
           <h1 class="teacher-hero-title">
             <span class="hero-title-line">Understand anything,</span>
-            <span class="hero-title-line hero-title-accent">step by step.</span>
+            <span class="hero-title-line hero-title-accent vhero-title-accent" data-text="step by step.">step by step.</span>
           </h1>
 
           <p class="teacher-hero-subtitle">
@@ -168,7 +197,7 @@ class AiTeacherView {
           <div class="teacher-hero-deliverables">
             <div class="deliverables-heading">
               <i data-lucide="sparkles" style="width:13px;height:13px;"></i>
-              <span>Every answer includes</span>
+              <span>Learn with</span>
             </div>
             <div class="deliverables-grid">
               ${deliverables.map(d => `
@@ -185,6 +214,10 @@ class AiTeacherView {
   }
 
   setTab(tabName) {
+    if (!['studio', 'bookmarks', 'history'].includes(tabName)) return;
+    this._vaultVersion++;
+    clearTimeout(this._vaultSearchTimer);
+    this.stopVoiceInput();
     this.activeTab = tabName;
     // Stop any ongoing speech
     this.stopSpeech();
@@ -192,19 +225,133 @@ class AiTeacherView {
   }
 
   async _renderActiveTabContent() {
+    this._captureNotebookSections();
+    const version = ++this._tabRenderVersion;
+    this._vaultVersion++;
     const target = document.getElementById('teacher-tab-content');
     if (!target) return;
-
-    if (this.activeTab === 'studio') {
-      target.innerHTML = this._buildStudioHTML();
-      this._bindStudioEvents();
-    } else if (this.activeTab === 'bookmarks') {
-      target.innerHTML = await this._buildVaultHTML(true);
-    } else if (this.activeTab === 'history') {
-      target.innerHTML = await this._buildVaultHTML(false);
+    const tab = this.activeTab;
+    let html;
+    try {
+      html = tab === 'studio' ? this._buildStudioHTML() : await this._buildVaultHTML(tab === 'bookmarks');
+    } catch (error) {
+      if (version === this._tabRenderVersion) window.app?.showToast('Could not load saved lessons. Please retry.', 'error');
+      return;
     }
+    if (version !== this._tabRenderVersion || tab !== this.activeTab || target !== document.getElementById('teacher-tab-content')) return;
+    target.innerHTML = html;
+    if (tab === 'studio') this._bindStudioEvents();
+    this._refreshIcons();
+  }
 
-    if (window.lucide) window.lucide.createIcons();
+  _refreshIcons() {
+    if (window.app?.refreshIcons) window.app.refreshIcons();
+    else if (window.lucide) window.lucide.createIcons();
+  }
+
+  _createRequestController() {
+    const controller = new AbortController();
+    this._requestControllers.add(controller);
+    return controller;
+  }
+
+  _cancelRequests() {
+    this._requestVersion++;
+    this._renderVersion++;
+    this._tabRenderVersion++;
+    this._vaultVersion++;
+    this._attachmentVersion++;
+    for (const controller of this._requestControllers) controller.abort();
+    this._requestControllers.clear();
+    this.isLoading = false;
+    this.isFollowUpLoading = false;
+    this._simplifying = false;
+    this._exampleLoading = false;
+    this._stopLoadingCycle();
+    this._mentorshipIntent = 'question';
+    this._setStudioBusy(false);
+  }
+
+  stopVoiceInput() {
+    this.isListeningVoice = false;
+    if (this.recognition) {
+      this.recognition.onresult = null;
+      this.recognition.onstart = null;
+      this.recognition.onerror = null;
+      this.recognition.onend = null;
+      try { this.recognition.abort(); } catch { /* already stopped */ }
+      this.recognition = null;
+    }
+  }
+
+  onLeaveView() {
+    this._cancelRequests();
+    clearTimeout(this._vaultSearchTimer);
+    this.stopVoiceInput();
+    this.stopSpeech();
+    this.closeDiagramModal();
+  }
+
+  _setStudioBusy(busy) {
+    const content = document.getElementById('teacher-tab-content');
+    content?.querySelectorAll('textarea, select, input, button').forEach(control => {
+      if (control.classList.contains('pill-clear')) return;
+      if (busy && !control.disabled) {
+        control.dataset.teacherBusy = 'true';
+        control.disabled = true;
+      } else if (!busy && control.dataset.teacherBusy) {
+        control.disabled = false;
+        delete control.dataset.teacherBusy;
+      }
+    });
+  }
+
+  async _refreshStats() {
+    if (typeof getAiTeacherStats !== 'function') return;
+    const version = this._renderVersion;
+    try {
+      const stats = await getAiTeacherStats();
+      const hero = this.container?.querySelector('.teacher-hero');
+      if (hero && version === this._renderVersion) hero.outerHTML = this._buildHeroHTML(stats);
+    } catch (error) { console.warn('AI Teacher stats unavailable:', error); }
+  }
+
+  _lessonRecord() {
+    const settings = this._lessonSettings || {
+      language: this.selectedLanguage, depth: this.selectedDepth,
+      mode: this.selectedMode, educationLevel: this.selectedEducationLevel,
+      advancedModes: { ...this.advancedModes }
+    };
+    return {
+      question: this._lessonQuestion || this.questionInput,
+      topic: this.currentExplanation.topic || this._lessonQuestion || this.questionInput,
+      subject: this.currentExplanation.subject || 'General', ...settings,
+      structuredData: this.currentExplanation, followUpHistory: this.followUpHistory,
+      isBookmarked: this.isBookmarked, createdAt: this._recordCreatedAt || new Date().toISOString()
+    };
+  }
+
+  _sourceLabel() {
+    const source = this.currentExplanation?.generation?.source;
+    if (source === 'BUILTIN_PEDAGOGICAL_ENGINE') return 'Built-in lesson';
+    if (source === 'GEMINI_AI') return 'AI generated • check course sources';
+    return 'Source unavailable • check course sources';
+  }
+
+  _persistCurrentLesson() {
+    if (!this.currentExplanation) return Promise.resolve();
+    const version = this._requestVersion;
+    const snapshot = JSON.parse(JSON.stringify(this._lessonRecord()));
+    const save = this._saveQueue.then(async () => {
+      if (version !== this._requestVersion) return;
+      const id = await saveAiTeacherExplanation({ ...snapshot, id: this.currentRecordId });
+      if (version === this._requestVersion) {
+        this.currentRecordId = id;
+        this._recordCreatedAt = snapshot.createdAt;
+      }
+    });
+    this._saveQueue = save.catch(() => {});
+    return save;
   }
 
   // =========================================================================
@@ -260,11 +407,15 @@ class AiTeacherView {
             <div class="hud-select-wrapper">
               <select id="teacher-level-select" class="hud-level-select" onchange="window.aiTeacherView.setEducationLevel(this.value)">
                 <option value="AUTO" ${this.selectedEducationLevel === 'AUTO' ? 'selected' : ''}>🎯 Auto (From Student Profile)</option>
-                <option value="CLASS_6" ${this.selectedEducationLevel === 'CLASS_6' ? 'selected' : ''}>🌱 Class 6 (Foundations & Story Analogies)</option>
-                <option value="CLASS_10" ${this.selectedEducationLevel === 'CLASS_10' ? 'selected' : ''}>📘 Class 10 (Board Exam & Balanced Equations)</option>
-                <option value="CLASS_12_SCIENCE" ${this.selectedEducationLevel === 'CLASS_12_SCIENCE' ? 'selected' : ''}>🔬 Class 12 Science (Biochemical Pathways & Derivations)</option>
-                <option value="UPSC" ${this.selectedEducationLevel === 'UPSC' ? 'selected' : ''}>🏛️ UPSC Aspirant (Policy, Ecology & GS-3 Blueprint)</option>
-                <option value="COLLEGE" ${this.selectedEducationLevel === 'COLLEGE' ? 'selected' : ''}>🎓 College / University (Academic Rigor & First Principles)</option>
+                <option value="CLASS_6_8" ${this.selectedEducationLevel === 'CLASS_6_8' ? 'selected' : ''}>🌱 Class 6–8 (Middle School)</option>
+                <option value="CLASS_9_10" ${this.selectedEducationLevel === 'CLASS_9_10' ? 'selected' : ''}>📘 Class 9–10 (Board Exam)</option>
+                <option value="CLASS_11_12" ${this.selectedEducationLevel === 'CLASS_11_12' ? 'selected' : ''}>📗 Class 11–12 (Senior Secondary)</option>
+                <option value="CLASS_12_SCIENCE" ${this.selectedEducationLevel === 'CLASS_12_SCIENCE' ? 'selected' : ''}>🔬 Class 12 Science (PCM/PCB)</option>
+                <option value="SSC_CGL" ${this.selectedEducationLevel === 'SSC_CGL' ? 'selected' : ''}>📋 SSC / CGL / CHSL</option>
+                <option value="BANKING_RAILWAY" ${this.selectedEducationLevel === 'BANKING_RAILWAY' ? 'selected' : ''}>🏦 Banking / Railway / Other Competitive</option>
+                <option value="UPSC" ${this.selectedEducationLevel === 'UPSC' ? 'selected' : ''}>🏛️ UPSC / State PSC</option>
+                <option value="COLLEGE" ${this.selectedEducationLevel === 'COLLEGE' ? 'selected' : ''}>🎓 College / University</option>
+                <option value="ADVANCED" ${this.selectedEducationLevel === 'ADVANCED' ? 'selected' : ''}>🧪 Advanced / Professional</option>
               </select>
               <i data-lucide="chevron-down" class="hud-select-arrow"></i>
             </div>
@@ -279,7 +430,7 @@ class AiTeacherView {
         <!-- Textarea -->
         <div class="teacher-textarea-wrapper">
           <textarea
-            id="ai-teacher-input"
+            id="ai-teacher-input" aria-label="Question or topic to explain"
             class="teacher-textarea"
             placeholder="Ask a question, paste a paragraph, or enter a problem..."
             onkeydown="window.aiTeacherView.handleKeydown(event)"
@@ -306,7 +457,7 @@ class AiTeacherView {
             <div class="attached-media-info">
               <span class="attached-media-name">📄 ${SecurityUtils.escapeHtml(this.attachedPdfMeta.fileName)}</span>
               <span style="font-size:0.75rem; color:var(--text-muted); display:block;">
-                Extracted ${this.attachedPdfMeta.pageCountSelected} page(s) (${this.attachedPdf.length} chars)
+                Pages ${this.attachedPdfMeta.fromPage}–${this.attachedPdfMeta.toPage} of ${this.attachedPdfMeta.totalPages} (${this.attachedPdf.length} chars)${this.attachedPdfMeta.totalPages > this.attachedPdfMeta.pageCountSelected ? ' • Only these pages are included' : ''}
               </span>
             </div>
             <button class="attached-media-remove" onclick="window.aiTeacherView.removeAttachedPdf()" title="Remove PDF">
@@ -346,62 +497,54 @@ class AiTeacherView {
             </div>
           </div>
 
-          <!-- Card 2: Explanation Depth -->
-          <div class="control-box">
-            <div class="control-box-header">
-              <div class="control-box-title">
-                <i data-lucide="sliders" style="width:15px;height:15px;color:var(--color-primary-light);"></i>
-                <span>Explanation Depth</span>
-              </div>
-              <span class="control-box-hint">Detail Level</span>
-            </div>
-            <div class="option-boxes-grid-2x2">
-              <button type="button" class="option-box-btn ${this.selectedDepth === 'QUICK' ? 'active' : ''}" onclick="window.aiTeacherView.setDepth('QUICK')" title="Quick: Concise summary">
-                <span class="opt-icon">⚡</span>
-                <span class="opt-label">Quick</span>
-              </button>
-              <button type="button" class="option-box-btn ${this.selectedDepth === 'STANDARD' ? 'active' : ''}" onclick="window.aiTeacherView.setDepth('STANDARD')" title="Standard: Normal student breakdown">
-                <span class="opt-icon">📖</span>
-                <span class="opt-label">Standard</span>
-              </button>
-              <button type="button" class="option-box-btn ${this.selectedDepth === 'DETAILED' ? 'active' : ''}" onclick="window.aiTeacherView.setDepth('DETAILED')" title="Detailed: Full masterclass with analogy & questions">
-                <span class="opt-icon">🎯</span>
-                <span class="opt-label">Detailed</span>
-              </button>
-              <button type="button" class="option-box-btn ${this.selectedDepth === 'DEEP_DIVE' ? 'active' : ''}" onclick="window.aiTeacherView.setDepth('DEEP_DIVE')" title="Deep Dive: Advanced nuances & prerequisites">
-                <span class="opt-icon">🔬</span>
-                <span class="opt-label">Deep Dive</span>
-              </button>
-            </div>
-          </div>
-
-          <!-- Card 3: Learning Mode -->
+          <!-- Card 2: Learning Mode -->
           <div class="control-box">
             <div class="control-box-header">
               <div class="control-box-title">
                 <i data-lucide="target" style="width:15px;height:15px;color:var(--color-primary-light);"></i>
                 <span>Learning Mode</span>
               </div>
-              <span class="control-box-hint">Pedagogical Goal</span>
+              <span class="control-box-hint">Teaching Style</span>
             </div>
             <div class="option-boxes-grid-mode">
-              <button type="button" class="option-box-btn mode-student-box ${this.selectedMode === 'STUDENT' ? 'active' : ''}" onclick="window.aiTeacherView.setMode('STUDENT')" title="Student Mode: High conceptual clarity & analogies">
+              <button type="button" class="option-box-btn mode-student-box ${this.selectedMode === 'STUDENT' ? 'active' : ''}" onclick="window.aiTeacherView.setMode('STUDENT')" title="Student Mode: Conceptual clarity & analogies">
                 <i data-lucide="sprout" style="width:16px;height:16px;"></i>
                 <span class="mode-info">
-                  <strong class="mode-title">Student Mode</strong>
-                  <small class="mode-sub">Intuitive Clarity</small>
+                  <strong class="mode-title">Student</strong>
+                  <small class="mode-sub">Clarity + Analogies</small>
                 </span>
               </button>
-              <button type="button" class="option-box-btn mode-exam-box ${this.selectedMode === 'EXAM' ? 'active' : ''}" onclick="window.aiTeacherView.setMode('EXAM')" title="Exam Mode: Keywords, high-yield facts & answer blueprint">
+              <button type="button" class="option-box-btn mode-exam-box ${this.selectedMode === 'EXAM' ? 'active' : ''}" onclick="window.aiTeacherView.setMode('EXAM')" title="Exam Mode: Keywords, facts & blueprint">
                 <i data-lucide="award" style="width:16px;height:16px;"></i>
                 <span class="mode-info">
-                  <strong class="mode-title">Exam Mode</strong>
-                  <small class="mode-sub">Scoring Blueprint</small>
+                  <strong class="mode-title">Exam</strong>
+                  <small class="mode-sub">Score + Strategy</small>
                 </span>
               </button>
             </div>
           </div>
         </div>
+
+        <!-- Native disclosure and labelled, keyboard-operable switches. -->
+        <details class="advanced-tools-panel" ${this._advancedPanelOpen || Object.values(this.advancedModes).some(Boolean) ? 'open' : ''} ontoggle="window.aiTeacherView._advancedPanelOpen=this.open">
+          <summary class="adv-tools-header">
+            <span><i data-lucide="sparkles" aria-hidden="true"></i> Advanced Mentorship Modes (Optional)</span>
+            <i data-lucide="chevron-down" class="adv-chevron-icon" aria-hidden="true"></i>
+          </summary>
+          <div class="adv-tools-body" id="adv-tools-body">
+            ${[
+              ['socratic', '🧠 Socratic Tutor', 'Think through guiding questions & hints'],
+              ['debate', '⚔️ Debate AI', 'Build arguments with evidence & counterpoints'],
+              ['mindmap', '🕸️ Mind Maps', 'Visual connections between the key ideas'],
+              ['connections', '🔗 Hamsa Connections', 'Useful links to other subjects'],
+              ['teachBack', '🎙️ Teach It Back', 'Explain in your words & get feedback']
+            ].map(([key, title, description]) => `<label class="adv-switch-card">
+              <input type="checkbox" id="teacher-mode-${key}" onchange="window.aiTeacherView.toggleAdvancedMode('${key}', this.checked)" ${this.advancedModes[key] ? 'checked' : ''}>
+              <span class="adv-switch-content"><strong>${title}</strong><small>${description}</small></span>
+              <span class="adv-toggle" aria-hidden="true"></span>
+            </label>`).join('')}
+          </div>
+        </details>
 
         <!-- Input Actions Toolbar -->
         <div class="teacher-input-actions">
@@ -484,6 +627,7 @@ class AiTeacherView {
   }
 
   _bindStudioEvents() {
+    this._setStudioBusy(this.isLoading);
     const ta = document.getElementById('ai-teacher-input');
     if (ta) {
       ta.addEventListener('input', (e) => {
@@ -517,6 +661,12 @@ class AiTeacherView {
     this._renderActiveTabContent();
   }
 
+  toggleAdvancedMode(mode, isActive) {
+    if (this.advancedModes && Object.hasOwn(this.advancedModes, mode)) {
+      this.advancedModes[mode] = isActive === true;
+    }
+  }
+
   setMode(mode) {
     const ta = document.getElementById('ai-teacher-input');
     if (ta) this.questionInput = ta.value;
@@ -532,17 +682,22 @@ class AiTeacherView {
     if (window.app) {
       const labels = {
         'AUTO': '🎯 Auto (From Student Profile)',
-        'CLASS_6': '🌱 Class 6 (Foundations & Story Analogies)',
-        'CLASS_10': '📘 Class 10 (Board Exam & Balanced Equations)',
-        'CLASS_12_SCIENCE': '🔬 Class 12 Science (Biochemical Pathways & Derivations)',
-        'UPSC': '🏛️ UPSC Aspirant (Policy, Ecology & GS-3 Blueprint)',
-        'COLLEGE': '🎓 College / University (Academic Rigor & First Principles)'
+        'CLASS_6_8': '🌱 Class 6–8 (Middle School)',
+        'CLASS_9_10': '📘 Class 9–10 (Board Exam)',
+        'CLASS_11_12': '📗 Class 11–12 (Senior Secondary)',
+        'CLASS_12_SCIENCE': '🔬 Class 12 Science (PCM/PCB)',
+        'SSC_CGL': '📋 SSC / CGL / CHSL',
+        'BANKING_RAILWAY': '🏦 Banking / Railway / Other',
+        'UPSC': '🏛️ UPSC / State PSC',
+        'COLLEGE': '🎓 College / University',
+        'ADVANCED': '🧪 Advanced / Professional'
       };
       window.app.showToast(`AI Teacher adapted to: ${labels[level] || level}`, 'info');
     }
   }
 
   fillAndExplain(text) {
+    if (this.isLoading) return;
     this.questionInput = text;
     const ta = document.getElementById('ai-teacher-input');
     if (ta) ta.value = text;
@@ -550,6 +705,15 @@ class AiTeacherView {
   }
 
   handleClear() {
+    this._cancelRequests();
+    this.stopVoiceInput();
+    this.closeDiagramModal();
+    this._releaseImagePreview();
+    this._lessonQuestion = null;
+    this._lessonSettings = null;
+    this.currentRecordId = null;
+    this._recordCreatedAt = null;
+    this.isBookmarked = false;
     this.questionInput = '';
     this.attachedImage = null;
     this.attachedPdf = null;
@@ -565,16 +729,24 @@ class AiTeacherView {
     const file = event.target.files?.[0];
     if (!file) return;
 
+    if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 1024 * 1024) {
+      window.app?.showToast('Use a PNG, JPEG or WebP image under 1 MB.', 'error');
+      event.target.value = '';
+      return;
+    }
+    this._releaseImagePreview();
     const previewUrl = URL.createObjectURL(file);
     this.attachedImage = { file, previewUrl };
     if (window.app) window.app.showToast(`Image "${file.name}" attached`, 'success');
     this._renderActiveTabContent();
   }
 
+  _releaseImagePreview() {
+    if (this.attachedImage?.previewUrl) URL.revokeObjectURL(this.attachedImage.previewUrl);
+  }
+
   removeAttachedImage() {
-    if (this.attachedImage?.previewUrl) {
-      URL.revokeObjectURL(this.attachedImage.previewUrl);
-    }
+    this._releaseImagePreview();
     this.attachedImage = null;
     this._renderActiveTabContent();
   }
@@ -583,20 +755,35 @@ class AiTeacherView {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    if (!window.pdfExtractor) {
+    if (!window.pdfExtractor || typeof PdfExtractorService === 'undefined') {
       if (window.app) window.app.showToast('PDF extractor not loaded', 'error');
       return;
     }
 
+    const version = ++this._attachmentVersion;
+    if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+      window.app?.showToast('Please choose a PDF document.', 'error');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      window.app?.showToast('Use a PDF under 20 MB.', 'error');
+      return;
+    }
     try {
       if (window.app) window.app.showToast('Loading and extracting PDF...', 'info');
-      await window.pdfExtractor.loadPdfFile(file);
-      const extracted = await window.pdfExtractor.extractTextFromPageRange(1, Math.min(window.pdfExtractor.metadata.pageCount, 5));
+      // Use a separate extractor so Teacher uploads cannot replace the Quiz document.
+      const extractor = new PdfExtractorService();
+      await extractor.loadPdfFile(file);
+      const extracted = await extractor.extractTextFromPageRange(1, Math.min(extractor.metadata.pageCount, 5));
+      if (version !== this._attachmentVersion) return;
+      if (!extracted.extractedPages.some(page => page.text.trim())) throw new Error('No readable text found. Scanned PDFs are not supported.');
+      if (extracted.text.length > 100000) throw new Error('The extracted text is too large. Use a smaller PDF.');
       this.attachedPdf = extracted.text;
       this.attachedPdfMeta = extracted;
-      if (window.app) window.app.showToast(`Extracted ${extracted.pageCountSelected} pages from "${file.name}"`, 'success');
+      if (window.app) window.app.showToast(`Attached pages 1–${extracted.toPage} of ${extracted.totalPages} from "${file.name}"${extracted.totalPages > 5 ? "; only the first 5 pages are included" : ""}`, 'success');
       this._renderActiveTabContent();
     } catch (e) {
+      if (version !== this._attachmentVersion) return;
       console.error(e);
       if (window.app) window.app.showToast(`Failed to parse PDF: ${e.message}`, 'error');
     }
@@ -617,6 +804,7 @@ class AiTeacherView {
         voiceBtn.classList.remove('active-recording');
         voiceBtn.innerHTML = `<i data-lucide="mic" style="width:15px;height:15px;"></i> <span>Voice</span>`;
         if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
       }
       return;
     }
@@ -625,7 +813,7 @@ class AiTeacherView {
       this.recognition = new SpeechRecognition();
       this.recognition.continuous = false;
       this.recognition.interimResults = false;
-      this.recognition.lang = this.selectedLanguage === 'HINDI' ? 'hi-IN' : 'en-IN';
+      this.recognition.lang = (this.selectedLanguage === 'HINDI' || this.selectedLanguage === 'BILINGUAL' || this.selectedLanguage === 'HINGLISH') ? 'hi-IN' : 'en-IN';
 
       this.recognition.onstart = () => {
         this.isListeningVoice = true;
@@ -634,6 +822,7 @@ class AiTeacherView {
           voiceBtn.classList.add('active-recording');
           voiceBtn.innerHTML = `<i data-lucide="mic-off" style="width:15px;height:15px;color:#EF4444;"></i> <span>Listening...</span>`;
           if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
         }
         if (window.app) window.app.showToast('🎤 Listening... Speak your question.', 'info');
       };
@@ -654,12 +843,14 @@ class AiTeacherView {
 
       this.recognition.onerror = (err) => {
         console.warn('Speech recognition error:', err);
+        window.app?.showToast(err.error === 'not-allowed' ? 'Microphone access was denied. Check browser permissions.' : 'Voice input failed. Please retry or type your question.', 'error');
         this.isListeningVoice = false;
         const voiceBtn = document.getElementById('teacher-voice-btn');
         if (voiceBtn) {
           voiceBtn.classList.remove('active-recording');
           voiceBtn.innerHTML = `<i data-lucide="mic" style="width:15px;height:15px;"></i> <span>Voice</span>`;
           if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
         }
       };
 
@@ -670,17 +861,20 @@ class AiTeacherView {
           voiceBtn.classList.remove('active-recording');
           voiceBtn.innerHTML = `<i data-lucide="mic" style="width:15px;height:15px;"></i> <span>Voice</span>`;
           if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
         }
       };
 
       this.recognition.start();
     } catch (e) {
       console.warn('Speech recognition start failed:', e);
+      window.app?.showToast('Voice input could not start. Please check microphone permissions.', 'error');
       this.isListeningVoice = false;
     }
   }
 
   removeAttachedPdf() {
+    this._attachmentVersion++;
     this.attachedPdf = null;
     this.attachedPdfMeta = null;
     this._renderActiveTabContent();
@@ -691,111 +885,112 @@ class AiTeacherView {
   // =========================================================================
 
   async handleExplain() {
+    if (this.isLoading) return;
     const ta = document.getElementById('ai-teacher-input');
-    const text = (ta ? ta.value : this.questionInput).trim();
-
+    const typed = (ta ? ta.value : this.questionInput).trim();
+    const text = typed || (this.attachedImage ? 'Explain the question or diagram in the attached image.'
+      : this.attachedPdf ? 'Explain the key concepts in the attached PDF pages.' : '');
     if (!text) {
-      if (window.app) window.app.showToast('Please type a question or problem to explain.', 'error');
+      window.app?.showToast('Please type a question or problem to explain.', 'error');
       return;
     }
-
+    this._cancelRequests();
+    const version = this._requestVersion;
+    const controller = this._createRequestController();
+    const settings = {
+      language: this.selectedLanguage, depth: this.selectedDepth,
+      mode: this.selectedMode, educationLevel: this.selectedEducationLevel,
+      advancedModes: { ...this.advancedModes }
+    };
+    const request = {
+      question: text, ...settings, imageFile: this.attachedImage?.file,
+      pdfContext: this.attachedPdf, signal: controller.signal
+    };
     this.questionInput = text;
-    this.isLoading = true;
+    this._lessonQuestion = text;
+    this._lessonSettings = settings;
+    this.currentExplanation = null;
+    this.currentRecordId = null;
+    this._recordCreatedAt = null;
+    this.isBookmarked = false;
     this.followUpHistory = [];
+    this.isLoading = true;
+    this.stopVoiceInput();
     this.stopSpeech();
+    this._setStudioBusy(true);
     this._startLoadingCycle();
     this._updateResultsDOM(this._buildLoadingHTML());
-
     try {
-      const response = await window.aiTeacherService.explain({
-        question: text,
-        language: this.selectedLanguage,
-        depth: this.selectedDepth,
-        mode: this.selectedMode,
-        educationLevel: this.selectedEducationLevel,
-        imageFile: this.attachedImage?.file,
-        pdfContext: this.attachedPdf
-      });
-
-      this.currentExplanation = response.data;
-      this.isBookmarked = false;
-
-      // Persist to IndexedDB History
+      const response = await window.aiTeacherService.explain(request);
+      if (version !== this._requestVersion || controller.signal.aborted) return;
+      const lesson = window.aiTeacherService.normalizeExplanation(response.data);
+      if (!lesson) throw new Error('AI returned an invalid lesson. Please retry.');
+      this.currentExplanation = lesson;
+      let saved = true;
       try {
-        const id = await saveAiTeacherExplanation({
-          question: text,
-          topic: this.currentExplanation.topic || text,
-          subject: this.currentExplanation.subject || 'General',
-          language: this.selectedLanguage,
-          depth: this.selectedDepth,
-          mode: this.selectedMode,
-          educationLevel: this.selectedEducationLevel,
-          structuredData: this.currentExplanation,
-          isBookmarked: false
-        });
-        this.currentRecordId = id;
-      } catch (dbErr) {
-        console.warn('Could not save explanation to DB history:', dbErr);
+        await this._persistCurrentLesson();
+      } catch (error) {
+        saved = false;
+        console.warn('Could not save explanation to history:', error);
+        if (version === this._requestVersion) window.app?.showToast('Lesson ready, but history could not be saved. Please try Save again.', 'warning');
       }
-
-      if (response.notice && window.app) {
-        window.app.showToast(response.notice, 'info');
-      } else if (window.app) {
-        window.app.showToast('Explanation ready! Let\'s understand.', 'success');
-      }
-
-    } catch (err) {
-      console.error('Explanation error:', err);
-      if (window.app) window.app.showToast(`Error: ${err.message}`, 'error');
+      if (version !== this._requestVersion || controller.signal.aborted) return;
+      if (saved) window.app?.showToast(response.notice || 'Explanation ready!', response.notice ? 'info' : 'success');
+      await this._refreshStats();
+    } catch (error) {
+      if (version !== this._requestVersion || controller.signal.aborted || error.name === 'AbortError') return;
+      console.error('Explanation error:', error);
+      window.app?.showToast(error.message, 'error');
     } finally {
-      this.isLoading = false;
-      this._stopLoadingCycle();
-      this._updateResultsDOM(this._buildResponseHTML());
-      if (window.lucide) window.lucide.createIcons();
-
-      // Scroll smoothly to explanation
-      const resEl = document.getElementById('teacher-results-container');
-      if (resEl) resEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      this._requestControllers.delete(controller);
+      if (version === this._requestVersion) {
+        this.isLoading = false;
+        this._stopLoadingCycle();
+        this._setStudioBusy(false);
+        this._updateResultsDOM(this._buildResponseHTML());
+        document.getElementById('teacher-results-container')?.scrollIntoView?.({ behavior: 'smooth', block: 'end' });
+      }
     }
   }
 
   _startLoadingCycle() {
+    this._stopLoadingCycle();
     const stages = [
       {
         step: 1,
-        title: "Deconstructing First Principles",
-        desc: "Analyzing question foundations, eliminating prerequisites & identifying core concepts...",
+        title: "Understanding your question",
+        desc: "Finding the key ideas and what needs explaining...",
         percent: 22
       },
       {
         step: 2,
-        title: "Pedagogical & Student Context Alignment",
-        desc: "Calibrating explanation depth for your student profile & preferred language...",
+        title: "Matching your learning style",
+        desc: "Adapting the depth and language for you...",
         percent: 45
       },
       {
         step: 3,
-        title: "Neural Mind & Analogy Engine",
-        desc: "Synthesizing relatable real-world analogies, mental models & everyday examples...",
+        title: "Finding helpful examples",
+        desc: "Choosing relatable examples and simple analogies...",
         percent: 68
       },
       {
         step: 4,
-        title: "Step-by-Step Logic & Math Derivations",
-        desc: "Structuring progressive logical reasoning, formulas, and deep-dive breakdowns...",
+        title: "Building a clear explanation",
+        desc: "Connecting each step, formula and reasoning...",
         percent: 86
       },
       {
         step: 5,
-        title: "Generating Visual Flowchart & Practice Studio",
-        desc: "Drafting visual SVG mind diagrams, common misconceptions & self-test questions...",
+        title: "Preparing visuals & practice",
+        desc: "Adding helpful diagrams and practice questions...",
         percent: 96
       }
     ];
 
     this.loadingStageIndex = 0;
     this.loadingInterval = setInterval(() => {
-      this.loadingStageIndex = (this.loadingStageIndex + 1) % stages.length;
+      this.loadingStageIndex = Math.min(this.loadingStageIndex + 1, stages.length - 1);
       const cur = stages[this.loadingStageIndex];
 
       const titleEl = document.getElementById('teacher-loading-step-title');
@@ -805,7 +1000,7 @@ class AiTeacherView {
       if (descEl) descEl.textContent = cur.desc;
 
       const pctEl = document.getElementById('teacher-loading-percent');
-      if (pctEl) pctEl.textContent = `${cur.percent}%`;
+      if (pctEl) pctEl.textContent = `Estimated ${cur.percent}%`;
 
       const fillEl = document.getElementById('teacher-loading-bar-fill');
       if (fillEl) fillEl.style.width = `${cur.percent}%`;
@@ -828,11 +1023,46 @@ class AiTeacherView {
     }
   }
 
+  _captureNotebookSections() {
+    if (this._notebookSectionsVersion !== this._requestVersion) return;
+    const result = document.getElementById('teacher-results-container');
+    if (!result || result.querySelector('.notebook-folio')?.dataset.notebookVersion !== String(this._requestVersion)) return;
+    this._notebookOpenSections = new Set([...result.querySelectorAll('details[data-notebook-section]')]
+      .filter(section => section.open).map(section => section.dataset.notebookSection));
+  }
+
+  _notebookSectionHTML(key, title, icon, content, count = '') {
+    if (this._notebookSectionsVersion !== this._requestVersion) {
+      this._notebookSectionsVersion = this._requestVersion;
+      this._notebookOpenSections = new Set(['flow', 'diagram']);
+    }
+    const escape = value => SecurityUtils.escapeHtml(String(value));
+    return `<details class="collapsible-section notebook-section" data-notebook-section="${escape(key)}" ${this._notebookOpenSections.has(key) ? 'open' : ''}>
+      <summary class="collapsible-header">
+        <i data-lucide="${escape(icon)}" style="width:15px;height:15px;"></i>
+        <span>${escape(title)}</span>
+        ${count ? `<span class="notebook-section-count">${escape(count)}</span>` : ''}
+        <i data-lucide="chevron-down" class="collapse-chevron" style="width:14px;height:14px;"></i>
+      </summary>
+      <div class="collapsible-body">${content}</div>
+    </details>`;
+  }
+
   _updateResultsDOM(html) {
     const resEl = document.getElementById('teacher-results-container');
     if (resEl) {
+      const sameLesson = resEl.querySelector('.notebook-folio')?.dataset.notebookVersion === String(this._requestVersion);
+      const composer = sameLesson ? resEl.querySelector('#followup-input-field') : null;
+      const draft = composer?.value || '';
+      this._captureNotebookSections();
       resEl.innerHTML = html;
+      const nextComposer = resEl.querySelector('#followup-input-field');
+      if (composer && nextComposer) nextComposer.value = draft;
+      resEl.querySelectorAll('details[data-notebook-section]').forEach(section => {
+        section.open = this._notebookOpenSections?.has(section.dataset.notebookSection) || false;
+      });
       if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
     }
   }
 
@@ -843,675 +1073,577 @@ class AiTeacherView {
   _buildLoadingHTML() {
     return `
       <div class="teacher-loading-card spotlight-card">
-        <!-- Ambient Glowing Laser Beam & Radiant Backdrop -->
-        <div class="loading-laser-glow"></div>
-        <div class="loading-ambient-mesh"></div>
+        <div class="loading-ambient-mesh" aria-hidden="true"></div>
 
-        <!-- Central Hologram Stage: AI Neural Mind + Hamsa Wisdom Emblem -->
-        <div class="loading-hologram-stage">
-          <!-- Concentric 3D Gyroscope Rings -->
-          <div class="mind-gyro-ring ring-outer"></div>
-          <div class="mind-gyro-ring ring-mid"></div>
-          <div class="mind-gyro-ring ring-inner"></div>
+        <div class="teacher-loading-header">
+          <div class="loading-hologram-stage">
+            <div class="mind-core-orb">
+              <div class="mind-scanner-beam"></div>
+              <img src="assets/icons/hamsa-logo-3d.png" alt="Hamsa" class="mind-core-img" onerror="this.src='assets/icons/hamsa-logo.svg'">
+            </div>
+          </div>
+          <div class="loading-text-stack">
+            <div class="loading-active-badge">
+              <span class="pulse-beacon"></span>
+              <span id="teacher-loading-step-title">Understanding your question</span>
+            </div>
+            <h3 id="teacher-loading-msg" class="loading-step-message">
+              Preparing a clear, step-by-step explanation for you...
+            </h3>
+          </div>
+        </div>
 
-          <!-- Pulsing Synaptic Core Orb with Generated AI Mind Visual -->
-          <div class="mind-core-orb">
-            <!-- Cybernetic Laser Scanner Sweep -->
-            <div class="mind-scanner-beam"></div>
-            
-            <!-- AI Power Mind Image -->
-            <img src="assets/icons/ai-neural-mind.jpg" 
-                 alt="AI Neural Mind & Hamsa Wisdom" 
-                 class="mind-core-img"
-                 onerror="this.src='assets/icons/hamsa-logo-3d.png'">
-                 
-            <!-- Floating Hamsa Sacred Brand Badge -->
-            <div class="mind-brand-badge" title="Hamsa Vidya Intellect Core">
-              <img src="assets/icons/hamsa-logo-3d.png" alt="Hamsa Logo" class="badge-hamsa-img" onerror="this.src='assets/icons/hamsa-logo.svg'">
-              <span class="badge-pulse-glow"></span>
+        <div class="loading-progress-panel">
+          <div class="progress-meta-row">
+            <span class="progress-label">Preparing your explanation</span>
+            <span id="teacher-loading-percent" class="progress-percent">22%</span>
+          </div>
+          <div class="loading-progress-track">
+            <div id="teacher-loading-bar-fill" class="loading-bar-fill" style="width: 22%;">
+              <div class="laser-spark-head"></div>
             </div>
           </div>
         </div>
 
-        <!-- High-Tech Animated Neural Energy Stream Lines ("aachi lines live motion") -->
-        <div class="neural-energy-lines-container" aria-hidden="true">
-          <svg class="neural-energy-svg" viewBox="0 0 700 70" preserveAspectRatio="none">
-            <defs>
-              <linearGradient id="neuralGrad1" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stop-color="#10B981" stop-opacity="0" />
-                <stop offset="30%" stop-color="#10B981" stop-opacity="0.9" />
-                <stop offset="50%" stop-color="#38BDF8" stop-opacity="1" />
-                <stop offset="70%" stop-color="#6366F1" stop-opacity="0.9" />
-                <stop offset="100%" stop-color="#6366F1" stop-opacity="0" />
-              </linearGradient>
-              <linearGradient id="neuralGrad2" x1="0%" y1="0%" x2="100%" y2="0%">
-                <stop offset="0%" stop-color="#6366F1" stop-opacity="0" />
-                <stop offset="35%" stop-color="#A855F7" stop-opacity="0.9" />
-                <stop offset="65%" stop-color="#10B981" stop-opacity="1" />
-                <stop offset="100%" stop-color="#10B981" stop-opacity="0" />
-              </linearGradient>
-            </defs>
-            <!-- Moving Dynamic Sinusoidal Waves with Dash Animation -->
-            <path class="synapse-stream-line stream-line-1" d="M 0 35 Q 175 5, 350 35 T 700 35" stroke="url(#neuralGrad1)" fill="none" stroke-width="2.5" />
-            <path class="synapse-stream-line stream-line-2" d="M 0 35 Q 175 65, 350 35 T 700 35" stroke="url(#neuralGrad2)" fill="none" stroke-width="2" />
-            <circle class="synapse-sparkle spark-1" r="3.5" fill="#38BDF8" />
-            <circle class="synapse-sparkle spark-2" r="3" fill="#10B981" />
-            <circle class="synapse-sparkle spark-3" r="3" fill="#A855F7" />
-          </svg>
+        <!-- Five compact processing stages -->
+        <div class="loading-stages-stepper">
+          <div class="stage-step-pill active" id="loading-stage-dot-1">
+            <span class="step-num">1</span>
+            <span class="step-name">Understand</span>
+          </div>
+          <div class="stage-step-divider"></div>
+          <div class="stage-step-pill" id="loading-stage-dot-2">
+            <span class="step-num">2</span>
+            <span class="step-name">Context</span>
+          </div>
+          <div class="stage-step-divider"></div>
+          <div class="stage-step-pill" id="loading-stage-dot-3">
+            <span class="step-num">3</span>
+            <span class="step-name">Teach</span>
+          </div>
+          <div class="stage-step-divider"></div>
+          <div class="stage-step-pill" id="loading-stage-dot-4">
+            <span class="step-num">4</span>
+            <span class="step-name">Derive</span>
+          </div>
+          <div class="stage-step-divider"></div>
+          <div class="stage-step-pill" id="loading-stage-dot-5">
+            <span class="step-num">5</span>
+            <span class="step-name">Verify</span>
+          </div>
         </div>
 
-        <!-- Loading Content Stack -->
-        <div class="loading-text-stack">
-          <div class="loading-active-badge">
-            <span class="pulse-beacon"></span>
-            <span id="teacher-loading-step-title">Deconstructing First Principles</span>
-          </div>
-
-          <h3 id="teacher-loading-msg" class="loading-step-message">
-            Analyzing question foundations, eliminating prerequisites & identifying core concepts...
-          </h3>
-
-          <!-- High-Tech Animated Progress Laser Bar -->
-          <div class="loading-progress-panel">
-            <div class="progress-meta-row">
-              <span class="progress-label">⚡ HAMSA NEURAL PEDAGOGY PIPELINE</span>
-              <span id="teacher-loading-percent" class="progress-percent">22%</span>
-            </div>
-            <div class="loading-progress-track">
-              <div id="teacher-loading-bar-fill" class="loading-bar-fill" style="width: 22%;">
-                <div class="laser-spark-head"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- 5-Stage Live Visual Pipeline Dots -->
-          <div class="loading-stages-stepper">
-            <div class="stage-step-pill active" id="loading-stage-dot-1">
-              <span class="step-num">1</span>
-              <span class="step-name">Query Analysis</span>
-            </div>
-            <div class="stage-step-divider"></div>
-            <div class="stage-step-pill" id="loading-stage-dot-2">
-              <span class="step-num">2</span>
-              <span class="step-name">Context Alignment</span>
-            </div>
-            <div class="stage-step-divider"></div>
-            <div class="stage-step-pill" id="loading-stage-dot-3">
-              <span class="step-num">3</span>
-              <span class="step-name">Analogy Engine</span>
-            </div>
-            <div class="stage-step-divider"></div>
-            <div class="stage-step-pill" id="loading-stage-dot-4">
-              <span class="step-num">4</span>
-              <span class="step-name">Logic Synthesis</span>
-            </div>
-            <div class="stage-step-divider"></div>
-            <div class="stage-step-pill" id="loading-stage-dot-5">
-              <span class="step-num">5</span>
-              <span class="step-name">Visual Studio</span>
-            </div>
-          </div>
-
-          <p class="loading-wisdom-quote">
-            ✨ <em>"विद्या ददाति विनयं विनयाद्याति पात्रताम्"</em> • Building clarity from fundamentals.
-          </p>
-        </div>
+        <p class="loading-wisdom-quote">
+          ✨ <em>"विद्या ददाति विनयं"</em> • Building clarity from fundamentals.
+        </p>
       </div>
     `;
+  }
+
+  _mindMapHTML(map) {
+    if (!map?.centralTopic || !Array.isArray(map.branches)) return '';
+    const escape = value => SecurityUtils.escapeHtml(value || '');
+    return `<div class="mentor-mindmap" role="group" aria-label="Mind map">
+      <div class="mentor-map-centre">${escape(map.centralTopic)}</div>
+      <ul class="mentor-map-branches">${map.branches.map(branch => `<li class="mentor-map-branch">
+        <strong>${escape(branch.title)}</strong><p>${escape(branch.detail)}</p>
+        ${(branch.children || []).length ? `<ul>${branch.children.map(child => `<li>${escape(child)}</li>`).join('')}</ul>` : ''}
+      </li>`).join('')}</ul>
+    </div>`;
+  }
+
+  _buildMentorshipHTML(exp) {
+    const escape = value => SecurityUtils.escapeHtml(value || '');
+    const paragraph = value => value ? `<p>${escape(value)}</p>` : '';
+    const list = values => `<ul>${(values || []).map(value => `<li>${escape(value)}</li>`).join('')}</ul>`;
+    const reply = (mode, label) => `<button type="button" class="mentor-reply-btn" ${this.isFollowUpLoading ? 'disabled' : ''} onclick="window.aiTeacherView.beginMentorshipReply('${mode}')">${label}</button>`;
+    let html = '';
+    if (exp.socraticTutor) {
+      const tutor = exp.socraticTutor;
+      html += this._notebookSectionHTML('socratic', 'Socratic Tutor · Think it through', 'brain', `<div class="mentor-card">
+        ${paragraph(tutor.learningGoal)}<p class="mentor-question">${escape(tutor.guidingQuestion)}</p>
+        <div class="mentor-hints">${(tutor.hints || []).map((hint, index) => `<details><summary>Hint ${index + 1}</summary>${paragraph(hint)}</details>`).join('')}</div>
+        ${reply('socratic', 'Share your reasoning')}
+      </div>`);
+    }
+    if (exp.debateCoach) {
+      const debate = exp.debateCoach;
+      html += this._notebookSectionHTML('debate', 'Debate AI · Reason with evidence', 'messages-square', `<div class="mentor-card">
+        <p class="mentor-question">${escape(debate.claim)}</p>
+        <div class="mentor-debate-grid"><div><h4>Supporting evidence</h4>${list(debate.supportingPoints)}</div>
+          <div><h4>Counterpoints & limitations</h4>${list(debate.counterPoints)}</div></div>
+        ${paragraph(debate.boundary)}<p class="mentor-question">${escape(debate.reflectionQuestion)}</p>
+        ${reply('debate', 'Present your argument')}
+      </div>`);
+    }
+    if (exp.mindMap || exp.mermaidMindmap) {
+      html += this._notebookSectionHTML('mindmap', 'Mind Map · Connect the ideas', 'network', exp.mindMap
+        ? this._mindMapHTML(exp.mindMap)
+        : `<div class="mentor-card"><p>Saved mind-map outline</p><pre class="mentor-map-outline">${escape(exp.mermaidMindmap)}</pre></div>`);
+    }
+    if (exp.hamsaConnections && Object.keys(exp.hamsaConnections).length) {
+      html += this._notebookSectionHTML('connections', 'Hamsa Connections · Across subjects', 'link', `<div class="mentor-connections">${Object.entries(exp.hamsaConnections).map(([subject, detail]) => `<div class="mentor-card"><h4>${escape(subject)}</h4>${paragraph(detail)}</div>`).join('')}</div>`);
+    }
+    if (exp.teachBackChallenge) {
+      html += this._notebookSectionHTML('teachback', 'Teach It Back · Explain in your words', 'mic', `<div class="mentor-card">
+        <p class="mentor-question">${escape(exp.teachBackChallenge)}</p>
+        ${(exp.teachBackCriteria || []).length ? `<h4>Your explanation should cover</h4>${list(exp.teachBackCriteria)}` : ''}
+        ${reply('teachBack', 'Explain it & get feedback')}
+      </div>`);
+    }
+    return html;
+  }
+
+  _replyComposer() {
+    return {
+      socratic: { label: 'Your Socratic reasoning', placeholder: 'Share your next step or tell me where you are stuck...' },
+      debate: { label: 'Your argument', placeholder: 'State your position and the evidence supporting it...' },
+      teachBack: { label: 'Your teach-back explanation', placeholder: 'Explain the idea in your own words, including the points above...' },
+      question: { label: 'Follow-up question', placeholder: 'Ask a doubt · Shift + Enter for a new line' }
+    }[this._mentorshipIntent] || { label: 'Follow-up question', placeholder: 'Ask a doubt about this topic...' };
+  }
+
+  beginMentorshipReply(mode) {
+    if (!this.currentExplanation || this.isLoading || this.isFollowUpLoading) return;
+    if (!['question', 'socratic', 'debate', 'teachBack'].includes(mode)) return;
+    if (mode !== 'question' && !window.aiTeacherService.lessonAdvancedModes(this.currentExplanation)[mode]) return;
+    const draft = document.getElementById('followup-input-field')?.value || '';
+    this._mentorshipIntent = mode;
+    this._updateResultsDOM(this._buildResponseHTML());
+    const input = document.getElementById('followup-input-field');
+    if (input) {
+      input.value = draft;
+      input.focus();
+      input.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }
   }
 
   _buildResponseHTML() {
     const exp = this.currentExplanation;
     if (!exp) return '';
+    if (this._notebookSectionsVersion !== this._requestVersion) {
+      this._notebookSectionsVersion = this._requestVersion;
+      this._notebookOpenSections = new Set(['flow', 'diagram']);
+      const modes = window.aiTeacherService.lessonAdvancedModes(exp);
+      for (const [mode, section] of [['socratic', 'socratic'], ['debate', 'debate'], ['mindmap', 'mindmap'], ['connections', 'connections'], ['teachBack', 'teachback']]) {
+        if (modes[mode]) this._notebookOpenSections.add(section);
+      }
+    }
+
+    // Extract questionAnalysis if available (from new AI schema)
+    const qa = exp.questionAnalysis || {};
+    const analysisSubject = qa.subject || exp.subject || 'General';
+    const analysisTopic = qa.topic || exp.topic || '';
+    const analysisType = qa.questionType || '';
+    const analysisDiff = qa.difficulty || exp.difficulty || '';
+    const analysisExamRel = qa.examRelevance || '';
+    const analysisSubtopic = qa.subtopic || '';
+
+    // Helper: determine if a section has meaningful content
+    const hasMath = exp.mathSolution && (exp.isMath || exp.mathSolution.formula || exp.mathSolution.calculationSteps?.length || exp.mathSolution.finalAnswer);
+    const hasWhyHow = exp.whyAndHow && (exp.whyAndHow.why || exp.whyAndHow.how);
+    const hasSteps = exp.steps && exp.steps.length > 0;
+    const hasAnalogy = exp.analogy?.analogyText;
+    const hasExamples = exp.examples && exp.examples.length > 0;
+    const hasFlowchart = exp.flowchart && exp.flowchart.nodes && exp.flowchart.nodes.length > 0;
+    const hasDiagram = exp.diagram && exp.diagram.svgContent;
+    const hasComparison = exp.comparison && exp.comparison.headers && exp.comparison.rows && exp.comparison.rows.length > 0;
+    const hasMistakes = exp.commonMistakes && exp.commonMistakes.length > 0;
+    const hasMemoryTrick = exp.memoryTrick && exp.memoryTrick.mnemonic;
+    const hasExamPoints = exp.examPoints && (exp.examPoints.highYieldPoints?.length || exp.examPoints.expectedAnswerStructure);
+    const hasSummary = exp.summary && exp.summary.length > 0;
+    const hasPractice = exp.practiceQuestions && exp.practiceQuestions.length > 0;
+    const hasSources = exp.sources && exp.sources.length > 0;
+    const hasFollowUp = exp.followUpSuggestions && exp.followUpSuggestions.length > 0;
+    const mathHTML = hasMath ? `
+            <div class="math-board-block">
+              <div class="math-board-header">
+                <span class="math-board-badge">📐 Math Solution</span>
+                <span class="math-verified-tag">Solution steps</span>
+              </div>
+              <div class="math-given-find-grid">
+                ${exp.mathSolution.given ? `<div class="math-pill"><span class="math-pill-lbl">Given:</span> <span>${SecurityUtils.escapeHtml(exp.mathSolution.given)}</span></div>` : ''}
+                ${exp.mathSolution.toFind ? `<div class="math-pill"><span class="math-pill-lbl">Find:</span> <span>${SecurityUtils.escapeHtml(exp.mathSolution.toFind)}</span></div>` : ''}
+              </div>
+              ${exp.mathSolution.formula ? `
+                <div class="math-formula-callout"><span class="math-formula-lbl">FORMULA:</span>
+                  <div class="math-formula-display">${SecurityUtils.escapeHtml(exp.mathSolution.formula)}</div>
+                  ${exp.mathSolution.formulaExplanation ? `<div class="math-formula-desc">${SecurityUtils.escapeHtml(exp.mathSolution.formulaExplanation)}</div>` : ''}
+                </div>
+              ` : ''}
+              ${exp.mathSolution.calculationSteps?.length ? this._notebookSectionHTML('calculation', 'Worked solution — every step explained', 'list-ordered', `
+                <table class="math-steps-table"><tbody>
+                  ${exp.mathSolution.calculationSteps.map(cs => `<tr><td class="math-step-col">${SecurityUtils.escapeHtml(cs.math || cs.step)}</td><td class="math-desc-col">${SecurityUtils.escapeHtml(cs.explanation || '')}</td></tr>`).join('')}
+                </tbody></table>
+              `, exp.mathSolution.calculationSteps.length + ' steps') : ''}
+              ${exp.mathSolution.finalAnswer ? `
+                <div class="math-final-banner">
+                  <span class="math-final-lbl">ANSWER:</span>
+                  <span class="math-final-val">${SecurityUtils.escapeHtml(exp.mathSolution.finalAnswer)} ${SecurityUtils.escapeHtml(exp.mathSolution.units || '')}</span>
+                  ${exp.mathSolution.verification ? `<span class="math-verify-line">✓ ${SecurityUtils.escapeHtml(exp.mathSolution.verification)}</span>` : ''}
+                </div>
+              ` : ''}
+            </div>
+    ` : '';
 
     return `
       <div class="teacher-response-view">
-        <!-- Master Teacher's Book Folio -->
-        <article class="teacher-book-folio">
+        <!-- Compact Response Card -->
+        <article class="teacher-book-folio notebook-folio" data-notebook-version="${this._requestVersion}">
           <div class="book-spine-ribbon"></div>
 
-          <!-- Top Folio Header Bar -->
-          <header class="book-folio-header">
-            <div class="book-folio-branding">
-              <div class="book-logo-halo">
-                <img src="assets/icons/hamsa-logo-3d.png" class="book-hamsa-icon" alt="Hamsa" onerror="this.src='assets/icons/hamsa-logo.svg'">
-              </div>
-              <div class="book-folio-titles">
-                <span class="book-manuscript-title">HAMSA VIDYA • अध्ययन पाण्डुलिपि</span>
-                <span class="book-manuscript-subtitle">Master Pedagogical Study Notes • हंस विद्या गुरु</span>
-              </div>
-            </div>
-            <div class="book-folio-pills">
-              <span class="book-tag tag-pedagogy">🎓 For: ${SecurityUtils.escapeHtml(exp.studentContext?.levelLabel || 'Student Profile')}</span>
-              <span class="book-tag tag-subject">📚 ${SecurityUtils.escapeHtml(exp.subject || 'General')}</span>
-              <span class="book-tag tag-tier">⚡ ${SecurityUtils.escapeHtml(exp.difficulty || 'BEGINNER')}</span>
-              <span class="book-tag tag-lang">🌐 ${SecurityUtils.escapeHtml(this.selectedLanguage)}</span>
-            </div>
-          </header>
+          <div class="notebook-caption"><span>Your study notebook</span><span>समझें • याद रखें</span></div>
 
-          <!-- Question Banner Styled as Teacher's Slate -->
-          <div class="book-query-banner">
-            <div class="query-banner-label">
-              <i data-lucide="help-circle" style="width:14px;height:14px;"></i>
-              <span>INVESTIGATED QUESTION • मूल प्रश्न</span>
+          <!-- Question Analysis Metadata Bar -->
+          <div class="response-analysis-bar">
+            <div class="analysis-pills">
+              <span class="analysis-pill pill-subject">📚 ${SecurityUtils.escapeHtml(analysisSubject)}</span>
+              ${analysisType ? `<span class="analysis-pill pill-type">${SecurityUtils.escapeHtml(analysisType)}</span>` : ''}
+              <span class="analysis-pill pill-level">🎓 ${SecurityUtils.escapeHtml(exp.studentContext?.levelLabel || analysisDiff || 'Student')}</span>
+              <span class="analysis-pill pill-lang">🌐 ${SecurityUtils.escapeHtml(this._lessonSettings?.language || this.selectedLanguage)}</span>
             </div>
-            <h2 class="query-banner-title">“${SecurityUtils.escapeHtml(this.questionInput || exp.topic || 'Concept Breakdown')}”</h2>
-            ${exp.topic ? `<div class="query-banner-subtopic">Concept Focus: <strong>${SecurityUtils.escapeHtml(exp.topic)}</strong></div>` : ''}
+            ${analysisExamRel ? `<div class="analysis-exam-relevance"><i data-lucide="target" style="width:12px;height:12px;"></i> ${SecurityUtils.escapeHtml(analysisExamRel)}</div>` : ''}
           </div>
 
-          <!-- ================================================================
-               CHAPTER I: Ground-Zero Foundations (मुख्य संकल्पना एवं आधार)
-               ================================================================ -->
-          <section class="book-chapter chapter-foundations">
-            <div class="chapter-badge">
-              <span class="chapter-roman">§ I</span>
-              <span class="chapter-title">GROUND-ZERO FOUNDATIONS • मुख्य संकल्पना एवं आधार</span>
+          <!-- Question -->
+          <div class="book-query-banner compact">
+            <h2 class="query-banner-title compact">${SecurityUtils.escapeHtml(this._lessonQuestion || this.questionInput || exp.topic || 'Concept')}</h2>
+          </div>
+
+          <!-- ===== CORE EXPLANATION (Always Visible) ===== -->
+
+          <!-- Quick Answer -->
+          ${exp.quickAnswer ? `
+            <div class="teacher-takeaway-box compact">
+              <div class="takeaway-header">
+                <div class="takeaway-badge">
+                  <i data-lucide="zap" style="width:14px;height:14px;"></i>
+                  <span>${exp.socraticTutor ? 'Your starting hint • शुरुआती संकेत' : 'The key idea • मुख्य बात'}</span>
+                </div>
+                <button class="book-mini-tool-btn" aria-label="Copy quick answer" data-copy-section="quickAnswer" onclick="window.aiTeacherView.copySectionFromData('quickAnswer')"><i data-lucide="copy" style="width:12px;height:12px;"></i></button>
+              </div>
+              <div class="takeaway-body">${SecurityUtils.sanitizeHtml(marked.parse(exp.quickAnswer || ''))}</div>
             </div>
+          ` : ''}
 
-            <!-- Quick Answer Callout Box -->
-            ${exp.quickAnswer ? `
-              <div class="teacher-takeaway-box">
-                <div class="takeaway-header">
-                  <div class="takeaway-badge">
-                    <i data-lucide="zap" style="width:14px;height:14px;"></i>
-                    <span>Teacher's Core Takeaway • मुख्य निष्कर्ष</span>
-                  </div>
-                  <button class="book-mini-tool-btn" onclick="window.aiTeacherView.copySectionText('${SecurityUtils.escapeHtml(exp.quickAnswer)}')">
-                    <i data-lucide="copy" style="width:12px;height:12px;"></i> Copy
-                  </button>
-                </div>
-                <div class="takeaway-body">
-                  ${SecurityUtils.sanitizeHtml(marked.parse(exp.quickAnswer || ''))}
-                </div>
+          <!-- Foundation / Detailed Explanation -->
+          ${exp.foundation ? `
+            <div class="foundation-block compact">
+              <div class="foundation-header">
+                <h3 class="foundation-heading">
+                  <i data-lucide="book-open" style="width:15px;height:15px;color:var(--color-primary-light);"></i>
+                  <span>${SecurityUtils.escapeHtml(exp.foundation.title || 'Explanation')}</span>
+                </h3>
+                <button class="book-mini-tool-btn" onclick="window.aiTeacherView.makeSimpler()">
+                  <i data-lucide="smile" style="width:13px;height:13px;"></i> Simpler
+                </button>
               </div>
-            ` : ''}
+              <div class="foundation-content">${SecurityUtils.sanitizeHtml(marked.parse(exp.foundation.explanation || ''))}</div>
+              ${exp.foundation.technicalTerms?.length ? this._notebookSectionHTML('terms', 'Key terms, made simple', 'key', `
+                <div class="glossary-container compact">
 
-            <!-- Detailed Walkthrough -->
-            ${exp.foundation ? `
-              <div class="foundation-block">
-                <div class="foundation-header">
-                  <h3 class="foundation-heading">
-                    <i data-lucide="book-open" style="width:16px;height:16px;color:var(--color-primary-light);"></i>
-                    <span>${SecurityUtils.escapeHtml(exp.foundation.title || "Let's Understand From Ground-Zero")}</span>
-                  </h3>
-                  <button class="book-mini-tool-btn" onclick="window.aiTeacherView.makeSimpler()">
-                    <i data-lucide="smile" style="width:13px;height:13px;"></i> Make it Simpler
-                  </button>
-                </div>
-                <div class="foundation-content">
-                  ${SecurityUtils.sanitizeHtml(marked.parse(exp.foundation.explanation || ''))}
-                </div>
-
-                <!-- Key Terms Simplified (Glossary Grid) -->
-                ${exp.foundation.technicalTerms && exp.foundation.technicalTerms.length > 0 ? `
-                  <div class="glossary-container">
-                    <div class="glossary-title">
-                      <i data-lucide="key" style="width:13px;height:13px;"></i>
-                      <span>Key Terms Simplified • पारिभाषिक शब्दावली</span>
-                    </div>
-                    <div class="glossary-grid">
-                      ${exp.foundation.technicalTerms.map(t => `
-                        <div class="glossary-card">
-                          <span class="glossary-term">${SecurityUtils.escapeHtml(t.term)}</span>
-                          <span class="glossary-meaning">${SecurityUtils.escapeHtml(t.simpleMeaning)}</span>
-                          ${t.example ? `<span class="glossary-example">💡 <em>Eg:</em> ${SecurityUtils.escapeHtml(t.example)}</span>` : ''}
-                        </div>
-                      `).join('')}
-                    </div>
-                  </div>
-                ` : ''}
-              </div>
-            ` : ''}
-          </section>
-
-          <!-- ================================================================
-               CHAPTER II: Scientific Mechanism & Logic (कार्यप्रणाली एवं वैज्ञानिक तर्क)
-               ================================================================ -->
-          <section class="book-chapter chapter-mechanism">
-            <div class="chapter-badge">
-              <span class="chapter-roman">§ II</span>
-              <span class="chapter-title">SCIENTIFIC MECHANISM & LOGIC • कार्यप्रणाली एवं वैज्ञानिक तर्क</span>
-            </div>
-
-            <!-- Math Teacher Mode (If applicable) -->
-            ${exp.mathSolution && (exp.isMath || exp.mathSolution.formula || exp.mathSolution.calculationSteps?.length) ? `
-              <div class="math-board-block">
-                <div class="math-board-header">
-                  <span class="math-board-badge">📐 Step-by-Step Math Solution</span>
-                  <span class="math-verified-tag">✓ Verified Formula</span>
-                </div>
-                <div class="math-given-find-grid">
-                  ${exp.mathSolution.given ? `
-                    <div class="math-pill"><span class="math-pill-lbl">Given:</span> <span>${SecurityUtils.escapeHtml(exp.mathSolution.given)}</span></div>
-                  ` : ''}
-                  ${exp.mathSolution.toFind ? `
-                    <div class="math-pill"><span class="math-pill-lbl">Find:</span> <span>${SecurityUtils.escapeHtml(exp.mathSolution.toFind)}</span></div>
-                  ` : ''}
-                </div>
-                ${exp.mathSolution.formula ? `
-                  <div class="math-formula-callout">
-                    <span class="math-formula-lbl">FORMULA APPLIED:</span>
-                    <div class="math-formula-display">${SecurityUtils.escapeHtml(exp.mathSolution.formula)}</div>
-                    ${exp.mathSolution.formulaExplanation ? `<div class="math-formula-desc">${SecurityUtils.escapeHtml(exp.mathSolution.formulaExplanation)}</div>` : ''}
-                  </div>
-                ` : ''}
-                ${exp.mathSolution.calculationSteps && exp.mathSolution.calculationSteps.length > 0 ? `
-                  <table class="math-steps-table">
-                    <tbody>
-                      ${exp.mathSolution.calculationSteps.map(cs => `
-                        <tr>
-                          <td class="math-step-col">${SecurityUtils.escapeHtml(cs.math || cs.step)}</td>
-                          <td class="math-desc-col">${SecurityUtils.escapeHtml(cs.explanation || '')}</td>
-                        </tr>
-                      `).join('')}
-                    </tbody>
-                  </table>
-                ` : ''}
-                ${exp.mathSolution.finalAnswer ? `
-                  <div class="math-final-banner">
-                    <span class="math-final-lbl">FINAL ANSWER:</span>
-                    <span class="math-final-val">${SecurityUtils.escapeHtml(exp.mathSolution.finalAnswer)} ${SecurityUtils.escapeHtml(exp.mathSolution.units || '')}</span>
-                    ${exp.mathSolution.verification ? `<span class="math-verify-line">✓ Verification: ${SecurityUtils.escapeHtml(exp.mathSolution.verification)}</span>` : ''}
-                  </div>
-                ` : ''}
-              </div>
-            ` : ''}
-
-            <!-- Why & How Grid -->
-            ${exp.whyAndHow && (exp.whyAndHow.why || exp.whyAndHow.how) ? `
-              <div class="why-how-row">
-                ${exp.whyAndHow.what ? `
-                  <div class="why-how-col">
-                    <span class="why-how-tag">WHAT IS IT?</span>
-                    <p>${SecurityUtils.escapeHtml(exp.whyAndHow.what)}</p>
-                  </div>
-                ` : ''}
-                ${exp.whyAndHow.why ? `
-                  <div class="why-how-col col-why">
-                    <span class="why-how-tag tag-why">WHY DOES THIS HAPPEN?</span>
-                    <p>${SecurityUtils.escapeHtml(exp.whyAndHow.why)}</p>
-                  </div>
-                ` : ''}
-                ${exp.whyAndHow.how ? `
-                  <div class="why-how-col col-how">
-                    <span class="why-how-tag tag-how">HOW DOES IT WORK?</span>
-                    <p>${SecurityUtils.escapeHtml(exp.whyAndHow.how)}</p>
-                  </div>
-                ` : ''}
-              </div>
-            ` : ''}
-
-            <!-- Step-by-Step Progressive Reasoning -->
-            ${exp.steps && exp.steps.length > 0 ? `
-              <div class="steps-spine-container">
-                <div class="steps-spine-title">
-                  <i data-lucide="list-ordered" style="width:14px;height:14px;"></i>
-                  <span>Logical Progression • क्रमिक विवेचना</span>
-                </div>
-                <div class="steps-spine-list">
-                  ${exp.steps.map(s => `
-                    <div class="spine-step-item">
-                      <div class="spine-num">${s.stepNumber || '•'}</div>
-                      <div class="spine-content">
-                        <h4 class="spine-heading">${SecurityUtils.escapeHtml(s.title || '')}</h4>
-                        <div class="spine-text">${SecurityUtils.sanitizeHtml(marked.parse(s.content || ''))}</div>
-                      </div>
-                    </div>
-                  `).join('')}
-                </div>
-              </div>
-            ` : ''}
-          </section>
-
-          <!-- ================================================================
-               CHAPTER III: Intuition, Metaphors & Visual Models (दृष्टांत एवं मॉडल)
-               ================================================================ -->
-          <section class="book-chapter chapter-intuition">
-            <div class="chapter-badge">
-              <span class="chapter-roman">§ III</span>
-              <span class="chapter-title">INTUITION, METAPHORS & VISUAL MODELS • दृष्टांत एवं मानसिक मॉडल</span>
-            </div>
-
-            <!-- Analogy & Real-Life Examples Paired Grid -->
-            <div class="analogy-examples-grid">
-              ${exp.analogy?.analogyText ? `
-                <div class="analogy-card-book">
-                  <div class="analogy-header">
-                    <span class="analogy-badge">💡 Teacher's Analogy • मानसिक मॉडल</span>
-                    <span class="analogy-sub">${SecurityUtils.escapeHtml(exp.analogy.hook || "Think of it like this...")}</span>
-                  </div>
-                  <div class="analogy-body">
-                    “${SecurityUtils.escapeHtml(exp.analogy.analogyText)}”
-                  </div>
-                  ${exp.analogy.takeaway ? `
-                    <div class="analogy-takeaway-footer">
-                      🎯 <strong>Key Takeaway:</strong> ${SecurityUtils.escapeHtml(exp.analogy.takeaway)}
-                    </div>
-                  ` : ''}
-                </div>
-              ` : ''}
-
-              ${exp.examples && exp.examples.length > 0 ? `
-                <div class="examples-card-book">
-                  <div class="examples-header">
-                    <span class="examples-badge">🧠 Real-Life Everyday Examples</span>
-                    <button class="book-mini-tool-btn" onclick="window.aiTeacherView.anotherExample()">
-                      <i data-lucide="refresh-cw" style="width:12px;height:12px;"></i> New Example
-                    </button>
-                  </div>
-                  <div class="examples-body">
-                    ${exp.examples.map(ex => `
-                      <div class="example-mini-box">
-                        <div class="example-top">
-                          <strong>${SecurityUtils.escapeHtml(ex.title || 'Example')}</strong>
-                          ${ex.type ? `<span class="example-type-pill">${SecurityUtils.escapeHtml(ex.type)}</span>` : ''}
-                        </div>
-                        <div class="example-text">${SecurityUtils.sanitizeHtml(marked.parse(ex.description || ''))}</div>
+                  <div class="glossary-grid">
+                    ${exp.foundation.technicalTerms.map(t => `
+                      <div class="glossary-card compact">
+                        <span class="glossary-term">${SecurityUtils.escapeHtml(t.term)}</span>
+                        <span class="glossary-meaning">${SecurityUtils.escapeHtml(t.simpleMeaning)}</span>
+                        ${t.example ? `<span class="glossary-example">💡 ${SecurityUtils.escapeHtml(t.example)}</span>` : ''}
                       </div>
                     `).join('')}
                   </div>
                 </div>
-              ` : ''}
+              `, exp.foundation.technicalTerms.length) : ''}
             </div>
+          ` : ''}
 
-            <!-- Process Flowchart -->
-            ${exp.flowchart && exp.flowchart.nodes && exp.flowchart.nodes.length > 0 ? `
-              <div class="flowchart-book-card">
-                <div class="flowchart-header">
-                  <i data-lucide="workflow" style="width:15px;height:15px;color:var(--color-primary-light);"></i>
-                  <span>${SecurityUtils.escapeHtml(exp.flowchart.title || "Process Flowchart")}</span>
+          <!-- Math Solution (If applicable — always visible for math) -->
+          ${hasMath ? (exp.isMath ? mathHTML : this._notebookSectionHTML('formula', 'Formula & worked example', 'calculator', mathHTML)) : ''}
+
+          ${hasFlowchart || hasDiagram ? `<div class="notebook-visuals-grid">
+          <!-- Flowchart (Always visible if present) -->
+          ${hasFlowchart ? this._notebookSectionHTML('flow', 'See the process', 'workflow', `
+            <div class="flowchart-book-card">
+              <div class="flowchart-header"><i data-lucide="workflow" style="width:14px;height:14px;color:var(--color-primary-light);"></i> <span>${SecurityUtils.escapeHtml(exp.flowchart.title || 'Process Flow')}</span></div>
+              <div class="flowchart-container">
+                ${exp.flowchart.nodes.map((node, idx) => `
+                  <div class="flowchart-node">
+                    <div class="flowchart-node-label">${SecurityUtils.escapeHtml(node.label)}</div>
+                    ${node.description ? `<div class="flowchart-node-desc">${SecurityUtils.escapeHtml(node.description)}</div>` : ''}
+                  </div>
+                  ${idx < exp.flowchart.nodes.length - 1 ? `<div class="flowchart-arrow">➔</div>` : ''}
+                `).join('')}
+              </div>
+            </div>
+          `, exp.flowchart.nodes.length + ' stages') : ''}
+
+          <!-- Diagram (Always visible if present) -->
+          ${hasDiagram ? this._notebookSectionHTML('diagram', 'Picture the concept', 'image', `
+            <div class="diagram-book-card">
+              <div class="diagram-book-header">
+                <div class="diagram-book-title"><i data-lucide="image" style="width:14px;height:14px;color:var(--color-gold);"></i> <span>${SecurityUtils.escapeHtml(exp.diagram.title || 'Diagram')}</span></div>
+                <div class="diagram-toolbar">
+                  <button class="book-mini-tool-btn" onclick="window.aiTeacherView.openDiagramModal()"><i data-lucide="maximize-2" style="width:12px;height:12px;"></i> Fullscreen</button>
+                  <button class="book-mini-tool-btn" onclick="window.aiTeacherView.downloadDiagramSvg()"><i data-lucide="download" style="width:12px;height:12px;"></i> SVG</button>
                 </div>
-                <div class="flowchart-container">
-                  ${exp.flowchart.nodes.map((node, idx) => `
-                    <div class="flowchart-node">
-                      <div class="flowchart-node-label">${SecurityUtils.escapeHtml(node.label)}</div>
-                      ${node.description ? `<div class="flowchart-node-desc">${SecurityUtils.escapeHtml(node.description)}</div>` : ''}
+              </div>
+              <div class="diagram-viewer-box">${SecurityUtils.sanitizeSvg(exp.diagram.svgContent)}</div>
+              ${exp.diagram.caption ? `<div class="diagram-caption">${SecurityUtils.escapeHtml(exp.diagram.caption)}</div>` : ''}
+            </div>
+          `, '') : ''}
+
+          </div>` : ''}
+
+          <div class="notebook-sections-grid">
+          <!-- Deeper explanation, available on demand -->
+          ${hasWhyHow ? this._notebookSectionHTML('mechanism', 'Why & how it works', 'help-circle', `
+            <div class="why-how-row">
+              ${exp.whyAndHow.what ? `<div class="why-how-col"><span class="why-how-tag">WHAT</span><p>${SecurityUtils.escapeHtml(exp.whyAndHow.what)}</p></div>` : ''}
+              ${exp.whyAndHow.why ? `<div class="why-how-col col-why"><span class="why-how-tag tag-why">WHY</span><p>${SecurityUtils.escapeHtml(exp.whyAndHow.why)}</p></div>` : ''}
+              ${exp.whyAndHow.how ? `<div class="why-how-col col-how"><span class="why-how-tag tag-how">HOW</span><p>${SecurityUtils.escapeHtml(exp.whyAndHow.how)}</p></div>` : ''}
+            </div>
+          `, '') : ''}
+
+          <!-- Steps (Always visible if present) -->
+          ${hasSteps ? this._notebookSectionHTML('reasoning', 'Follow the reasoning', 'list-ordered', `
+            <div class="steps-spine-container">
+
+              <div class="steps-spine-list">
+                ${exp.steps.map(s => `
+                  <div class="spine-step-item">
+                    <div class="spine-num">${SecurityUtils.escapeHtml(String(s.stepNumber || '•'))}</div>
+                    <div class="spine-content">
+                      <h4 class="spine-heading">${SecurityUtils.escapeHtml(s.title || '')}</h4>
+                      <div class="spine-text">${SecurityUtils.sanitizeHtml(marked.parse(s.content || ''))}</div>
                     </div>
-                    ${idx < exp.flowchart.nodes.length - 1 ? `<div class="flowchart-arrow">➔</div>` : ''}
-                  `).join('')}
-                </div>
-              </div>
-            ` : ''}
-
-            <!-- Diagram Studio -->
-            ${exp.diagram && exp.diagram.svgContent ? `
-              <div class="diagram-book-card">
-                <div class="diagram-book-header">
-                  <div class="diagram-book-title">
-                    <i data-lucide="image" style="width:15px;height:15px;color:var(--color-gold);"></i>
-                    <span>${SecurityUtils.escapeHtml(exp.diagram.title || "Concept Diagram")}</span>
                   </div>
-                  <div class="diagram-toolbar">
-                    <button class="book-mini-tool-btn" onclick="window.aiTeacherView.openDiagramModal()">
-                      <i data-lucide="maximize-2" style="width:12px;height:12px;"></i> Fullscreen
-                    </button>
-                    <button class="book-mini-tool-btn" onclick="window.aiTeacherView.downloadDiagramSvg()">
-                      <i data-lucide="download" style="width:12px;height:12px;"></i> Download SVG
-                    </button>
-                  </div>
-                </div>
-                <div class="diagram-viewer-box">${SecurityUtils.sanitizeSvg(exp.diagram.svgContent)}</div>
-                ${exp.diagram.caption ? `<div class="diagram-caption">${SecurityUtils.escapeHtml(exp.diagram.caption)}</div>` : ''}
+                `).join('')}
               </div>
-            ` : ''}
-
-            <!-- Comparison Matrix Table -->
-            ${exp.comparison && exp.comparison.headers && exp.comparison.rows && exp.comparison.rows.length > 0 ? `
-              <div class="comparison-book-card">
-                <div class="comparison-header">
-                  <i data-lucide="table" style="width:15px;height:15px;color:var(--color-primary-light);"></i>
-                  <span>${SecurityUtils.escapeHtml(exp.comparison.title || "Concept Comparison Table")}</span>
-                </div>
-                <div class="comparison-table-wrapper">
-                  <table class="comparison-table">
-                    <thead>
-                      <tr>
-                        ${exp.comparison.headers.map(h => `<th>${SecurityUtils.escapeHtml(h)}</th>`).join('')}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${exp.comparison.rows.map(row => `
-                        <tr>
-                          ${row.map(cell => `<td>${SecurityUtils.escapeHtml(cell)}</td>`).join('')}
-                        </tr>
-                      `).join('')}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ` : ''}
-          </section>
-
-          <!-- ================================================================
-               CHAPTER IV: Exam Precision & Practice Studio (परीक्षा रणनीति)
-               ================================================================ -->
-          <section class="book-chapter chapter-exam">
-            <div class="chapter-badge">
-              <span class="chapter-roman">§ IV</span>
-              <span class="chapter-title">EXAM PRECISION & PRACTICE STUDIO • परीक्षा रणनीति एवं अभ्यास</span>
             </div>
+          `, exp.steps.length + ' steps') : ''}
 
-            <!-- Common Mistakes & Memory Trick Paired Row -->
-            <div class="mistakes-trick-row">
-              ${exp.commonMistakes && exp.commonMistakes.length > 0 ? `
-                <div class="mistakes-book-card">
-                  <div class="mistakes-header">
-                    <i data-lucide="alert-triangle" style="width:14px;height:14px;color:var(--color-error);"></i>
-                    <span>Common Pitfalls & Traps • अक्सर होने वाली गलतियाँ</span>
-                  </div>
-                  <div class="mistakes-list">
-                    ${exp.commonMistakes.map(m => `
-                      <div class="mistake-item">
-                        <div class="mistake-wrong">❌ <span>${SecurityUtils.escapeHtml(m.mistake)}</span></div>
-                        <div class="mistake-correct">✅ <span>${SecurityUtils.escapeHtml(m.correction)}</span></div>
+          <!-- Comparison Table (Always visible if present) -->
+          ${hasComparison ? this._notebookSectionHTML('comparison', 'Compare & understand', 'table', `
+            <div class="comparison-book-card">
+              <div class="comparison-header"><i data-lucide="table" style="width:14px;height:14px;color:var(--color-primary-light);"></i> <span>${SecurityUtils.escapeHtml(exp.comparison.title || 'Comparison')}</span></div>
+              <div class="comparison-table-wrapper">
+                <table class="comparison-table">
+                  <thead><tr>${exp.comparison.headers.map(h => `<th>${SecurityUtils.escapeHtml(h)}</th>`).join('')}</tr></thead>
+                  <tbody>${exp.comparison.rows.map(row => `<tr>${row.map(cell => `<td>${SecurityUtils.escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+                </table>
+              </div>
+            </div>
+          `, '') : ''}
+
+          <!-- ===== COLLAPSIBLE SECTIONS (Progressive Disclosure) ===== -->
+
+          ${hasAnalogy || hasExamples ? `
+            <details class="collapsible-section notebook-section" data-notebook-section="examples" ${this._notebookOpenSections.has('examples') ? 'open' : ''}>
+              <summary class="collapsible-header">
+                <i data-lucide="lightbulb" style="width:14px;height:14px;"></i>
+                <span>Make it click: examples</span>
+                <i data-lucide="chevron-down" class="collapse-chevron" style="width:14px;height:14px;"></i>
+              </summary>
+              <div class="collapsible-body">
+                <div class="analogy-examples-grid">
+                  ${hasAnalogy ? `
+                    <div class="analogy-card-book">
+                      <div class="analogy-header"><span class="analogy-badge">💡 Analogy</span></div>
+                      <div class="analogy-body">"${SecurityUtils.escapeHtml(exp.analogy.analogyText)}"</div>
+                      ${exp.analogy.takeaway ? `<div class="analogy-takeaway-footer">🎯 <strong>Takeaway:</strong> ${SecurityUtils.escapeHtml(exp.analogy.takeaway)}</div>` : ''}
+                    </div>
+                  ` : ''}
+                  ${hasExamples ? `
+                    <div class="examples-card-book">
+                      <div class="examples-header">
+                        <span class="examples-badge">🧠 Examples</span>
+                        <button class="book-mini-tool-btn" onclick="window.aiTeacherView.anotherExample()"><i data-lucide="refresh-cw" style="width:12px;height:12px;"></i> New</button>
                       </div>
-                    `).join('')}
-                  </div>
+                      <div class="examples-body">
+                        ${exp.examples.map(ex => `
+                          <div class="example-mini-box">
+                            <div class="example-top"><strong>${SecurityUtils.escapeHtml(ex.title || 'Example')}</strong> ${ex.type ? `<span class="example-type-pill">${SecurityUtils.escapeHtml(ex.type)}</span>` : ''}</div>
+                            <div class="example-text">${SecurityUtils.sanitizeHtml(marked.parse(ex.description || ''))}</div>
+                          </div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  ` : ''}
                 </div>
-              ` : ''}
+              </div>
+            </details>
+          ` : ''}
 
-              ${exp.memoryTrick && exp.memoryTrick.mnemonic ? `
-                <div class="trick-book-card">
-                  <div class="trick-header">
-                    <i data-lucide="key" style="width:14px;height:14px;color:var(--color-gold);"></i>
-                    <span>Rapid Recall Mnemonic • याद रखने का अचूक सूत्र</span>
+          ${hasMistakes || hasMemoryTrick || hasExamPoints || hasSummary ? `
+            <details class="collapsible-section notebook-section" data-notebook-section="revision" ${this._notebookOpenSections.has('revision') ? 'open' : ''}>
+              <summary class="collapsible-header">
+                <i data-lucide="shield" style="width:14px;height:14px;"></i>
+                <span>Remember & revise</span>
+                <i data-lucide="chevron-down" class="collapse-chevron" style="width:14px;height:14px;"></i>
+              </summary>
+              <div class="collapsible-body">
+                <div class="mistakes-trick-row">
+                  ${hasMistakes ? `
+                    <div class="mistakes-book-card">
+                      <div class="mistakes-header"><i data-lucide="alert-triangle" style="width:13px;height:13px;color:var(--color-error);"></i> <span>Common Mistakes</span></div>
+                      <div class="mistakes-list">
+                        ${exp.commonMistakes.map(m => `
+                          <div class="mistake-item"><div class="mistake-wrong">❌ ${SecurityUtils.escapeHtml(m.mistake)}</div><div class="mistake-correct">✅ ${SecurityUtils.escapeHtml(m.correction)}</div></div>
+                        `).join('')}
+                      </div>
+                    </div>
+                  ` : ''}
+                  ${hasMemoryTrick ? `
+                    <div class="trick-book-card">
+                      <div class="trick-header"><i data-lucide="key" style="width:13px;height:13px;color:var(--color-gold);"></i> <span>Memory Trick</span></div>
+                      <div class="mnemonic-badge">${SecurityUtils.escapeHtml(exp.memoryTrick.mnemonic)}</div>
+                      <div class="trick-explanation">${SecurityUtils.escapeHtml(exp.memoryTrick.explanation || '')}</div>
+                    </div>
+                  ` : ''}
+                </div>
+                ${hasExamPoints ? `
+                  <div class="exam-points-book-card">
+                    <div class="exam-points-header"><i data-lucide="award" style="width:14px;height:14px;color:var(--color-gold);"></i> <span>High-Yield Exam Points</span></div>
+                    ${exp.examPoints.highYieldPoints && exp.examPoints.highYieldPoints.length > 0 ? `<ul class="exam-points-list">${exp.examPoints.highYieldPoints.map(p => `<li><strong>${SecurityUtils.escapeHtml(p)}</strong></li>`).join('')}</ul>` : ''}
+                    ${exp.examPoints.expectedAnswerStructure ? `<div class="exam-answer-structure-box"><strong style="color:var(--color-primary-light);">📝 Answer Structure:</strong> <span>${SecurityUtils.escapeHtml(exp.examPoints.expectedAnswerStructure)}</span></div>` : ''}
                   </div>
-                  <div class="mnemonic-badge">${SecurityUtils.escapeHtml(exp.memoryTrick.mnemonic)}</div>
-                  <div class="trick-explanation">${SecurityUtils.escapeHtml(exp.memoryTrick.explanation || '')}</div>
-                </div>
-              ` : ''}
-            </div>
-
-            <!-- Exam Points & Strategy -->
-            ${exp.examPoints && (exp.examPoints.highYieldPoints?.length || exp.examPoints.expectedAnswerStructure) ? `
-              <div class="exam-points-book-card">
-                <div class="exam-points-header">
-                  <i data-lucide="award" style="width:15px;height:15px;color:var(--color-gold);"></i>
-                  <span>High-Yield Exam Points & Scoring Blueprint</span>
-                </div>
-                ${exp.examPoints.highYieldPoints && exp.examPoints.highYieldPoints.length > 0 ? `
-                  <ul class="exam-points-list">
-                    ${exp.examPoints.highYieldPoints.map(p => `<li><strong>${SecurityUtils.escapeHtml(p)}</strong></li>`).join('')}
-                  </ul>
                 ` : ''}
-                ${exp.examPoints.expectedAnswerStructure ? `
-                  <div class="exam-answer-structure-box">
-                    <strong style="color:var(--color-primary-light);">📝 Recommended Answer Structure:</strong>
-                    <span>${SecurityUtils.escapeHtml(exp.examPoints.expectedAnswerStructure)}</span>
+                ${hasSummary ? `
+                  <div class="summary-book-card">
+                    <div class="summary-header"><i data-lucide="check-circle" style="width:13px;height:13px;color:var(--color-success);"></i> <span>Summary</span></div>
+                    <ul class="summary-checklist">${exp.summary.map(s => `<li>${SecurityUtils.escapeHtml(s)}</li>`).join('')}</ul>
                   </div>
                 ` : ''}
               </div>
-            ` : ''}
+            </details>
+          ` : ''}
 
-            <!-- Final Summary -->
-            ${exp.summary && exp.summary.length > 0 ? `
-              <div class="summary-book-card">
-                <div class="summary-header">
-                  <i data-lucide="check-circle" style="width:14px;height:14px;color:var(--color-success);"></i>
-                  <span>Final Summary • सारांश</span>
-                </div>
-                <ul class="summary-checklist">
-                  ${exp.summary.map(s => `<li>${SecurityUtils.escapeHtml(s)}</li>`).join('')}
-                </ul>
-              </div>
-            ` : ''}
-
-            <!-- Practice Questions -->
-            ${exp.practiceQuestions && exp.practiceQuestions.length > 0 ? `
-              <div class="practice-book-card">
-                <div class="practice-header">
-                  <div class="practice-title">
-                    <i data-lucide="pen-tool" style="width:15px;height:15px;color:var(--color-primary-light);"></i>
-                    <span>Test Your Understanding • स्व-मूल्यांकन</span>
-                  </div>
-                  <span class="practice-count-badge">${exp.practiceQuestions.length} Practice Questions</span>
-                </div>
+          ${hasPractice ? `
+            <details class="collapsible-section notebook-section" data-notebook-section="practice" ${this._notebookOpenSections.has('practice') ? 'open' : ''}>
+              <summary class="collapsible-header">
+                <i data-lucide="pen-tool" style="width:14px;height:14px;"></i>
+                <span>Practice (${exp.practiceQuestions.length})</span>
+                <i data-lucide="chevron-down" class="collapse-chevron" style="width:14px;height:14px;"></i>
+              </summary>
+              <div class="collapsible-body">
                 <div class="practice-questions-list">
                   ${exp.practiceQuestions.map((pq, idx) => `
                     <div class="practice-question-item">
                       <div class="pq-header">
                         <span class="pq-type-tag">${SecurityUtils.escapeHtml(pq.type || 'PRACTICE')}</span>
-                        <span class="pq-qnum">Question ${idx + 1}</span>
+                        <span class="pq-qnum">Q${idx + 1}</span>
                       </div>
                       <div class="pq-question-text">${SecurityUtils.escapeHtml(pq.question)}</div>
                       ${pq.options && pq.options.length > 0 ? `
                         <div class="pq-options-grid">
-                          ${pq.options.map((opt, optIdx) => `
-                            <div class="pq-option-pill">
-                              <span class="pq-opt-letter">${String.fromCharCode(65 + optIdx)}.</span>
-                              <span>${SecurityUtils.escapeHtml(opt)}</span>
-                            </div>
-                          `).join('')}
+                          ${pq.options.map((opt, oi) => `<div class="pq-option-pill"><span class="pq-opt-letter">${String.fromCharCode(65 + oi)}.</span> <span>${SecurityUtils.escapeHtml(opt)}</span></div>`).join('')}
                         </div>
                       ` : ''}
                       <button class="pq-show-answer-btn" onclick="window.aiTeacherView.togglePracticeAnswer(this)">
-                        <i data-lucide="eye" style="width:13px;height:13px;"></i> Show Answer & Explanation
+                        <i data-lucide="eye" style="width:13px;height:13px;"></i> Show Answer
                       </button>
                       <div class="pq-answer-box">
-                        <div class="pq-correct-line">Correct Answer: <strong>${SecurityUtils.escapeHtml(pq.answer)}</strong></div>
+                        <div class="pq-correct-line">✓ <strong>${SecurityUtils.escapeHtml(pq.answer)}</strong></div>
                         <div>${SecurityUtils.escapeHtml(pq.explanation || '')}</div>
                       </div>
                     </div>
                   `).join('')}
                 </div>
               </div>
-            ` : ''}
+            </details>
+          ` : ''}
 
-            <!-- Contextual Follow-up Chat -->
-            <div class="followup-book-card">
-              <div class="followup-header">
-                <div class="followup-title">
-                  <i data-lucide="message-square" style="width:15px;height:15px;color:var(--color-primary-light);"></i>
-                  <span>Ask a Follow-up Question • कोई भी संदेह पूछें</span>
-                </div>
-                <span class="followup-context-tag">Maintains Full Lesson Context</span>
-              </div>
-              ${exp.followUpSuggestions && exp.followUpSuggestions.length > 0 ? `
-                <div class="followup-suggestions-row">
-                  ${exp.followUpSuggestions.map(sug => `
-                    <button class="followup-suggestion-chip" onclick="window.aiTeacherView.askFollowUpChip('${SecurityUtils.escapeHtml(sug)}')">
-                      ${SecurityUtils.escapeHtml(sug)}
-                    </button>
+          ${hasSources ? `
+            <details class="collapsible-section notebook-section" data-notebook-section="sources" ${this._notebookOpenSections.has('sources') ? 'open' : ''}>
+              <summary class="collapsible-header">
+                <i data-lucide="book-marked" style="width:14px;height:14px;"></i>
+                <span>Sources (${exp.sources.length})</span>
+                <i data-lucide="chevron-down" class="collapse-chevron" style="width:14px;height:14px;"></i>
+              </summary>
+              <div class="collapsible-body">
+                <div class="sources-list">
+                  ${exp.sources.map(src => `
+                    <div class="source-item">
+                      <span class="source-name">${SecurityUtils.escapeHtml(src.name || 'Source')}</span>
+                      ${src.detail ? `<span class="source-detail">${SecurityUtils.escapeHtml(src.detail)}</span>` : ''}
+                    </div>
                   `).join('')}
                 </div>
-              ` : ''}
-              <div class="followup-input-wrapper">
-                <input
-                  type="text"
-                  id="followup-input-field"
-                  class="followup-input"
-                  placeholder="Ask anything about this explanation (e.g. 'Why?', 'Explain in Hindi', 'Make it easier')..."
-                  onkeydown="if(event.key === 'Enter') window.aiTeacherView.sendFollowUp()"
-                >
-                <button class="followup-send-btn" onclick="window.aiTeacherView.sendFollowUp()">
-                  <i data-lucide="send" style="width:14px;height:14px;"></i> Ask
-                </button>
               </div>
+            </details>
+          ` : ''}
 
-              <!-- Follow-up Conversation Threads -->
-              <div class="followup-messages-list" id="followup-messages-container">
-                ${this.followUpHistory.map(item => `
-                  <div class="followup-msg-bubble">
-                    <div class="followup-msg-query">❓ Student: ${SecurityUtils.escapeHtml(item.query)}</div>
-                    <div class="followup-msg-answer">
-                      <strong>🎓 AI Teacher:</strong> ${SecurityUtils.sanitizeHtml(marked.parse(item.response.followUpAnswer || ''))}
-                      ${item.response.clarifyingExample ? `
-                        <div style="margin-top:0.5rem; font-style:italic; color:var(--text-primary);">
-                          💡 Example: ${SecurityUtils.escapeHtml(item.response.clarifyingExample)}
-                        </div>
-                      ` : ''}
-                      ${item.response.miniAnalogy ? `
-                        <div style="margin-top:0.35rem; color:var(--color-gold);">
-                          🧠 ${SecurityUtils.escapeHtml(item.response.miniAnalogy)}
-                        </div>
-                      ` : ''}
-                    </div>
-                  </div>
-                `).join('')}
-              </div>
+          ${this._buildMentorshipHTML(exp)}
+
+          </div>
+
+          <!-- Follow-up Chat -->
+          <div class="followup-book-card">
+            <div class="followup-header">
+              <div class="followup-title"><i data-lucide="message-square" style="width:14px;height:14px;color:var(--color-primary-light);"></i> <span>Still curious? Ask your doubt</span></div>
             </div>
-          </section>
+            ${hasFollowUp ? this._notebookSectionHTML('suggestions', 'Suggested next questions', 'message-circle', `
+              <div class="followup-suggestions-row">
+                ${exp.followUpSuggestions.map((sug, idx) => `<button class="followup-suggestion-chip" data-followup-idx="${idx}" onclick="window.aiTeacherView.askFollowUpChipByIndex(${idx})">${SecurityUtils.escapeHtml(sug)}</button>`).join('')}
+              </div>
+            `, exp.followUpSuggestions.length) : ''}
+            ${this._mentorshipIntent !== 'question' ? `<div class="mentorship-reply-context"><span>${SecurityUtils.escapeHtml(this._replyComposer().label)}</span><button type="button" onclick="window.aiTeacherView.beginMentorshipReply('question')">Ask a different question</button></div>` : ''}
+            <div class="followup-input-wrapper">
+              <textarea id="followup-input-field" aria-label="${SecurityUtils.escapeHtml(this._replyComposer().label)}" class="followup-input" rows="2" placeholder="${SecurityUtils.escapeHtml(this._replyComposer().placeholder)}" onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); window.aiTeacherView.sendFollowUp(); }"></textarea>
+              <button class="followup-send-btn" onclick="window.aiTeacherView.sendFollowUp()"><i data-lucide="send" style="width:14px;height:14px;"></i> ${this._mentorshipIntent === 'question' ? 'Ask' : 'Send'}</button>
+            </div>
+            <div class="followup-messages-list" id="followup-messages-container">
+              ${this.followUpHistory.map(item => `
+                <div class="followup-msg-bubble">
+                  <div class="followup-msg-query">❓ ${SecurityUtils.escapeHtml(item.query)}</div>
+                  <div class="followup-msg-answer">
+                    <strong>🎓 AI Teacher:</strong> ${SecurityUtils.sanitizeHtml(marked.parse(item.response.followUpAnswer || ''))}
+                    ${item.response.clarifyingExample ? `<div style="margin-top:0.4rem;font-style:italic;color:var(--text-primary);">💡 ${SecurityUtils.escapeHtml(item.response.clarifyingExample)}</div>` : ''}
+                    ${item.response.checkQuestion ? `<p class="mentorship-next-question">${SecurityUtils.escapeHtml(item.response.checkQuestion)}</p>` : ''}
+                    ${item.response.miniAnalogy ? `<div style="margin-top:0.3rem;color:var(--color-gold);">🧠 ${SecurityUtils.escapeHtml(item.response.miniAnalogy)}</div>` : ''}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
 
-          <!-- Book Folio Footer -->
+          <!-- Compact Footer -->
           <footer class="book-folio-footer">
-            <span>📖 HAMSA VIDYA AI TEACHER • हंस विद्या गुरु नोट्स</span>
-            <span>अध्ययन से स्पष्टता • From Fundamentals to Mastery</span>
+            <span>📖 HAMSA VIDYA AI TEACHER</span>
+            <span>${SecurityUtils.escapeHtml(this._sourceLabel())}</span>
           </footer>
         </article>
 
-        <!-- STICKY BOTTOM ACTIONS TOOLBAR -->
+        <!-- ACTIONS TOOLBAR -->
         <div class="teacher-actions-bar">
-          <!-- Text to Speech -->
           <div class="tts-controls-group">
-            <button class="tts-mini-btn" id="tts-play-btn" onclick="window.aiTeacherView.toggleSpeech()" title="Listen to Explanation">
+            <button class="tts-mini-btn" id="tts-play-btn" onclick="window.aiTeacherView.toggleSpeech()" title="Listen">
               <i data-lucide="${this.isSpeaking && !this.isPaused ? 'volume-x' : 'volume-2'}" style="width:16px;height:16px;"></i>
             </button>
-            <span style="font-size:0.78rem; font-weight:600; color:var(--text-secondary);">
-              ${this.isSpeaking ? (this.isPaused ? 'Paused' : 'Playing') : 'Listen'}
-            </span>
+            <span style="font-size:0.78rem;font-weight:600;color:var(--text-secondary);">${this.isSpeaking ? (this.isPaused ? 'Paused' : 'Playing') : 'Listen'}</span>
           </div>
-
-          <!-- Micro-Expansion Actions -->
           <div class="actions-group">
-            <button class="teacher-action-btn" onclick="window.aiTeacherView.makeSimpler()" title="Rewrite with simpler language">
-              <i data-lucide="smile" style="width:14px;height:14px;"></i>
-              <span>Simpler</span>
-            </button>
-            <button class="teacher-action-btn" onclick="window.aiTeacherView.anotherExample()" title="Generate new example">
-              <i data-lucide="refresh-cw" style="width:14px;height:14px;"></i>
-              <span>Example</span>
-            </button>
+            <button class="teacher-action-btn" onclick="window.aiTeacherView.makeSimpler()" title="Simpler"><i data-lucide="smile" style="width:14px;height:14px;"></i> <span>Simpler</span></button>
+            <button class="teacher-action-btn" onclick="window.aiTeacherView.anotherExample()" title="New Example"><i data-lucide="refresh-cw" style="width:14px;height:14px;"></i> <span>Example</span></button>
           </div>
-
-          <!-- Utility Actions -->
           <div class="actions-group">
-            <button class="teacher-action-btn" onclick="window.aiTeacherView.copyExplanation()" title="Copy Full Text">
-              <i data-lucide="copy" style="width:14px;height:14px;"></i>
-              <span>Copy</span>
+            <button class="teacher-action-btn" onclick="window.aiTeacherView.copyExplanation()" title="Copy"><i data-lucide="copy" style="width:14px;height:14px;"></i> <span>Copy</span></button>
+            <button class="teacher-action-btn ${this.isBookmarked ? 'active' : ''}" onclick="window.aiTeacherView.toggleBookmark()" title="Save">
+              <i data-lucide="${this.isBookmarked ? 'bookmark-check' : 'bookmark'}" style="width:14px;height:14px;"></i> <span>${this.isBookmarked ? 'Saved' : 'Save'}</span>
             </button>
-            <button class="teacher-action-btn ${this.isBookmarked ? 'active' : ''}" onclick="window.aiTeacherView.toggleBookmark()" title="Save / Bookmark">
-              <i data-lucide="${this.isBookmarked ? 'bookmark-check' : 'bookmark'}" style="width:14px;height:14px;"></i>
-              <span>${this.isBookmarked ? 'Saved' : 'Save'}</span>
-            </button>
-            <button class="teacher-action-btn" onclick="window.aiTeacherView.downloadPdf()" title="Download as A4 PDF">
-              <i data-lucide="download" style="width:14px;height:14px;"></i>
-              <span>PDF</span>
-            </button>
-            <button class="teacher-action-btn" onclick="window.aiTeacherView.printExplanation()" title="Print Lesson">
-              <i data-lucide="printer" style="width:14px;height:14px;"></i>
-              <span>Print</span>
-            </button>
+            <button class="teacher-action-btn" onclick="window.aiTeacherView.downloadPdf()" title="PDF"><i data-lucide="download" style="width:14px;height:14px;"></i> <span>PDF</span></button>
+            <button class="teacher-action-btn" onclick="window.aiTeacherView.printExplanation()" title="Print"><i data-lucide="printer" style="width:14px;height:14px;"></i> <span>Print</span></button>
           </div>
         </div>
       </div>
     `;
   }
 
+
   // =========================================================================
   // INTERACTIVE ACTIONS: SIMPLER, ANOTHER EXAMPLE, FOLLOW-UP
   // =========================================================================
 
-  togglePracticeAnswer(btn) {
+    togglePracticeAnswer(btn) {
     const parent = btn.closest('.practice-question-item');
     const answerBox = parent.querySelector('.pq-answer-box');
     if (!answerBox) return;
@@ -1525,19 +1657,29 @@ class AiTeacherView {
       btn.innerHTML = `<i data-lucide="eye-off" style="width:13px;height:13px;"></i> Hide Answer`;
     }
     if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
   }
 
   async makeSimpler() {
-    if (!this.currentExplanation) return;
+    if (!this.currentExplanation || this.isLoading || this._simplifying) return;
+    this._simplifying = true;
+    const version = this._requestVersion;
+    const controller = this._createRequestController();
     if (window.app) window.app.showToast('Re-crafting explanation in simpler language...', 'info');
+
+    // Show loading state on the Simpler button
+    const simplerBtns = document.querySelectorAll('.teacher-action-btn, .book-mini-tool-btn');
+    simplerBtns.forEach(b => { if (b.textContent.includes('Simpler')) b.setAttribute('disabled', 'true'); });
 
     try {
       const result = await window.aiTeacherService.makeItSimpler({
-        question: this.questionInput,
+        question: this._lessonQuestion || this.questionInput,
         currentExplanation: this.currentExplanation,
-        language: this.selectedLanguage,
-        educationLevel: this.selectedEducationLevel
+        language: this._lessonSettings?.language || this.selectedLanguage,
+        educationLevel: this._lessonSettings?.educationLevel || this.selectedEducationLevel,
+        signal: controller.signal
       });
+      if (version !== this._requestVersion || controller.signal.aborted) return;
 
       // Update foundation text with simpler version
       if (this.currentExplanation.foundation) {
@@ -1550,24 +1692,42 @@ class AiTeacherView {
         this.currentExplanation.analogy.analogyText = result.everydayAnalogy;
       }
 
+      await this._persistCurrentLesson();
+      if (version !== this._requestVersion) return;
       this._updateResultsDOM(this._buildResponseHTML());
       if (window.app) window.app.showToast('Simplified! Easier words & story added.', 'success');
     } catch (e) {
+      if (version !== this._requestVersion || controller.signal.aborted || e.name === 'AbortError') return;
+      this._updateResultsDOM(this._buildResponseHTML());
       console.error(e);
+      if (window.app) window.app.showToast(`Could not simplify: ${e.message}`, 'error');
+    } finally {
+      this._requestControllers.delete(controller);
+      if (version === this._requestVersion) this._simplifying = false;
+      simplerBtns.forEach(b => b.removeAttribute('disabled'));
     }
   }
 
   async anotherExample() {
-    if (!this.currentExplanation) return;
+    if (!this.currentExplanation || this.isLoading || this._exampleLoading) return;
+    this._exampleLoading = true;
+    const version = this._requestVersion;
+    const controller = this._createRequestController();
     if (window.app) window.app.showToast('Generating a fresh, distinct example...', 'info');
+
+    // Show loading state on the Example button
+    const exBtns = document.querySelectorAll('.teacher-action-btn, .book-mini-tool-btn');
+    exBtns.forEach(b => { if (b.textContent.includes('Example') || b.textContent.includes('New')) b.setAttribute('disabled', 'true'); });
 
     try {
       const result = await window.aiTeacherService.generateAnotherExample({
-        question: this.questionInput,
+        question: this._lessonQuestion || this.questionInput,
         currentExplanation: this.currentExplanation,
-        language: this.selectedLanguage,
-        educationLevel: this.selectedEducationLevel
+        language: this._lessonSettings?.language || this.selectedLanguage,
+        educationLevel: this._lessonSettings?.educationLevel || this.selectedEducationLevel,
+        signal: controller.signal
       });
+      if (version !== this._requestVersion || controller.signal.aborted) return;
 
       if (!this.currentExplanation.examples) this.currentExplanation.examples = [];
       this.currentExplanation.examples.unshift({
@@ -1576,14 +1736,24 @@ class AiTeacherView {
         description: `${result.scenario || ''}\n\n**Application:** ${result.howItApplies || ''}\n\n*Takeaway:* ${result.takeaway || ''}`
       });
 
+      await this._persistCurrentLesson();
+      if (version !== this._requestVersion) return;
       this._updateResultsDOM(this._buildResponseHTML());
       if (window.app) window.app.showToast('Fresh example added!', 'success');
     } catch (e) {
+      if (version !== this._requestVersion || controller.signal.aborted || e.name === 'AbortError') return;
+      this._updateResultsDOM(this._buildResponseHTML());
       console.error(e);
+      if (window.app) window.app.showToast(`Could not generate example: ${e.message}`, 'error');
+    } finally {
+      this._requestControllers.delete(controller);
+      if (version === this._requestVersion) this._exampleLoading = false;
+      exBtns.forEach(b => b.removeAttribute('disabled'));
     }
   }
 
   askFollowUpChip(text) {
+    this._mentorshipIntent = 'question';
     const input = document.getElementById('followup-input-field');
     if (input) {
       input.value = text;
@@ -1591,31 +1761,73 @@ class AiTeacherView {
     }
   }
 
+  /** Safe alternative: look up the suggestion text by index from current explanation data */
+  askFollowUpChipByIndex(idx) {
+    const suggestions = this.currentExplanation?.followUpSuggestions;
+    if (!suggestions || idx < 0 || idx >= suggestions.length) return;
+    this.askFollowUpChip(suggestions[idx]);
+  }
+
   async sendFollowUp() {
+    if (!this.currentExplanation || this.isLoading || this.isFollowUpLoading) return;
     const input = document.getElementById('followup-input-field');
     const query = (input ? input.value : '').trim();
     if (!query) return;
 
+    const replyIntent = this._mentorshipIntent;
+    this.isFollowUpLoading = true;
+    const version = this._requestVersion;
+    const controller = this._createRequestController();
     input.value = '';
     if (window.app) window.app.showToast('AI Teacher is thinking...', 'info');
 
+    // Disable the send button during loading
+    const sendBtn = input?.parentElement?.querySelector('.followup-send-btn');
+    if (sendBtn) { sendBtn.setAttribute('disabled', 'true'); sendBtn.innerHTML = '<i data-lucide="loader" style="width:14px;height:14px;" class="spin-icon"></i> Thinking...'; }
+
     try {
       const response = await window.aiTeacherService.askFollowUp({
-        originalQuestion: this.questionInput,
+        originalQuestion: this._lessonQuestion || this.questionInput,
         previousExplanation: this.currentExplanation,
         followUpQuery: query,
-        language: this.selectedLanguage,
-        educationLevel: this.selectedEducationLevel
+        language: this._lessonSettings?.language || this.selectedLanguage,
+        educationLevel: this._lessonSettings?.educationLevel || this.selectedEducationLevel,
+        studentContext: this.currentExplanation.studentContext,
+        history: this.followUpHistory, replyIntent, pdfContext: this.attachedPdf, signal: controller.signal
       });
 
-      this.followUpHistory.push({ query, response });
+      if (version !== this._requestVersion || controller.signal.aborted) return;
+      this.followUpHistory.push({ query, response, replyIntent });
+      try { await this._persistCurrentLesson(); }
+      catch (saveError) {
+        if (version === this._requestVersion) window.app?.showToast('Reply ready, but history could not be saved. Please try Save again.', 'warning');
+      }
+      if (version !== this._requestVersion) return;
       this._updateResultsDOM(this._buildResponseHTML());
 
       const container = document.getElementById('followup-messages-container');
       if (container) container.scrollIntoView({ behavior: 'smooth', block: 'end' });
     } catch (e) {
+      if (version !== this._requestVersion || controller.signal.aborted || e.name === 'AbortError') return;
+      this._updateResultsDOM(this._buildResponseHTML());
+      const retryInput = document.getElementById('followup-input-field');
+      if (retryInput && !retryInput.value) retryInput.value = query;
       console.error(e);
       if (window.app) window.app.showToast(`Could not process follow-up: ${e.message}`, 'error');
+      // Restore the send button on error
+      if (sendBtn) { sendBtn.removeAttribute('disabled'); sendBtn.innerHTML = '<i data-lucide="send" style="width:14px;height:14px;"></i> Ask'; if (window.lucide) window.lucide.createIcons(); }
+    } finally {
+      this._requestControllers.delete(controller);
+      if (version === this._requestVersion) {
+        this.isFollowUpLoading = false;
+        document.querySelectorAll('#teacher-results-container .mentor-reply-btn').forEach(button => button.removeAttribute('disabled'));
+        const currentSendButton = document.querySelector('#teacher-results-container .followup-send-btn');
+        if (currentSendButton) {
+          currentSendButton.removeAttribute('disabled');
+          currentSendButton.innerHTML = `<i data-lucide="send" style="width:14px;height:14px;"></i> ${this._mentorshipIntent === 'question' ? 'Ask' : 'Send'}`;
+          window.app?.refreshIcons();
+        }
+      }
     }
   }
 
@@ -1633,11 +1845,11 @@ class AiTeacherView {
       if (this.isPaused) {
         window.speechSynthesis.resume();
         this.isPaused = false;
-        this._updateResultsDOM(this._buildResponseHTML());
+        this._updateTtsButtonUI();
       } else {
         window.speechSynthesis.pause();
         this.isPaused = true;
-        this._updateResultsDOM(this._buildResponseHTML());
+        this._updateTtsButtonUI();
       }
       return;
     }
@@ -1655,6 +1867,8 @@ class AiTeacherView {
       ${this.currentExplanation.foundation ? this.currentExplanation.foundation.explanation : ''}.
       ${(this.currentExplanation.steps || []).map(s => s.title + '. ' + s.content).join('. ')}.
       ${this.currentExplanation.analogy ? 'Think of it like this: ' + this.currentExplanation.analogy.analogyText : ''}
+      ${(this.currentExplanation.mathSolution?.calculationSteps || []).map(step => step.math + '. ' + step.explanation).join('. ')}.
+      ${this.currentExplanation.mathSolution?.finalAnswer || ''}
     `.replace(/<[^>]*>/g, '').replace(/[*#_~]/g, '');
 
     const utterance = new SpeechSynthesisUtterance(cleanSpeechText);
@@ -1662,31 +1876,32 @@ class AiTeacherView {
     utterance.pitch = 1.0;
 
     // Detect language for voice matching
-    if (this.selectedLanguage === 'HINDI') {
+    if (['HINDI', 'HINGLISH'].includes(this._lessonSettings?.language || this.selectedLanguage) || /[\u0900-\u097f]/.test(cleanSpeechText)) {
       utterance.lang = 'hi-IN';
     } else {
-      utterance.lang = 'en-US';
+      utterance.lang = 'en-IN';
     }
 
     utterance.onstart = () => {
       this.isSpeaking = true;
       this.isPaused = false;
-      this._updateResultsDOM(this._buildResponseHTML());
+      this._updateTtsButtonUI();
     };
 
     utterance.onend = () => {
       this.isSpeaking = false;
       this.isPaused = false;
-      this._updateResultsDOM(this._buildResponseHTML());
+      this._updateTtsButtonUI();
     };
 
     utterance.onerror = () => {
       this.isSpeaking = false;
       this.isPaused = false;
-      this._updateResultsDOM(this._buildResponseHTML());
+      this._updateTtsButtonUI();
     };
 
     this.ttsUtterance = utterance;
+    window.studyPreferences?.applySpeech(utterance, cleanSpeechText);
     window.speechSynthesis.speak(utterance);
   }
 
@@ -1698,64 +1913,125 @@ class AiTeacherView {
     this.isPaused = false;
   }
 
+  /** Update only the TTS play/pause button without rebuilding the entire DOM */
+  _updateTtsButtonUI() {
+    const playBtn = document.getElementById('tts-play-btn');
+    if (!playBtn) return;
+    const iconName = this.isSpeaking && !this.isPaused ? 'volume-x' : 'volume-2';
+    playBtn.innerHTML = `<i data-lucide="${iconName}" style="width:16px;height:16px;"></i>`;
+    const label = playBtn.nextElementSibling;
+    if (label) label.textContent = this.isSpeaking ? (this.isPaused ? 'Paused' : 'Playing') : 'Listen';
+    if (window.lucide) window.lucide.createIcons();
+  }
+
   // =========================================================================
   // EXPORT & BOOKMARK ACTIONS
   // =========================================================================
 
   async toggleBookmark() {
-    if (!this.currentRecordId) {
-      // Save first
-      this.currentRecordId = await saveAiTeacherExplanation({
-        question: this.questionInput,
-        topic: this.currentExplanation.topic || this.questionInput,
-        subject: this.currentExplanation.subject || 'General',
-        language: this.selectedLanguage,
-        depth: this.selectedDepth,
-        mode: this.selectedMode,
-        structuredData: this.currentExplanation,
-        isBookmarked: true
-      });
-      this.isBookmarked = true;
-    } else {
-      this.isBookmarked = await toggleBookmarkAiTeacherExplanation(this.currentRecordId);
-    }
-
-    if (window.app) {
-      window.app.showToast(this.isBookmarked ? '🔖 Lesson saved to Bookmarks!' : 'Bookmark removed', 'success');
-    }
-    this._updateResultsDOM(this._buildResponseHTML());
+    if (!this.currentExplanation || this.isLoading || this._bookmarkLoading) return;
+    this._bookmarkLoading = true;
+    const version = this._requestVersion;
+    const previous = this.isBookmarked;
+    this.isBookmarked = !previous;
+    try {
+      await this._persistCurrentLesson();
+      if (version !== this._requestVersion) return;
+      window.app?.showToast(this.isBookmarked ? 'Lesson saved to Bookmarks!' : 'Bookmark removed', 'success');
+      this._updateResultsDOM(this._buildResponseHTML());
+      await this._refreshStats();
+    } catch (error) {
+      if (version !== this._requestVersion) return;
+      this.isBookmarked = previous;
+      window.app?.showToast('Could not save the bookmark. Please retry.', 'error');
+    } finally { this._bookmarkLoading = false; }
   }
 
-  copyExplanation() {
-    if (!this.currentExplanation) return;
+  _lessonMarkdown() {
     const exp = this.currentExplanation;
-    const md = `
-# ${exp.topic || this.questionInput}
-**Subject:** ${exp.subject || 'General'} | **Language:** ${this.selectedLanguage}
+    if (!exp) return '';
+    const parts = [`# ${exp.topic || this._lessonQuestion || this.questionInput}`,
+      `Question: ${this._lessonQuestion || this.questionInput}`,
+      `Subject: ${exp.subject || 'General'} | Language: ${this._lessonSettings?.language || this.selectedLanguage}`,
+      this._sourceLabel()];
+    const section = (title, text) => { if (text) parts.push(`## ${title}\n${text}`); };
+    const lines = values => (values || []).filter(Boolean).map(value => `- ${value}`).join('\n');
+    section('Quick Answer', exp.quickAnswer);
+    section('Foundation', exp.foundation?.explanation);
+    section('Key Terms', (exp.foundation?.technicalTerms || []).map(term => `- ${term.term}: ${term.simpleMeaning}${term.example ? ` — ${term.example}` : ''}`).join('\n'));
+    section('Step-by-Step Reasoning', (exp.steps || []).map((step, index) => `${index + 1}. ${step.title || ''}: ${step.content || ''}`).join('\n'));
+    const math = exp.mathSolution;
+    if (math) section('Math Solution', [math.given && `Given: ${math.given}`, math.toFind && `Find: ${math.toFind}`,
+      math.formula && `Formula: ${math.formula}`, math.formulaExplanation,
+      ...(math.calculationSteps || []).map(step => `${step.step}: ${step.math} — ${step.explanation}`),
+      math.finalAnswer && `Final answer: ${math.finalAnswer}`, math.verification && `Check: ${math.verification}`,
+      math.alternateMethod && `Alternate method: ${math.alternateMethod}`].filter(Boolean).join('\n'));
+    section('Why and How', exp.whyAndHow && Object.entries(exp.whyAndHow).filter(([,value]) => value).map(([key,value]) => `${key}: ${value}`).join('\n'));
+    section('Analogy', [exp.analogy?.analogyText, exp.analogy?.takeaway].filter(Boolean).join('\n'));
+    section('Examples', (exp.examples || []).map(example => `### ${example.title || example.type || 'Example'}\n${example.description || ''}`).join('\n\n'));
+    section('Flowchart', (exp.flowchart?.nodes || []).map(node => `${node.label}: ${node.description || ''}`).join('\n → '));
+    if (exp.diagram?.svgContent) section('Diagram', [exp.diagram.title, exp.diagram.caption, SecurityUtils.sanitizeSvg(exp.diagram.svgContent)].filter(Boolean).join('\n'));
+    if (exp.comparison) section(exp.comparison.title || 'Comparison', [exp.comparison.headers || [], ...(exp.comparison.rows || [])].map(row => row.join(' | ')).join('\n'));
+    section('Common Mistakes', (exp.commonMistakes || []).map(item => `- ${item.mistake} → ${item.correction}`).join('\n'));
+    section('Memory Trick', [exp.memoryTrick?.mnemonic, exp.memoryTrick?.explanation].filter(Boolean).join('\n'));
+    if (exp.examPoints) section('Exam Points', [lines(exp.examPoints.highYieldPoints), lines(exp.examPoints.keyTerms),
+      exp.examPoints.expectedAnswerStructure, lines(exp.examPoints.potentialMcqFacts)].filter(Boolean).join('\n'));
+    section('Summary', lines(exp.summary));
+    section('Practice Questions', (exp.practiceQuestions || []).map((question,index) => `${index + 1}. ${question.question}\n${lines(question.options)}\nAnswer: ${question.answer || ''}\n${question.explanation || ''}`).join('\n\n'));
+    section('Sources', (exp.sources || []).map(source => `- ${source.name}${source.detail ? `: ${source.detail}` : ''}`).join('\n'));
+    section('Socratic Tutor', exp.socraticTutor && [exp.socraticTutor.learningGoal, exp.socraticTutor.guidingQuestion, lines(exp.socraticTutor.hints)].filter(Boolean).join('\n'));
+    section('Debate AI', exp.debateCoach && [exp.debateCoach.claim, lines(exp.debateCoach.supportingPoints), lines(exp.debateCoach.counterPoints), exp.debateCoach.boundary, exp.debateCoach.reflectionQuestion].filter(Boolean).join('\n'));
+    section('Mind Map', exp.mindMap ? [exp.mindMap.centralTopic, ...(exp.mindMap.branches || []).map(branch => `${branch.title}: ${branch.detail}\n${lines(branch.children)}`)].join('\n') : exp.mermaidMindmap);
+    section('Connections', exp.hamsaConnections && Object.entries(exp.hamsaConnections).map(([subject,detail]) => `${subject}: ${detail}`).join('\n'));
+    section('Teach Back Challenge', [exp.teachBackChallenge, lines(exp.teachBackCriteria)].filter(Boolean).join('\n'));
+    section('Follow-up Suggestions', lines(exp.followUpSuggestions));
+    section('Follow-up Conversation', this.followUpHistory.map(item => `Q: ${item.query}\n${[item.response.followUpAnswer, item.response.clarifyingExample, item.response.miniAnalogy, item.response.checkQuestion].filter(Boolean).join('\n')}`).join('\n\n'));
+    return parts.join('\n\n');
+  }
 
-## Quick Answer
-${exp.quickAnswer || ''}
+  async copyExplanation() {
+    if (!this.currentExplanation) return;
+    try {
+      await navigator.clipboard.writeText(this._lessonMarkdown());
+      window.app?.showToast('Complete lesson copied to clipboard!', 'success');
+    } catch (error) { window.app?.showToast('Could not copy to clipboard', 'error'); }
+  }
 
-## Foundation & Understanding
-${exp.foundation?.explanation || ''}
+  _supplementalExportHTML() {
+    const exp = this.currentExplanation;
+    const escape = value => SecurityUtils.escapeHtml(value || '');
+    const section = (title, content) => content ? `<section class="book-export-chapter"><h3>${escape(title)}</h3>${content}</section>` : '';
+    const paragraph = value => value ? `<p>${escape(value)}</p>` : '';
+    let html = paragraph(this._sourceLabel());
+    if (exp.diagram?.svgContent) html += section(exp.diagram.title || 'Concept Diagram',
+      this._diagramSvgForExport(exp.diagram.svgContent) + paragraph(exp.diagram.caption));
+    html += section('Sources', (exp.sources || []).map(source => paragraph(`${source.name}${source.detail ? ': ' + source.detail : ''}`)).join(''));
+    html += section('Socratic Tutor', exp.socraticTutor ? [exp.socraticTutor.learningGoal, exp.socraticTutor.guidingQuestion, ...(exp.socraticTutor.hints || [])].map(paragraph).join('') : '');
+    html += section('Debate AI', exp.debateCoach ? [exp.debateCoach.claim, ...(exp.debateCoach.supportingPoints || []), ...(exp.debateCoach.counterPoints || []), exp.debateCoach.boundary, exp.debateCoach.reflectionQuestion].map(paragraph).join('') : '');
+    html += section('Mind Map', exp.mindMap ? this._mindMapHTML(exp.mindMap) : exp.mermaidMindmap ? `<pre style="white-space:pre-wrap;overflow-wrap:anywhere;">${escape(exp.mermaidMindmap)}</pre>` : '');
+    html += section('Connections', exp.hamsaConnections ? Object.entries(exp.hamsaConnections).map(([subject,detail]) => paragraph(`${subject}: ${detail}`)).join('') : '');
+    html += section('Teach Back Challenge', paragraph(exp.teachBackChallenge) + (exp.teachBackCriteria || []).map(paragraph).join(''));
+    html += section('Additional Explanation', exp.whyAndHow ? Object.entries(exp.whyAndHow).filter(([key]) => ['when', 'where'].includes(key)).map(([key,value]) => paragraph(value && `${key}: ${value}`)).join('') : '');
+    html += section('Alternate Method', paragraph(exp.mathSolution?.alternateMethod));
+    html += section('Exam Answer Structure', paragraph(exp.examPoints?.expectedAnswerStructure)
+      + paragraph((exp.examPoints?.keyTerms || []).join(', ')) + paragraph((exp.examPoints?.potentialMcqFacts || []).join('; ')));
+    html += section('Follow-up Suggestions', (exp.followUpSuggestions || []).map(paragraph).join(''));
+    html += section('Follow-up Conversation', this.followUpHistory.map(item => `<div><strong>${escape(item.query)}</strong>${[item.response.followUpAnswer, item.response.clarifyingExample, item.response.miniAnalogy, item.response.checkQuestion].map(paragraph).join('')}</div>`).join(''));
+    return html;
+  }
 
-## Step-by-Step Reasoning
-${(exp.steps || []).map(s => `${s.stepNumber}. **${s.title}**: ${s.content}`).join('\n')}
-
-${exp.analogy?.analogyText ? `## Analogy\n> ${exp.analogy.analogyText}` : ''}
-
-## Final Summary
-${(exp.summary || []).map(s => `- ${s}`).join('\n')}
-
----
-*Generated by HAMSA VIDYA (हंस विद्या) AI Teacher*
-    `.trim();
-
-    navigator.clipboard.writeText(md).then(() => {
-      if (window.app) window.app.showToast('Complete lesson copied to clipboard!', 'success');
-    }).catch(() => {
-      if (window.app) window.app.showToast('Could not copy to clipboard', 'error');
-    });
+  _diagramSvgForExport(content) {
+    const holder = document.createElement('div');
+    holder.innerHTML = SecurityUtils.sanitizeSvg(content);
+    const svg = holder.querySelector('svg');
+    if (!svg) return '';
+    const box = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+    if (box.length === 4 && box.every(Number.isFinite) && box[2] > 0 && box[3] > 0) {
+      // Canvas image loading needs intrinsic dimensions, not viewport percentages.
+      svg.setAttribute('width', String(box[2]));
+      svg.setAttribute('height', String(box[3]));
+    }
+    return svg.outerHTML;
   }
 
   copySectionText(text) {
@@ -1764,63 +2040,62 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
     });
   }
 
-  downloadPdf() {
-    if (!this.currentExplanation) {
-      if (window.app) window.app.showToast('No active explanation to download.', 'warning');
-      return;
-    }
-    if (window.app) window.app.showToast('Generating official study manuscript PDF...', 'info');
+  /** Safe copy from data field — avoids inline quote injection */
+  copySectionFromData(field) {
+    if (!this.currentExplanation) return;
+    const text = this.currentExplanation[field] || '';
+    navigator.clipboard.writeText(text).then(() => {
+      if (window.app) window.app.showToast('Section copied to clipboard!', 'success');
+    }).catch(() => {
+      if (window.app) window.app.showToast('Could not copy to clipboard', 'error');
+    });
+  }
 
+  async downloadPdf() {
+    if (!this.currentExplanation || this._pdfExporting) return;
+    this._pdfExporting = true;
+    const exp = this.currentExplanation;
+    const question = this._lessonQuestion || this.questionInput;
+    const exportHTML = this._generateBookHTMLForExport();
     const container = document.createElement('div');
     container.id = 'hamsa-printable-book-export-container';
-    container.style.position = 'absolute';
-    container.style.left = '-9999px';
-    container.style.top = '0';
-    container.style.width = '794px'; /* Exactly 210mm at 96 DPI for perfect A4 rendering */
-    container.style.background = '#FFFFFF';
-    container.style.zIndex = '-9999';
-    container.innerHTML = this._generateBookHTMLForExport();
-    document.body.appendChild(container);
-
-    const exp = this.currentExplanation;
-    const cleanFileName = ((exp.topic || this.questionInput || 'Hamsa_Lesson')
-      .replace(/[^a-zA-Z0-9_\u0900-\u097F\s-]/g, '')
-      .replace(/\s+/g, '_')
-      .substring(0, 45)) || 'Hamsa_Teacher_Lesson';
-
-    const targetEl = container.querySelector('#hamsa-printable-book') || container;
-
-    if (window.html2pdf) {
+    Object.assign(container.style, { position: 'absolute', left: '-9999px', top: '0', width: '794px', background: '#FFFFFF', zIndex: '-9999' });
+    try {
+      window.app?.showToast('Generating study manuscript PDF...', 'info');
+      container.innerHTML = exportHTML;
+      document.body.appendChild(container);
+      container.querySelectorAll('.book-export-chapter').forEach(chapter => {
+        if (chapter.querySelector('.book-export-ch-badge') && chapter.children.length === 1) chapter.remove();
+      });
+      if (document.fonts?.ready) await document.fonts.ready;
+      const filename = (exp.topic || question || 'Hamsa_Lesson').replace(/[^a-zA-Z0-9_\u0900-\u097F\s-]/g, '')
+        .replace(/\s+/g, '_').substring(0, 45) || 'Hamsa_Teacher_Lesson';
+      if (!window.html2pdf) {
+        this._openPrintWindow(container.innerHTML, exp.topic);
+        return;
+      }
       const opt = {
-        margin: [8, 10, 8, 10], // 8mm top/bottom, 10mm left/right
-        filename: `${cleanFileName}_Study_Manuscript.pdf`,
+        margin: [8, 10, 8, 10], filename: `${filename}_Study_Manuscript.pdf`,
         image: { type: 'jpeg', quality: 0.98 },
         html2canvas: {
-          scale: 2,
-          useCORS: true,
-          letterRendering: true,
-          logging: false
+          scale: 2, useCORS: true, letterRendering: true, logging: false,
+          scrollX: 0, scrollY: 0, backgroundColor: '#FFFFFF',
+          onclone: clonedDocument => {
+            // Theme selectors must also use light paper in the capture document.
+            clonedDocument.documentElement.dataset.theme = 'LIGHT';
+          }
         },
         jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
         pagebreak: { mode: ['css', 'legacy'] }
       };
-
-      window.html2pdf().set(opt).from(targetEl).save()
-        .then(() => {
-          if (window.app) window.app.showToast('PDF downloaded successfully!', 'success');
-        })
-        .catch((err) => {
-          console.warn('html2pdf failed, falling back to clean print window:', err);
-          this._openPrintWindow();
-        })
-        .finally(() => {
-          if (container.parentNode) {
-            container.parentNode.removeChild(container);
-          }
-        });
-    } else {
-      if (container.parentNode) container.parentNode.removeChild(container);
-      this._openPrintWindow();
+      await window.html2pdf().set(opt).from(container.querySelector('#hamsa-printable-book') || container).save();
+      window.app?.showToast('PDF downloaded successfully!', 'success');
+    } catch (error) {
+      console.warn('PDF generation failed:', error);
+      this._openPrintWindow(container.innerHTML || exportHTML, exp.topic);
+    } finally {
+      container.remove();
+      this._pdfExporting = false;
     }
   }
 
@@ -1828,11 +2103,11 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
     this._openPrintWindow();
   }
 
-  _openPrintWindow() {
-    if (!this.currentExplanation) return;
+  _openPrintWindow(exportHTML = null, topic = null) {
+    if (!exportHTML && !this.currentExplanation) return;
     const printWindow = window.open('', '_blank');
     if (!printWindow) {
-      window.print();
+      window.app?.showToast('Allow pop-ups in your browser to print this lesson.', 'warning');
       return;
     }
 
@@ -1841,19 +2116,18 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
       <html lang="en">
       <head>
         <meta charset="UTF-8">
-        <title>${SecurityUtils.escapeHtml(this.currentExplanation.topic || 'Hamsa_Study_Notes')} — HAMSA VIDYA</title>
+        <title>${SecurityUtils.escapeHtml(topic || this.currentExplanation?.topic || 'Hamsa_Study_Notes')} — HAMSA VIDYA</title>
         <link rel="preconnect" href="https://fonts.googleapis.com">
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
         <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
       </head>
       <body style="margin:0; padding:0; background:#ffffff;">
-        ${this._generateBookHTMLForExport()}
+        ${exportHTML || this._generateBookHTMLForExport()}
         <script>
-          window.onload = function() {
-            setTimeout(function() {
-              window.focus();
-              window.print();
-            }, 300);
+          window.onload = async function() {
+            if (document.fonts && document.fonts.ready) await document.fonts.ready;
+            window.focus();
+            window.print();
           };
         <\/script>
       </body>
@@ -1879,12 +2153,17 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
             size: A4 portrait;
             margin: 10mm 12mm 10mm 12mm;
           }
-          * {
+          .hamsa-book-export-root, .hamsa-book-export-root * {
             box-sizing: border-box;
             -webkit-print-color-adjust: exact !important;
             print-color-adjust: exact !important;
           }
           .hamsa-book-export-root {
+            /* Exports are light paper even when the app uses a dark theme. */
+            --text-main: #1A1A1A;
+            --text-primary: #1A1A1A;
+            --text-secondary: #475569;
+            --text-muted: #64748B;
             font-family: 'Inter', 'Noto Sans Devanagari', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
             color: #1A1A1A;
             background: #FFFFFF;
@@ -1894,6 +2173,17 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
             max-width: 794px;
             margin: 0 auto;
             padding: 8px 14px 20px;
+          }
+          .hamsa-book-export-root :is(p, li, strong, em, b, i, blockquote, pre, code, h1, h2, h3, h4, h5, h6) {
+            color: inherit;
+            -webkit-text-fill-color: currentColor;
+          }
+          .hamsa-book-export-root svg {
+            display: block;
+            width: 100%;
+            height: auto;
+            max-width: 100%;
+            max-height: 280px;
           }
           .book-export-header {
             display: flex;
@@ -2186,7 +2476,7 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
           <div class="book-export-meta-pills">
             <span class="book-export-pill pill-gold">🎓 Level: ${SecurityUtils.escapeHtml(studentCtx.levelLabel || 'Academic Standard')}</span>
             <span class="book-export-pill pill-indigo">📚 ${SecurityUtils.escapeHtml(exp.subject || 'General')}</span>
-            <span class="book-export-pill">🌐 ${SecurityUtils.escapeHtml(this.selectedLanguage)}</span>
+            <span class="book-export-pill">🌐 ${SecurityUtils.escapeHtml(this._lessonSettings?.language || this.selectedLanguage)}</span>
             <span class="book-export-pill">📅 ${dateStr}</span>
           </div>
         </div>
@@ -2194,7 +2484,7 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
         <!-- Question Box -->
         <div class="book-export-question-box">
           <div class="book-export-q-lbl">INVESTIGATED TOPIC & QUESTION • मूल प्रश्न</div>
-          <h2 class="book-export-q-text">“${SecurityUtils.escapeHtml(this.questionInput || exp.topic || 'Core Concept')}”</h2>
+          <h2 class="book-export-q-text">“${SecurityUtils.escapeHtml(this._lessonQuestion || this.questionInput || exp.topic || 'Core Concept')}”</h2>
           ${exp.topic ? `<div style="font-size:8.5pt; color:#475569; margin-top:2px;">Focus: <strong>${SecurityUtils.escapeHtml(exp.topic)}</strong></div>` : ''}
         </div>
 
@@ -2247,9 +2537,9 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
             <span>§ II</span> • <span>Scientific Mechanism & Logical Breakdown (कार्यप्रणाली एवं वैज्ञानिक तर्क)</span>
           </div>
 
-          ${exp.mathSolution && (exp.isMath || exp.mathSolution.formula || exp.mathSolution.calculationSteps?.length) ? `
+          ${exp.mathSolution && (exp.isMath || exp.mathSolution.formula || exp.mathSolution.calculationSteps?.length || exp.mathSolution.finalAnswer) ? `
             <div class="book-export-math-box">
-              <div style="font-size:8.5pt; font-weight:800; color:#0369A1; text-transform:uppercase;">📐 Verified Mathematical Derivation / Solution</div>
+              <div style="font-size:8.5pt; font-weight:800; color:#0369A1; text-transform:uppercase;">📐 Mathematical Derivation / Solution</div>
               <div style="font-size:8.5pt; margin:4px 0;">
                 ${exp.mathSolution.given ? `<strong>Given:</strong> ${SecurityUtils.escapeHtml(exp.mathSolution.given)} &nbsp;|&nbsp; ` : ''}
                 ${exp.mathSolution.toFind ? `<strong>To Find:</strong> ${SecurityUtils.escapeHtml(exp.mathSolution.toFind)}` : ''}
@@ -2334,7 +2624,7 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
             ${exp.examples && exp.examples.length > 0 ? `
               <div class="book-export-card">
                 <div class="book-export-card-title">🧠 Real-Life Example</div>
-                ${exp.examples.slice(0, 2).map(ex => `
+                ${exp.examples.map(ex => `
                   <div style="margin-bottom:4px;">
                     <strong>${SecurityUtils.escapeHtml(ex.title || 'Practical Scenario')}:</strong>
                     <span>${SecurityUtils.sanitizeHtml(marked.parse(ex.description || ''))}</span>
@@ -2449,10 +2739,12 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
           ` : ''}
         </div>
 
+        ${this._supplementalExportHTML()}
+
         <!-- Folio Footer -->
         <div class="book-export-footer">
           <span>📖 HAMSA VIDYA AI TEACHER • हंस विद्या अध्ययन पाण्डुलिपि</span>
-          <span>From Fundamentals to Mastery • 100% Academic Integrity</span>
+          <span>From Fundamentals to Mastery • Review answers against your course sources</span>
         </div>
       </div>
     `;
@@ -2473,9 +2765,14 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
       document.body.appendChild(overlay);
     }
 
+    overlay.removeEventListener('keydown', this._diagramKeyHandler);
+    this._diagramReturnFocus = document.activeElement;
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'Concept diagram');
     overlay.innerHTML = `
       <div class="diagram-fullscreen-box">
-        <button class="diagram-fullscreen-close" onclick="window.aiTeacherView.closeDiagramModal()">
+        <button class="diagram-fullscreen-close" aria-label="Close diagram" onclick="window.aiTeacherView.closeDiagramModal()">
           <i data-lucide="x" style="width:24px;height:24px;"></i>
         </button>
         <h3 style="margin-bottom:1rem; font-size:1.25rem;">
@@ -2487,12 +2784,18 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
       </div>
     `;
     overlay.style.display = 'flex';
+    this._diagramKeyHandler = event => { if (event.key === 'Escape') this.closeDiagramModal(); if (event.key === 'Tab') { event.preventDefault(); overlay.querySelector('button')?.focus(); } };
+    overlay.addEventListener('keydown', this._diagramKeyHandler);
+    overlay.querySelector('button')?.focus();
     if (window.lucide) window.lucide.createIcons();
+    if (window.mermaid) { setTimeout(() => { try { mermaid.init(undefined, document.querySelectorAll('.mermaid')); } catch(e){} }, 100); }
   }
 
   closeDiagramModal() {
     const overlay = document.getElementById('diagram-fullscreen-modal');
-    if (overlay) overlay.style.display = 'none';
+    if (overlay) { overlay.style.display = 'none'; overlay.removeEventListener('keydown', this._diagramKeyHandler); }
+    this._diagramReturnFocus?.focus?.();
+    this._diagramReturnFocus = null;
   }
 
   downloadDiagramSvg() {
@@ -2537,18 +2840,19 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
               style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:var(--radius-md); padding:0.5rem 0.85rem; color:var(--text-primary); font-size:0.85rem;"
               onchange="window.aiTeacherView.handleVaultSubjectFilter(this.value, ${onlyBookmarked})"
             >
-              <option value="ALL">All Subjects</option>
-              <option value="Mathematics">Mathematics</option>
-              <option value="Science">Science</option>
-              <option value="History">History</option>
-              <option value="Geography">Geography</option>
-              <option value="Polity">Polity</option>
-              <option value="Economy">Economy</option>
-              <option value="Computer Science">Computer Science</option>
+              <option value="ALL" ${this.vaultSubjectFilter === 'ALL' ? 'selected' : ''}>All Subjects</option>
+              <option value="Mathematics" ${this.vaultSubjectFilter === 'Mathematics' ? 'selected' : ''}>Mathematics</option>
+              <option value="Science" ${this.vaultSubjectFilter === 'Science' ? 'selected' : ''}>Science</option>
+              <option value="History" ${this.vaultSubjectFilter === 'History' ? 'selected' : ''}>History</option>
+              <option value="Geography" ${this.vaultSubjectFilter === 'Geography' ? 'selected' : ''}>Geography</option>
+              <option value="Polity" ${this.vaultSubjectFilter === 'Polity' ? 'selected' : ''}>Polity</option>
+              <option value="Economy" ${this.vaultSubjectFilter === 'Economy' ? 'selected' : ''}>Economy</option>
+              <option value="Computer Science" ${this.vaultSubjectFilter === 'Computer Science' ? 'selected' : ''}>Computer Science</option>
             </select>
           </div>
         </div>
 
+        <div class="vault-results">
         ${items.length === 0 ? `
           <div style="text-align:center; padding:3rem 1rem; color:var(--text-muted); background:var(--bg-card); border-radius:var(--radius-xl); border:1px dashed var(--border-color);">
             <i data-lucide="${onlyBookmarked ? 'bookmark' : 'clock'}" style="width:36px;height:36px;margin-bottom:0.75rem;opacity:0.5;"></i>
@@ -2562,12 +2866,12 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
         ` : `
           <div class="vault-cards-grid">
             ${items.map(item => `
-              <div class="vault-item-card spotlight-card" onclick="window.aiTeacherView.loadSavedLesson(${item.id})">
+              <div class="vault-item-card spotlight-card" onclick="window.aiTeacherView.loadSavedLesson(${Number.isSafeInteger(Number(item.id)) ? Number(item.id) : 0})">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start;">
                   <span class="meta-pill meta-pill-subject" style="font-size:0.7rem;">${SecurityUtils.escapeHtml(item.subject || 'General')}</span>
                   <button
                     style="background:transparent; border:none; color:var(--color-error); cursor:pointer; padding:2px;"
-                    onclick="event.stopPropagation(); window.aiTeacherView.deleteSavedLesson(${item.id}, ${onlyBookmarked})"
+                    onclick="event.stopPropagation(); window.aiTeacherView.deleteSavedLesson(${Number.isSafeInteger(Number(item.id)) ? Number(item.id) : 0}, ${onlyBookmarked})"
                     title="Delete record"
                   >
                     <i data-lucide="trash-2" style="width:14px;height:14px;"></i>
@@ -2585,32 +2889,75 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
             `).join('')}
           </div>
         `}
+        </div>
       </section>
     `;
   }
 
   handleVaultSearch(query, onlyBookmarked) {
+    this._vaultVersion++;
     this.vaultSearchQuery = query;
-    this._renderActiveTabContent();
+    // Debounce search to avoid excessive re-renders on each keystroke
+    if (this._vaultSearchTimer) clearTimeout(this._vaultSearchTimer);
+    this._vaultSearchTimer = setTimeout(() => {
+      this._renderVaultCardsOnly(onlyBookmarked);
+    }, 300);
   }
 
   handleVaultSubjectFilter(subject, onlyBookmarked) {
     this.vaultSubjectFilter = subject;
-    this._renderActiveTabContent();
+    this._renderVaultCardsOnly(onlyBookmarked);
+  }
+
+  async _renderVaultCardsOnly(onlyBookmarked) {
+    const version = ++this._vaultVersion;
+    const tab = this.activeTab;
+    try {
+      const html = await this._buildVaultHTML(onlyBookmarked);
+      if (version !== this._vaultVersion || tab !== this.activeTab || tab === 'studio') return;
+      const target = this.container?.querySelector('.vault-results');
+      if (!target) return;
+      const template = document.createElement('template');
+      template.innerHTML = html;
+      target.innerHTML = template.content.querySelector('.vault-results').innerHTML;
+      this._refreshIcons();
+    } catch (error) {
+      if (version === this._vaultVersion) window.app?.showToast('Could not load saved lessons. Please retry.', 'error');
+    }
   }
 
   async loadSavedLesson(id) {
+    this._cancelRequests();
+    const version = this._requestVersion;
     const record = await getAiTeacherExplanationById(id);
-    if (!record) return;
+    if (!record || version !== this._requestVersion) return;
+    const lesson = window.aiTeacherService.normalizeExplanation(record.structuredData);
+    if (!lesson) { window.app?.showToast('This saved lesson is invalid and cannot be opened.', 'error'); return; }
+    if (lesson.advancedModes && !window.aiTeacherService.validateAdvancedOutputs(lesson, lesson.advancedModes)) {
+      window.app?.showToast('This saved lesson has incomplete mentorship content and cannot be opened.', 'error'); return;
+    }
+    this.stopVoiceInput();
+    this.stopSpeech();
+    this.closeDiagramModal();
+    this._releaseImagePreview();
+    this.attachedImage = null;
+    this.attachedPdf = null;
+    this.attachedPdfMeta = null;
+    this._recordCreatedAt = record.createdAt;
+    this._lessonQuestion = record.question;
+    this.advancedModes = window.aiTeacherService.lessonAdvancedModes(lesson);
+    this._lessonSettings = { language: record.language, depth: record.depth, mode: record.mode, educationLevel: record.educationLevel, advancedModes: { ...this.advancedModes } };
 
     this.currentRecordId = record.id;
     this.questionInput = record.question;
     this.selectedLanguage = record.language || 'BILINGUAL';
     this.selectedDepth = record.depth || 'DETAILED';
     this.selectedMode = record.mode || 'STUDENT';
-    this.currentExplanation = record.structuredData;
+    this.selectedEducationLevel = record.educationLevel || 'AUTO';
+    this.currentExplanation = lesson;
     this.isBookmarked = Boolean(record.isBookmarked);
-    this.followUpHistory = [];
+    this.followUpHistory = (Array.isArray(record.followUpHistory) ? record.followUpHistory : []).filter(item =>
+      item && typeof item.query === 'string' && item.response && typeof item.response.followUpAnswer === 'string');
 
     this.activeTab = 'studio';
     this.render();
@@ -2618,7 +2965,10 @@ ${(exp.summary || []).map(s => `- ${s}`).join('\n')}
   }
 
   async deleteSavedLesson(id, onlyBookmarked) {
-    await deleteAiTeacherExplanation(id);
+    if (!window.confirm('Delete this lesson from history and saved lessons?')) return;
+    try { await deleteAiTeacherExplanation(id); } catch (error) { window.app?.showToast('Could not delete lesson. Please retry.', 'error'); return; }
+    if (Number(id) === Number(this.currentRecordId)) { this._cancelRequests(); this.currentRecordId = null; this.currentExplanation = null; this.followUpHistory = []; this.isBookmarked = false; }
+    await this._refreshStats();
     if (window.app) window.app.showToast('Lesson removed', 'info');
     this._renderActiveTabContent();
   }

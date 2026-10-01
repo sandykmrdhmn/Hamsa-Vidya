@@ -656,8 +656,14 @@ class HamsaApp {
       window.dashboardView.onLeaveView();
     }
     // If leaving AI teacher view, reset its speech button state
+    if (this.currentView === 'study-notes' && viewName !== 'study-notes' && window.studyNotesView) {
+      window.studyNotesView.onLeaveView();
+    }
+    if (this.currentView === 'settings' && viewName !== 'settings' && window.settingsView) {
+      window.settingsView.onLeaveView();
+    }
     if (this.currentView === 'ai-teacher' && viewName !== 'ai-teacher' && window.aiTeacherView) {
-      window.aiTeacherView.stopSpeech();
+      window.aiTeacherView.onLeaveView();
     }
     // If leaving an active quiz, save progress and release the timer + key handler.
     // Without this the practice-mode interval and the window keydown listener

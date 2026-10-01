@@ -973,8 +973,42 @@ const BACKUP_PREFERENCE_KEYS = [
   'hamsa_last_active_date',
   'hamsa_sound_muted',
   'hamsa_gemini_model',
+  'hamsa_study_preferences',
+  'hamsa_textbook_theme',
+  'hamsa_textbook_font',
+  'hamsa_textbook_size',
   'hamsa_exam_profile'
 ];
+
+const DATA_MODULES = {
+  QUIZZES: { label: 'Quizzes & attempts', tables: ['quizzes', 'questions', 'attempts'], reviewPrefix: 'q:' },
+  NOTES: { label: 'Study Notes', tables: ['notes'], reviewPrefix: 'note_' },
+  FLASHCARDS: { label: 'Flashcards & revision progress', tables: ['customDecks', 'customCards', 'cardReviews'] },
+  ANSWERS: { label: 'Answer Writing', tables: ['answers', 'answerDrafts'] },
+  TEACHER: { label: 'AI Teacher lessons', tables: ['aiTeacherExplanations'] },
+  EXAMS: { label: 'Saved exams & exam cache', tables: ['savedExams', 'exams'] }
+};
+
+/** Atomic module deletion; remove derived review keys without touching other modules. */
+async function clearModuleData(moduleId) {
+  const module = DATA_MODULES[moduleId];
+  if (!module) throw new Error('Unknown data module.');
+  const tables = [...module.tables, ...(module.reviewPrefix ? ['cardReviews'] : [])].map(key => db[key]);
+  const removed = {};
+  await db.transaction('rw', tables, async () => {
+    for (const key of module.tables) {
+      removed[key] = await db[key].count();
+      await db[key].clear();
+    }
+    if (module.reviewPrefix) {
+      const reviews = await db.cardReviews.toArray();
+      const matching = reviews.filter(review => String(review.cardKey || '').startsWith(module.reviewPrefix));
+      for (const review of matching) await db.cardReviews.delete(review.id);
+      removed.cardReviews = matching.length;
+    }
+  });
+  return removed;
+}
 
 /**
  * Read every table into a plain object. Used both for export and for the
@@ -1342,7 +1376,7 @@ function migrateLegacyNote(note) {
       files: note.sourceFiles || [],
       importedAt: note.createdAt || new Date().toISOString()
     },
-    sections: note.sections || [
+    sections: [
       {
         id: 'sec-1',
         heading: note.title || 'Core Concepts & Study Guide',
@@ -1413,10 +1447,17 @@ async function saveNewNote(noteData) {
     sections: sectionsList,
     glossaryTerms: Array.isArray(noteData.glossaryTerms) ? noteData.glossaryTerms : [],
     summary: noteData.summary || null,
+    settings: noteData.settings || { language: 'AUTO', level: 'AUTO', exam: '' },
+    coverage: noteData.coverage || null,
+    chatHistory: Array.isArray(noteData.chatHistory) ? noteData.chatHistory : [],
+    editHistory: Array.isArray(noteData.editHistory) ? noteData.editHistory : [],
+    recallAnswers: noteData.recallAnswers || {},
+    readingPosition: noteData.readingPosition || null,
     quizzes: Array.isArray(noteData.quizzes) ? noteData.quizzes : [],
     annotations: noteData.annotations || { highlights: [], bookmarks: [], personalNotes: [] },
     content: contentText,
     metadata: {
+      ...(noteData.metadata || {}),
       wordCount: words,
       charCount: contentText.length,
       readingTimeMin: Math.max(1, Math.ceil(words / 200)),
@@ -1443,14 +1484,14 @@ async function getNoteById(id) {
   const migrated = migrateLegacyNote(note);
   // Update last read timestamp non-blockingly
   try {
-    db.notes.update(Number(id), { lastReadAt: new Date().toISOString() });
+    await db.notes.update(Number(id), { lastReadAt: new Date().toISOString() });
   } catch (e) {}
   return migrated;
 }
 
 async function updateNote(id, data) {
   const current = await db.notes.get(Number(id));
-  if (!current) return null;
+  if (!current) throw new Error('This study note no longer exists. Your changes could not be saved.');
 
   const contentText = data.content || (data.sections ? data.sections.map(s => `${s.heading}\n${s.content}`).join('\n\n') : current.content || '');
   const words = contentText.trim() ? contentText.trim().split(/\s+/).length : 0;
@@ -1468,6 +1509,7 @@ async function updateNote(id, data) {
 
   await db.notes.update(Number(id), {
     ...data,
+    content: contentText,
     originalSource: data.originalSource || current.originalSource || null,
     metadata: updatedMetadata,
     updatedAt: new Date().toISOString()
@@ -2202,7 +2244,9 @@ async function saveAiTeacherExplanation(data) {
     language: data.language || 'BILINGUAL',
     depth: data.depth || 'DETAILED',
     mode: data.mode || 'STUDENT',
+    educationLevel: data.educationLevel || 'AUTO',
     structuredData: data.structuredData || {},
+    followUpHistory: Array.isArray(data.followUpHistory) ? data.followUpHistory : [],
     // 1/0, not a boolean: `isBookmarked` is indexed on this table too (see the
     // version(7) declaration), and IndexedDB omits boolean-valued records from
     // an index. The AI Teacher library happens to read with an in-memory
@@ -2214,8 +2258,12 @@ async function saveAiTeacherExplanation(data) {
   };
 
   if (data.id) {
-    await db.aiTeacherExplanations.update(Number(data.id), record);
-    return data.id;
+    const existing = await db.aiTeacherExplanations.get(Number(data.id));
+    if (!existing) throw new Error('This saved lesson no longer exists.');
+    record.createdAt = existing.createdAt || record.createdAt;
+    const updated = await db.aiTeacherExplanations.update(Number(data.id), record);
+    if (!updated) throw new Error('The lesson could not be updated.');
+    return Number(data.id);
   }
   return await db.aiTeacherExplanations.add(record);
 }
@@ -2244,8 +2292,8 @@ async function getAiTeacherStats() {
     );
 
     // Lessons opened today, so returning users see their own momentum.
-    const todayKey = new Date().toISOString().split('T')[0];
-    const today = all.filter(e => (e.createdAt || '').startsWith(todayKey)).length;
+    const todayKey = new Date().toDateString();
+    const today = all.filter(e => e.createdAt && new Date(e.createdAt).toDateString() === todayKey).length;
 
     return {
       totalLessons: all.length,
@@ -2270,7 +2318,18 @@ async function getAllAiTeacherExplanations(options = {}) {
 
   if (options.subject && options.subject !== 'ALL') {
     const sLower = options.subject.toLowerCase();
-    items = items.filter(item => (item.subject || '').toLowerCase().includes(sLower));
+    const aliases = {
+      mathematics: /\b(math(?:ematics)?|algebra|arithmetic|geometry|calculus|statistics)\b/i,
+      science: /\b(science|biology|physics|chemistry|botany|zoology)\b/i,
+      polity: /\b(polity|constitution|political science)\b/i,
+      economy: /\b(economy|economics|economic)\b/i,
+      'computer science': /\b(computer|computing|programming|information technology)\b/i
+    };
+    items = items.filter(item => {
+      const subject = item.subject || '';
+      if (sLower === 'science' && aliases['computer science'].test(subject)) return false;
+      return aliases[sLower] ? aliases[sLower].test(subject) : subject.toLowerCase().includes(sLower);
+    });
   }
 
   if (options.searchQuery && options.searchQuery.trim()) {

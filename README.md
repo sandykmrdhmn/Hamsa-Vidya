@@ -26,7 +26,7 @@
   - One-click topic inspiration pills (Polity Fundamental Rights, 1857 Revolt, Cell Biology & DNA, RBI Monetary Policy).
 
 ### 2. Google Gemini AI & Deterministic Fallback Engine
-- Direct REST integration with Google Gemini (`gemini-1.5-flash` or `gemini-2.5-flash`).
+- Direct REST integration with Google Gemini, defaulting to stable `gemini-3.6-flash`. Automatic fallbacks use earlier free-tier Flash models; 3.7 and 3.8 are excluded from automatic selection (Google's usage quotas still apply; a billing-enabled API project uses its configured paid tier). Model availability and [pricing](https://ai.google.dev/gemini-api/docs/pricing) verified on October 1, 2026.
 - Built-in intelligent deterministic MCQ generator when offline or if no API key is provided.
 - Multi-step animated progress overlay ("Reading PDF...", "Extracting concepts...", "Formulating MCQs...", "Crafting answer key...").
 
@@ -180,3 +180,13 @@ Hamsa Vidya Website/
 > two formerly enormous files. Later parts intentionally override earlier ones, so keep the
 > `<link>` tags in numeric order. `verify-css-split.js` fails if the concatenated parts ever
 > stop matching the original byte-for-byte.
+
+### Study Notes workspace
+
+Study Notes now preserves original PDF/image files with page references, supports selected PDF pages and OCR for scans, and exposes note language, learning level and target exam settings. Scans, translations and AI teaching require configured Gemini access. Without AI, full-source notes are labelled as local formatting rather than generated teaching.
+
+The reader includes compact expandable teaching blocks, source-grounded tables/flows/SVG diagrams when useful, Hindi glossary terms, search within notes, persistent highlights/chat/reading position, active recall, chapter-based quizzes and flashcards. Revision offers Quick, Detailed and Compact Exam views; there is no percentage-based Deep Dive mode or guaranteed one-page export. Failed source batches report their page references and can resume without repeating successful batches. Edited explanations invalidate dependent teaching aids; the AI refresh action rebuilds them from the edited text. Immediate Done saves before leaving editing, with Undo for the last saved revision.
+
+PDF exports preserve all requested revision sections and full reference content. Allow site pop-ups to open the print preview, then choose Save as PDF. Runtime coverage is in `scratch/verify-study-notes.js`; optional isolated Edge verification is in `scratch/verify-study-notes-browser.cjs`.
+
+Study PDF previews load a bundled Noto Sans Devanagari font and wait for fonts before printing, including offline use. The font is from [Google Fonts](https://github.com/google/fonts/tree/main/ofl/notosansdevanagari), distributed with its SIL Open Font License in `assets/fonts/OFL-NotoSansDevanagari.txt`. PDF imports with replacement or null characters are sent through OCR rather than treated as reliable extracted text.

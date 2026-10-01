@@ -520,13 +520,14 @@ class FlashcardsView {
     const cards = [];
 
     // Extract glossary terms
-    if (Array.isArray(note.glossary) && note.glossary.length > 0) {
-      note.glossary.forEach(item => {
+    const glossary = note.glossaryTerms || note.glossary || [];
+    if (Array.isArray(glossary) && glossary.length > 0) {
+      glossary.forEach(item => {
         cards.push({
           id: `glossary_${item.term}`,
           cardKey: `note_${note.id}:${item.term}`,
           front: `Define: ${item.term}`,
-          back: item.definition,
+          back: item.simpleMeaning || item.contextMeaning || item.definition || '',
           explanation: item.hindiMeaning ? `Hindi Meaning: ${item.hindiMeaning}` : '',
           badge: 'Glossary Term'
         });
@@ -536,12 +537,19 @@ class FlashcardsView {
     // Extract section key takeaways
     if (Array.isArray(note.sections) && note.sections.length > 0) {
       note.sections.forEach(sec => {
+        for (const definition of sec.definitions || []) {
+          if (cards.some(card => card.front === `Define: ${definition.term}`)) continue;
+          cards.push({ id: `definition_${sec.id}_${definition.term}`, cardKey: `note_${note.id}:${sec.id}:${definition.term}`, front: `Define: ${definition.term}`, back: definition.definition, explanation: sec.heading, badge: 'Definition' });
+        }
+        for (const formula of sec.formulas || []) {
+          cards.push({ id: `formula_${sec.id}_${formula.name}`, cardKey: `note_${note.id}:${sec.id}:${formula.name}`, front: formula.name, back: `${formula.formula}\n\n${formula.explanation || ''}`, explanation: sec.heading, badge: 'Formula' });
+        }
         if (sec.heading && (sec.summary || sec.content)) {
           cards.push({
             id: `sec_${sec.heading}`,
             cardKey: `note_${note.id}:${sec.heading}`,
             front: `Core Concept: What are the key points of "${sec.heading}"?`,
-            back: sec.summary || (sec.content ? sec.content.slice(0, 220) + '...' : ''),
+            back: sec.keyPoints?.length ? sec.keyPoints.join('\n') : sec.summary || sec.content || '',
             explanation: `From note: ${note.title} • Section: ${sec.heading}`,
             badge: 'Key Concept'
           });
@@ -1103,6 +1111,7 @@ class FlashcardsView {
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(textToSpeak);
     utterance.rate = 0.95;
+    window.studyPreferences?.applySpeech(utterance, textToSpeak);
 
     const btn = document.getElementById(`tts-${face}-btn`);
     if (btn) btn.classList.add('speaking');

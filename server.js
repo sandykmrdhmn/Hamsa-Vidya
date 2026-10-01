@@ -278,8 +278,8 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.method === 'POST') {
-      // Extract model from path: /api/gemini/gemini-2.5-flash -> gemini-2.5-flash
-      const rawModel = decodeURIComponent(apiPath.replace(/^\//, '')) || 'gemini-2.5-flash';
+      // Extract model from path: /api/gemini/gemini-3.6-flash -> gemini-3.6-flash
+      const rawModel = decodeURIComponent(apiPath.replace(/^\//, '')) || 'gemini-3.6-flash';
 
       // Only allow plausible model identifiers so the path cannot be used to
       // reach arbitrary Google endpoints.

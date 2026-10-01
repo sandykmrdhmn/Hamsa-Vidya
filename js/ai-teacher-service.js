@@ -5,6 +5,49 @@
  */
 
 class AiTeacherService {
+  normalizeAdvancedModes(modes = {}) {
+    return Object.fromEntries(['socratic', 'debate', 'mindmap', 'connections', 'teachBack']
+      .map(name => [name, modes?.[name] === true]));
+  }
+
+  lessonAdvancedModes(lesson = {}) {
+    return this.normalizeAdvancedModes(lesson.advancedModes || {
+      socratic: !!lesson.socraticTutor, debate: !!lesson.debateCoach,
+      mindmap: !!(lesson.mindMap || lesson.mermaidMindmap),
+      connections: !!lesson.hamsaConnections, teachBack: !!lesson.teachBackChallenge
+    });
+  }
+
+  validateAdvancedOutputs(lesson, modes = {}) {
+    const flags = this.normalizeAdvancedModes(modes);
+    const text = value => typeof value === 'string' && !!value.trim();
+    const list = (value, min, max) => Array.isArray(value) && value.length >= min
+      && value.length <= max && value.every(text);
+    const tutor = lesson?.socraticTutor, debate = lesson?.debateCoach, map = lesson?.mindMap;
+    if (flags.socratic && (!text(tutor?.guidingQuestion) || !text(tutor?.learningGoal) || !list(tutor?.hints, 1, 3))) return false;
+    if (flags.debate && (!text(debate?.claim) || !text(debate?.reflectionQuestion)
+      || !text(debate?.boundary) || !list(debate?.supportingPoints, 1, 3) || !list(debate?.counterPoints, 1, 3))) return false;
+    if (flags.mindmap && (!text(map?.centralTopic) || !Array.isArray(map?.branches)
+      || map.branches.length < 2 || map.branches.length > 6
+      || !map.branches.every(branch => text(branch?.title) && text(branch?.detail) && list(branch?.children, 0, 4)))) return false;
+    if (flags.connections && (!lesson?.hamsaConnections || Object.keys(lesson.hamsaConnections).length < 2
+      || Object.keys(lesson.hamsaConnections).length > 4
+      || !Object.entries(lesson.hamsaConnections).every(([subject, detail]) => text(subject) && text(detail)))) return false;
+    if (flags.teachBack && (!text(lesson?.teachBackChallenge) || !list(lesson?.teachBackCriteria, 2, 4))) return false;
+    return true;
+  }
+
+  _mentorshipDirectives(lesson, replyIntent = 'question') {
+    const modes = this.lessonAdvancedModes(lesson);
+    if (!Object.values(modes).some(Boolean)) return '';
+    return `\nMENTORSHIP PRIORITY (overrides generic answer instructions):
+Active lesson modes: ${JSON.stringify(modes)}. Reply purpose: ${replyIntent}.
+${modes.socratic ? '- Use gradual Socratic guidance: assess the student\'s attempt, give one useful hint, then one focused guiding question. Do not reveal the final solution unless the student explicitly requests the full answer. Use hints rather than worked solutions in simpler explanations and extra examples.' : ''}
+${replyIntent === 'debate' && modes.debate ? '- Evaluate the student\'s argument against the debate claim, evidence and counterpoints. Identify a sound point, correct unsupported assumptions and ask them to strengthen one specific part. Do not dispute settled facts or invent evidence.' : ''}
+${replyIntent === 'teachBack' && modes.teachBack ? '- Assess the student\'s own explanation against the teachBackChallenge and EACH teachBackCriteria item. State what they got right, name and correct specific misunderstandings, and suggest one concrete revision. Do not offer generic praise or claim mastery without evidence.' : ''}
+- When modes are combined, focus on the selected reply purpose while preserving Socratic answer disclosure rules. Keep feedback specific, kind and appropriate for the selected language and educational level. Put the next focused question in checkQuestion when returning follow-up JSON.`;
+  }
+
   constructor() {
     this.systemPrompt = `You are HAMSA VIDYA's Master AI Teacher (हंस विद्या गुरु) — an expert personal tutor, educator, and pedagogical architect.
 Your mission is NOT simply to give a dry, final answer.
@@ -26,16 +69,36 @@ PEDAGOGICAL TEACHING PRINCIPLES:
     - "HINDI": Provide natural, pure, high-quality Hindi (सरल एवं स्पष्ट हिंदी).
     - "HINGLISH": Provide accessible, natural conversational Hinglish.
     - "ENGLISH": Provide clear, direct, accessible English.
-12. Respect the DEPTH:
-    - "QUICK": Concise answer + essential takeaways.
-    - "STANDARD": Normal student-friendly explanation + 1 good example.
-    - "DETAILED": Full step-by-step breakdown + foundation + analogy + example + flowchart + common mistakes + summary + 3 practice questions.
-    - "DEEP_DIVE": In-depth conceptual mastery + prerequisites + advanced nuances + comprehensive diagram + 5 practice questions.
-13. Respect the MODE:
+12. DEEP UNDERSTANDING, COMPACT NOTEBOOK:
+    - Teach the reasoning, not just the conclusion: explain the cause, each logical connection, and why the result follows.
+    - quickAnswer: 25-55 words answering the exact question. Do not duplicate it in the foundation.
+    - foundation.explanation: 3-4 short, connected paragraphs for a normal concept (about 160-240 words). Start with an intuitive mental picture; build the mechanism; end with a useful implication or boundary. A simple fact needs much less.
+    - steps: 3-6 focused steps where useful. Each step must explain WHAT happens and WHY it happens (about 45-80 words); do not merely rename the previous step.
+    - examples: one concrete worked example with a setup, application and conclusion; use realistic details and correct arithmetic.
+    - Add one relevant misconception or counterexample when it prevents confusion. Explain where an analogy stops being accurate.
+    - Use short paragraphs and selective **bold** for important ideas. Avoid giant headings, long lists, repetitive summaries and motivational filler.
+    - Optional details live in expandable notebook sections. Keep the main foundation self-contained; never require opening an optional section to learn the basic answer.
+13. CLASSIFICATION-FIRST: Before answering, internally classify:
+    - Subject, topic, subtopic, question type and the student's educational level.
+    - Match depth to the question: simple facts ~120-220 words total; normal concepts ~450-800; complex reasoning ~700-1100; advanced exam analysis ~900-1400.
+    - These are guides, not word quotas. Never pad a short answer or cut a necessary derivation to meet a number.
+    - Sound like a patient teacher writing a thoughtful notebook: natural transitions, familiar examples, precise reasoning and a calm, encouraging tone. No patronizing praise or invented facts.
+14. FIELD OPTIONALITY: Include ONLY sections that genuinely help this question.
+    - Simple definition? quickAnswer + a clear foundation; add a small example only when it improves understanding. Skip flowcharts, diagrams, comparisons.
+    - Math problem? quickAnswer + a short conceptual foundation + mathSolution + 1 practice. Put the derivation in mathSolution, not duplicate steps. Skip analogy, flowchart.
+    - Comparison? quickAnswer + foundation explaining the important differences + comparison table; add an example and useful visual.
+    - Multi-statement MCQ? Evaluate EACH statement separately, explain its truth or error and the relevant exception, then show why the selected option follows. Do not simply repeat the statements or assume the suggested answer is correct.
+    - Return null or omit any field not relevant. Do NOT mechanically fill every field.
+15. VISUAL TEACHING: For processes, cause-and-effect, timelines, classifications or reasoning sequences, include a topic-specific flowchart with 3-6 meaningful stages. For spatial relationships, anatomy, geometry, systems or geography, include a clear labelled SVG illustration in diagram.svgContent. Include BOTH when they teach different useful aspects; do not omit a helpful visual merely to keep the answer short.
+    - Illustrations must show the actual concept, not a decorative generic Input → Process → Output graphic. Label the important parts and explain how to read the visual in its caption.
+    - For geography use a schematic drawing when useful; state that it is schematic and not to scale. Never invent exact map boundaries or coordinates.
+    - Use complete valid SVG markup with a viewBox, readable labels, clear contrast and room around the labels. Draw with rect, circle, ellipse, path, line, polygon, polyline, text and tspan. Do not use external image URLs, scripts, foreignObject or animations in generated SVG.
+16. ANSWER RELIABILITY: Check the exact wording, exceptions, units and option numbering before choosing the answer. If a claim is ambiguous or evidence is missing, explain the uncertainty instead of claiming certainty. For attached documents use only the available pages and identify missing information.
+17. Respect the MODE:
     - "STUDENT": Maximum conceptual clarity, intuitive everyday connections, encouraging tone.
-    - "EXAM": Adds syllabus relevance, high-yield keywords, potential exam traps, descriptive answer blueprint (Intro → Body → Conclusion).
+    - "EXAM": Syllabus relevance, high-yield keywords, exam traps, answer blueprint.
 
-IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do not wrap with conversational filler or preamble.`;
+IMPORTANT: Return ONLY valid JSON. Include only fields that genuinely help this specific question. Do not mechanically fill every field.`;
   }
 
   /**
@@ -67,7 +130,7 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
     const qualificationId = profile?.qualificationId || '';
     const qualificationLabel = profile?.qualification || '';
     const twelfthStream = profile?.twelfthStream || '';
-    const targetExamName = targetExam ? (targetExam.shortName || targetExam.name || '') : '';
+    const targetExamName = window.studyPreferences?.get().exam || (targetExam ? (targetExam.shortName || targetExam.name || '') : '');
     const age = profile?.age || null;
 
     let effectiveLevel = 'CLASS_10';
@@ -79,14 +142,21 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
       isExplicitOverride = true;
       switch (overrideLevel) {
         case 'CLASS_6':
+        case 'CLASS_6_8':
           effectiveLevel = 'CLASS_6';
           tier = 'BEGINNER';
-          levelLabel = 'Class 6 (Middle School: 10–12 yrs)';
+          levelLabel = overrideLevel === 'CLASS_6_8' ? 'Class 6–8 (Middle School)' : 'Class 6 (Middle School: 10–12 yrs)';
           break;
+        case 'CLASS_9_10':
         case 'CLASS_10':
           effectiveLevel = 'CLASS_10';
           tier = 'INTERMEDIATE';
-          levelLabel = 'Class 10 (Secondary Board Level)';
+          levelLabel = overrideLevel === 'CLASS_9_10' ? 'Class 9–10 (Board Exam Level)' : 'Class 10 (Secondary Board Level)';
+          break;
+        case 'CLASS_11_12':
+          effectiveLevel = 'CLASS_12';
+          tier = 'ADVANCED';
+          levelLabel = 'Class 11–12 (Senior Secondary)';
           break;
         case 'CLASS_12_SCIENCE':
           effectiveLevel = 'CLASS_12_SCIENCE';
@@ -98,15 +168,30 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
           tier = 'ADVANCED';
           levelLabel = 'Class 12 (Senior Secondary)';
           break;
+        case 'SSC_CGL':
+          effectiveLevel = 'SSC_CGL';
+          tier = 'EXAM_FOCUSED';
+          levelLabel = 'SSC / CGL / CHSL Level';
+          break;
+        case 'BANKING_RAILWAY':
+          effectiveLevel = 'BANKING_RAILWAY';
+          tier = 'EXAM_FOCUSED';
+          levelLabel = 'Banking / Railway / Other Competitive';
+          break;
         case 'UPSC':
           effectiveLevel = 'UPSC';
           tier = 'EXAM_FOCUSED';
-          levelLabel = 'UPSC Civil Services Aspirant';
+          levelLabel = 'UPSC / State PSC Aspirant';
           break;
         case 'COLLEGE':
           effectiveLevel = 'COLLEGE';
           tier = 'ADVANCED';
           levelLabel = 'College / University Undergraduate';
+          break;
+        case 'ADVANCED':
+          effectiveLevel = 'ADVANCED';
+          tier = 'ADVANCED';
+          levelLabel = 'Advanced / Professional Level';
           break;
         default:
           effectiveLevel = overrideLevel;
@@ -116,10 +201,19 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
     } else {
       // Automatic detection from stored profile & target exam
       if (targetExamName && targetExamName.trim().length > 0) {
-        const isUPSC = targetExamName.toUpperCase().includes('UPSC') || targetExamName.toUpperCase().includes('IAS') || targetExamName.toUpperCase().includes('CIVIL');
-        effectiveLevel = isUPSC ? 'UPSC' : 'COMPETITIVE_EXAM';
-        tier = 'EXAM_FOCUSED';
-        levelLabel = `Target Exam: ${targetExamName}`;
+        const upper = targetExamName.toUpperCase();
+        const isUPSC = upper.includes('UPSC') || upper.includes('IAS') || upper.includes('CIVIL') || upper.includes('STATE PSC') || upper.includes('PCS');
+        const isSSC = upper.includes('SSC') || upper.includes('CGL') || upper.includes('CHSL') || upper.includes('MTS') || upper.includes('STENOGRAPHER');
+        const isBanking = upper.includes('BANK') || upper.includes('IBPS') || upper.includes('SBI') || upper.includes('RBI') || upper.includes('RAILWAY') || upper.includes('RRB') || upper.includes('NDA') || upper.includes('CDS');
+        if (isUPSC) {
+          effectiveLevel = 'UPSC'; tier = 'EXAM_FOCUSED'; levelLabel = `UPSC / State PSC: ${targetExamName}`;
+        } else if (isSSC) {
+          effectiveLevel = 'SSC_CGL'; tier = 'EXAM_FOCUSED'; levelLabel = `SSC: ${targetExamName}`;
+        } else if (isBanking) {
+          effectiveLevel = 'BANKING_RAILWAY'; tier = 'EXAM_FOCUSED'; levelLabel = `Banking / Railway: ${targetExamName}`;
+        } else {
+          effectiveLevel = 'COMPETITIVE_EXAM'; tier = 'EXAM_FOCUSED'; levelLabel = `Target Exam: ${targetExamName}`;
+        }
       } else if (qualificationId === '10TH_PASS') {
         effectiveLevel = 'CLASS_10';
         tier = 'INTERMEDIATE';
@@ -172,15 +266,16 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
     mode = 'STUDENT',
     educationLevel = 'AUTO',
     imageFile = null,
-    pdfContext = null
+    pdfContext = null,
+    advancedModes = {},
+    signal = null
   }) {
     if (!question || !question.trim()) {
       throw new Error('Please enter a question or topic to explain.');
     }
 
     const cleanQuestion = question.trim();
-    const apiKey = (window.geminiService && window.geminiService.getApiKey()) || '';
-
+    advancedModes = this.normalizeAdvancedModes(advancedModes);
     // Resolve structured student profile context
     const studentContext = this._resolveStudentContext(educationLevel);
 
@@ -191,7 +286,8 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
       depth,
       mode,
       studentContext,
-      pdfContext
+      pdfContext,
+      advancedModes
     });
 
     // If online and API key or server proxy is available, attempt Gemini generation
@@ -199,24 +295,38 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
     let geminiError = null;
 
     try {
-      aiResponse = await this._callGeminiWithFallback(userPrompt, imageFile);
+      aiResponse = await this._callGeminiWithFallback(userPrompt, imageFile, { signal, advancedModes });
     } catch (err) {
+      if (err.name === 'AbortError' || signal?.aborted) throw err;
       console.warn('AI Teacher Gemini API attempt failed, switching to Deterministic Pedagogical Engine:', err);
       geminiError = err.message;
     }
 
     if (aiResponse && aiResponse.success && aiResponse.data) {
+      for (const [selected, fields] of [
+        [advancedModes.socratic, ['socraticTutor']], [advancedModes.debate, ['debateCoach']],
+        [advancedModes.mindmap, ['mindMap', 'mermaidMindmap']],
+        [advancedModes.connections, ['hamsaConnections']],
+        [advancedModes.teachBack, ['teachBackChallenge', 'teachBackCriteria']]
+      ]) {
+        if (!selected) fields.forEach(field => delete aiResponse.data[field]);
+      }
       aiResponse.data.studentContext = studentContext;
+      aiResponse.data.advancedModes = advancedModes;
+      aiResponse.data.generation = { source: 'GEMINI_AI', model: aiResponse.model };
       return {
         success: true,
         data: aiResponse.data,
         source: 'GEMINI_AI',
-        model: aiResponse.model || 'Gemini 2.5 Flash',
+        model: aiResponse.model || 'Gemini 3.6 Flash',
         studentContext
       };
     }
 
-    // Fallback: Use High-Precision Offline Pedagogical Engine adapted to studentContext
+    // A built-in topic lesson cannot answer an attached document or advanced request.
+    if (imageFile || pdfContext || Object.values(advancedModes).some(Boolean)) {
+      throw new Error(`Live AI could not process this request. Attachments and advanced modes require the live service. ${geminiError || 'Please retry.'}`);
+    }
     const fallbackData = this.getDeterministicExplanation({
       question: cleanQuestion,
       language,
@@ -224,7 +334,13 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
       mode,
       studentContext
     });
+    if (!fallbackData || !this._supportsBuiltInLanguage(fallbackData, language)
+      || (fallbackData.difficulty === 'EXAM_FOCUSED' && studentContext.academicTier !== 'EXAM_FOCUSED')
+      || (studentContext.academicTier === 'BEGINNER' && fallbackData.difficulty !== 'BEGINNER')) {
+      throw new Error('Live AI is unavailable and there is no matching built-in lesson for this question, language and level. Please retry when AI is available.');
+    }
     fallbackData.studentContext = studentContext;
+    fallbackData.generation = { source: 'BUILTIN_PEDAGOGICAL_ENGINE', model: 'Hamsa Offline Wisdom Engine' };
 
     return {
       success: true,
@@ -245,12 +361,19 @@ IMPORTANT: Return ONLY valid JSON adhering strictly to the JSON schema below. Do
     followUpQuery,
     language = 'BILINGUAL',
     educationLevel = 'AUTO',
-    studentContext = null
+    studentContext = null,
+    history = [],
+    pdfContext = null,
+    replyIntent = 'question',
+    signal = null
   }) {
     const ctx = studentContext || this._resolveStudentContext(educationLevel);
     const prompt = `You are the personal AI Teacher teaching a student at the ${ctx.levelLabel || ctx.educationLevel} level.
 Context of original topic: "${originalQuestion}"
 Previous explanation summary: "${previousExplanation.quickAnswer || previousExplanation.topic || ''}"
+Full lesson context: ${JSON.stringify(previousExplanation)}
+Previous follow-up turns: ${JSON.stringify(history.slice(-6))}
+${pdfContext ? `Attached document context: ${pdfContext}` : ''}
 
 The student now asks a follow-up doubt:
 "${followUpQuery}"
@@ -275,53 +398,16 @@ Respond in clean, structured JSON:
   "clarifyingExample": "Short illustrative example...",
   "miniAnalogy": "Brief mental model...",
   "checkQuestion": "Did that make sense? Try this quick check: ..."
-}`;
+}
+${this._mentorshipDirectives(previousExplanation, replyIntent)}`;
 
-    try {
-      const response = await this._callGeminiRaw(prompt);
-      const parsed = this._parseJsonSafely(response);
-      if (parsed) return parsed;
-    } catch (e) {
-      console.warn('Follow-up Gemini error:', e);
-    }
-
-    // Offline follow-up response tailored to educationLevel
-    if (ctx.educationLevel === 'CLASS_6') {
-      return {
-        followUpAnswer: language === 'HINDI'
-          ? `"${followUpQuery}" के बारे में: यह बहुत अच्छा सवाल है! जैसे खेल में हर नियम अगले कदम से जुड़ा होता है, वैसे ही यह बात हमारे मुख्य विषय (${originalQuestion}) से बिल्कुल सीधे जुड़ी है।`
-          : `Regarding "${followUpQuery}": That is a great question! Just like in an everyday game where each step depends on the previous one, this part connects directly to our main story of "${originalQuestion}".`,
-        clarifyingExample: `Imagine you change one small toy in your game — the whole play naturally changes! That is exactly what happens here.`,
-        miniAnalogy: `Think of it like adding a pinch of salt to a dish: it brings the whole recipe together.`,
-        checkQuestion: `Does that feel simple and clear? Can you tell me in 3 words what you think happens next?`
-      };
-    }
-
-    if (ctx.educationLevel === 'UPSC' || ctx.academicTier === 'EXAM_FOCUSED') {
-      return {
-        followUpAnswer: language === 'HINDI'
-          ? `"${followUpQuery}" के संदर्भ में: मुख्य परीक्षा (Mains) एवं प्रारंभिक परीक्षा दोनों के दृष्टिकोण से यह एक अत्यंत महत्वपूर्ण आयाम है। यह अवधारणा "${originalQuestion}" के संस्थागत, नीतिगत और व्यावहारिक प्रभावों को स्पष्ट करती है।`
-          : `Regarding "${followUpQuery}" in relation to "${originalQuestion}": From a civil services examination perspective (both Prelims and Mains), this point forms a crucial structural link connecting core theoretical principles to policy outcomes and real-world implications.`,
-        clarifyingExample: `In contemporary governance and policy dynamics, any shift in this parameter directly influences regulatory compliance and socio-economic indicators.`,
-        miniAnalogy: `Think of it as the institutional feedback loop in systemic policy formulation.`,
-        checkQuestion: `Consider how this perspective enhances a structured multi-dimensional GS Mains answer.`
-      };
-    }
-
-    return {
-      followUpAnswer: language === 'HINDI'
-        ? `"${followUpQuery}" के संदर्भ में: यह मूल विषय (${originalQuestion}) का एक महत्वपूर्ण पहलू है। इसके मूल सिद्धांत प्रत्यक्ष रूप से परस्पर जुड़े हुए हैं।`
-        : `Regarding "${followUpQuery}" in relation to "${originalQuestion}": This is a crucial follow-up point. In ${language === 'BILINGUAL' ? 'Hindi & English' : 'simple terms'}, the core reason is that the foundational principles work together dynamically to produce this exact outcome.`,
-      clarifyingExample: `For instance, if you change one key factor in "${originalQuestion}", the resulting impact naturally shifts accordingly.`,
-      miniAnalogy: `Think of it like tuning an instrument: adjusting this variable harmonizes the whole concept.`,
-      checkQuestion: `Can you see how this directly connects back to our main topic?`
-    };
+    const response = await this._callGeminiRaw(prompt, { signal });
+    const parsed = this._parseJsonSafely(response, ['followUpAnswer']);
+    if (!parsed) throw new Error('AI returned an incomplete response. Please retry.');
+    return parsed;
   }
 
-  /**
-   * Rewrites the explanation to be even simpler for beginners
-   */
-  async makeItSimpler({ question, currentExplanation, language = 'BILINGUAL', educationLevel = 'AUTO', studentContext = null }) {
+  async makeItSimpler({ question, currentExplanation, language = 'BILINGUAL', educationLevel = 'AUTO', studentContext = null, signal = null }) {
     const ctx = studentContext || this._resolveStudentContext(educationLevel);
     const prompt = `You are the AI Teacher. The student found this explanation a bit tricky and clicked "Make it Simpler".
 STUDENT PROFILE: ${ctx.levelLabel || ctx.educationLevel}
@@ -341,32 +427,15 @@ Respond in JSON:
   "storyExplanation": "Step-by-step story or ultra-simple explanation...",
   "everydayAnalogy": "Think of it like: ...",
   "funCheck": "Fun, easy question to test understanding"
-}`;
+}\n${this._mentorshipDirectives(currentExplanation)}`;
 
-    try {
-      const response = await this._callGeminiRaw(prompt);
-      const parsed = this._parseJsonSafely(response);
-      if (parsed) return parsed;
-    } catch (e) {
-      console.warn('Make simpler Gemini error:', e);
-    }
-
-    return {
-      simplerQuickAnswer: language === 'HINDI'
-        ? `सरल शब्दों में: ${question} का मतलब है सबसे आसान तरीके से बुनियादी नियम को समझना।`
-        : `In the simplest words: ${question} just means understanding the core rule in everyday terms without complex jargon.`,
-      storyExplanation: language === 'BILINGUAL'
-        ? `कल्पना कीजिए कि आपके पास 10 चॉकलेट हैं और आप उन्हें दोस्तों में बांट रहे हैं। ठीक इसी तरह यह सिद्धांत काम करता है! (Imagine you have a simple everyday task — this rule just guides how each step naturally follows the previous one.)`
-        : `Imagine a friendly everyday situation where everything happens step-by-step. Each part relies simply on the previous part!`,
-      everydayAnalogy: `Think of it like a staircase: you take one small, easy step at a time until you reach the top effortlessly.`,
-      funCheck: `If someone asks you this in 5 words, what would you tell them?`
-    };
+    const response = await this._callGeminiRaw(prompt, { signal });
+    const parsed = this._parseJsonSafely(response, ['simplerQuickAnswer', 'storyExplanation']);
+    if (!parsed) throw new Error('AI returned an incomplete response. Please retry.');
+    return parsed;
   }
 
-  /**
-   * Generates a completely new, fresh example
-   */
-  async generateAnotherExample({ question, currentExplanation, language = 'BILINGUAL', educationLevel = 'AUTO', studentContext = null }) {
+  async generateAnotherExample({ question, currentExplanation, language = 'BILINGUAL', educationLevel = 'AUTO', studentContext = null, signal = null }) {
     const ctx = studentContext || this._resolveStudentContext(educationLevel);
     const prompt = `You are the AI Teacher. The student clicked "Another Example" for:
 STUDENT PROFILE: ${ctx.levelLabel || ctx.educationLevel}
@@ -382,46 +451,15 @@ Respond in JSON:
   "scenario": "The real life everyday or exam situation...",
   "howItApplies": "How this proves the concept...",
   "takeaway": "What the student should remember"
-}`;
+}\n${this._mentorshipDirectives(currentExplanation)}`;
 
-    try {
-      const response = await this._callGeminiRaw(prompt);
-      const parsed = this._parseJsonSafely(response);
-      if (parsed) return parsed;
-    } catch (e) {
-      console.warn('Another example Gemini error:', e);
-    }
-
-    if (ctx.educationLevel === 'CLASS_6') {
-      return {
-        title: 'Playground & Toy Box Scenario',
-        scenario: `Think of trading marbles or coloring sketchbooks with your best friend at school.`,
-        howItApplies: `Notice how you trade fair and square: exactly the same simple rule of ${question} applies here!`,
-        takeaway: `Keep this fun playground picture in mind whenever you think of ${question}!`
-      };
-    }
-
-    if (ctx.educationLevel === 'UPSC') {
-      return {
-        title: 'Public Administration & Macro-Policy Case Study',
-        scenario: `Consider a real-time District Administration or Reserve Bank of India policy intervention in rural markets.`,
-        howItApplies: `The structural dynamics of ${question} directly dictate the policy outcomes and citizen service delivery here.`,
-        takeaway: `Use this practical governance case study for analytical depth in your GS Mains answers.`
-      };
-    }
-
-    return {
-      title: 'Real-Life Everyday Scenario',
-      scenario: `Consider a daily life situation involving local market shopping or smartphone battery usage.`,
-      howItApplies: `Notice how the exact same rule of ${question} applies seamlessly here without changing any core logic.`,
-      takeaway: `Whenever you see this concept, picture this practical scenario in your mind!`
-    };
+    const response = await this._callGeminiRaw(prompt, { signal });
+    const parsed = this._parseJsonSafely(response, ['scenario', 'howItApplies']);
+    if (!parsed) throw new Error('AI returned an incomplete response. Please retry.');
+    return parsed;
   }
 
-  /**
-   * Expands on a specific concept or section
-   */
-  async explainConceptMore({ concept, contextQuestion, language = 'BILINGUAL' }) {
+  async explainConceptMore({ concept, contextQuestion, language = 'BILINGUAL', signal = null }) {
     const prompt = `You are the AI Teacher. The student clicked "Explain More" specifically on the sub-concept: "${concept}".
 BROADER QUESTION: "${contextQuestion}"
 Language: ${language}
@@ -441,28 +479,14 @@ Respond in JSON:
   "examInsight": "High-yield fact for competitive exams"
 }`;
 
-    try {
-      const response = await this._callGeminiRaw(prompt);
-      const parsed = this._parseJsonSafely(response);
-      if (parsed) return parsed;
-    } catch (e) {
-      console.warn('Explain more Gemini error:', e);
-    }
-
-    return {
-      subConcept: concept,
-      deepDiveExplanation: `Diving deeper into "${concept}": This component forms the structural backbone of the entire mechanism.`,
-      internalMechanism: `1. Signal/Input receives data. 2. Processing applies the specific rule. 3. Output delivers the verified outcome.`,
-      microExample: `In a real-world system, without ${concept}, the entire sequence would stall or produce erroneous results.`,
-      examInsight: `Examiners frequently test this precise term because students often confuse it with its parent category.`
-    };
+    const response = await this._callGeminiRaw(prompt, { signal });
+    const parsed = this._parseJsonSafely(response, ['deepDiveExplanation']);
+    if (!parsed) throw new Error('AI returned an incomplete response. Please retry.');
+    return parsed;
   }
 
-  // =========================================================================
-  // INTERNAL PROMPT BUILDER
-  // =========================================================================
-
-  _buildPrompt({ question, language, depth, mode, studentContext = null, pdfContext }) {
+  _buildPrompt({ question, language, depth, mode, studentContext = null, pdfContext, advancedModes = {} }) {
+    advancedModes = this.normalizeAdvancedModes(advancedModes);
     const ctx = studentContext || this._resolveStudentContext();
     let pedagogicalDirectives = '';
 
@@ -516,8 +540,61 @@ PEDAGOGICAL TEACHING RULES FOR THIS STUDENT:
       case 'COLLEGE':
         pedagogicalDirectives = `
 STUDENT EDUCATIONAL PROFILE: College / University Undergraduate (${ctx.qualification || 'Undergraduate'}).
-PEDAGOGICAL TEACHING RULES FOR THIS STUDENT:
+PEDAGOGICAL TEACHING RULES:
 - Vocabulary: University-level academic rigor, theoretical frameworks, and research/industrial applications.
+- Output Difficulty Field: MUST be "ADVANCED".`;
+        break;
+
+      case 'SSC_CGL':
+        pedagogicalDirectives = `
+STUDENT EDUCATIONAL PROFILE: SSC / CGL / CHSL Aspirant (${ctx.targetExam || 'SSC Competitive Exam'}).
+PEDAGOGICAL TEACHING RULES:
+- Focus on factual precision, quantitative aptitude shortcuts, and reasoning patterns.
+- General Awareness: static GK, polity basics, economy basics, science basics.
+- Mathematics: speed-solving techniques, shortcut formulas, type-based problem solving.
+- English: grammar rules, vocabulary, comprehension strategies.
+- Reasoning: pattern recognition, coding-decoding, logical deduction shortcuts.
+- Keep answers exam-focused and concise. Avoid unnecessary academic depth.
+- Output Difficulty Field: MUST be "EXAM_FOCUSED".`;
+        break;
+
+      case 'BANKING_RAILWAY':
+        pedagogicalDirectives = `
+STUDENT EDUCATIONAL PROFILE: Banking / Railway / Defence Exam Aspirant (${ctx.targetExam || 'Competitive Exam'}).
+PEDAGOGICAL TEACHING RULES:
+- Focus on quantitative aptitude (DI, simplification, number series), reasoning ability, and general awareness.
+- Banking awareness: RBI policies, financial terms, current banking events if applicable.
+- Mathematics: speed tricks, approximation, data interpretation.
+- Current Affairs: economically significant events, government schemes.
+- Output Difficulty Field: MUST be "EXAM_FOCUSED".`;
+        break;
+
+      case 'CLASS_9_10':
+        pedagogicalDirectives = `
+STUDENT EDUCATIONAL PROFILE: Class 9–10 (Secondary School, Board Exam preparation).
+PEDAGOGICAL TEACHING RULES:
+- Vocabulary: Standard CBSE/State Board terminology.
+- Balanced depth: clear definitions, standard equations, anatomical/scientific terms at board level.
+- Board Exam focus: high-yield keywords, marking-scheme-aware explanations.
+- Output Difficulty Field: MUST be "INTERMEDIATE".`;
+        break;
+
+      case 'CLASS_11_12':
+        pedagogicalDirectives = `
+STUDENT EDUCATIONAL PROFILE: Class 11–12 Senior Secondary (${ctx.stream || 'Arts/Commerce/Science'}).
+PEDAGOGICAL TEACHING RULES:
+- Vocabulary: Rigorous academic and subject-specific terminology.
+- Depth appropriate for senior secondary curriculum.
+- Connect to competitive exam preparation where relevant (JEE/NEET/CUET).
+- Output Difficulty Field: MUST be "ADVANCED".`;
+        break;
+
+      case 'ADVANCED':
+        pedagogicalDirectives = `
+STUDENT EDUCATIONAL PROFILE: Advanced / Professional Level.
+PEDAGOGICAL TEACHING RULES:
+- Maximum academic rigor with research-level depth.
+- First-principles derivations, advanced applications, and cross-disciplinary connections.
 - Output Difficulty Field: MUST be "ADVANCED".`;
         break;
 
@@ -527,40 +604,54 @@ STUDENT EDUCATIONAL PROFILE: ${ctx.levelLabel || 'Secondary Level'}.
 PEDAGOGICAL TEACHING RULES: Adapt explanation depth, terminology, and analogies smoothly to this level.`;
     }
 
-    return `${this.systemPrompt}
 
-PERSONALIZED STUDENT CONTEXT:
-${pedagogicalDirectives}
+    let advancedModesInstructions = '\nSELECTED MENTORSHIP MODES: Return EVERY requested mode field below with meaningful content in the selected language. These modes take priority over the generic lesson instructions. Never omit a selected mode as irrelevant.\n';
+    let extraSchema = '';
+    if (advancedModes.socratic) {
+      advancedModesInstructions += '\nSOCRATIC TUTOR: Teach through a conceptual starting point, 1-3 incremental hints and one focused guiding question. Do not give the final answer, completed derivation or answer key. Set mathSolution, steps, examples, summary, practiceQuestions and examPoints to null. Visuals and connections may show concepts but must not reveal the solution. Combine other selected modes without defeating this rule.\n';
+      extraSchema += ',\n  "socraticTutor": { "learningGoal": "The specific reasoning skill to practise", "guidingQuestion": "One question the student can answer next", "hints": ["A useful first hint", "A slightly more specific hint"] }';
+    }
+    if (advancedModes.debate) {
+      advancedModesInstructions += '\nDEBATE COACH: Present a clear claim, 1-3 evidence-based supporting points, 1-3 legitimate counterpoints or limitations, and a question inviting the student to defend their reasoning. State what is settled fact versus debatable interpretation in boundary. For mathematics or settled science, challenge a plausible misconception or assumption, never manufacture false opposition to a correct fact.\n';
+      extraSchema += ',\n  "debateCoach": { "claim": "A topic-relevant claim to discuss", "supportingPoints": ["Evidence supporting the claim"], "counterPoints": ["A legitimate limitation or counterargument"], "boundary": "Facts that should not be disputed and the actual scope of debate", "reflectionQuestion": "A specific question inviting the student to reason with evidence" }';
+    }
+    if (advancedModes.mindmap) {
+      advancedModesInstructions += '\nMIND MAP: Return a structured mindMap with one centralTopic and 2-6 meaningful branches. Each branch has a title, a short explanation of its connection to the centre in detail, and 0-4 concise child concepts. Use topic-specific relationships, not decorative generic labels. Do not return Mermaid, HTML, or SVG for this mode.\n';
+      extraSchema += ',\n  "mindMap": { "centralTopic": "Central concept", "branches": [{ "title": "First connected idea", "detail": "How it relates to the central concept", "children": ["Related detail"] }, { "title": "Second connected idea", "detail": "Another meaningful relationship", "children": [] }] }';
+    }
+    if (advancedModes.connections) {
+      advancedModesInstructions += '\nHAMSA CONNECTIONS: Return 2-4 connections to different subjects. Explain the actual mechanism or shared principle and a concrete example. Clearly distinguish an analogy from a scientific or historical fact; do not invent relationships.\n';
+      extraSchema += ',\n  "hamsaConnections": { "First related subject": "Shared principle and a concrete example", "Second related subject": "Another useful relationship and its limits" }';
+    }
+    if (advancedModes.teachBack) {
+      advancedModesInstructions += '\nTEACH BACK: Set a specific, level-appropriate teachBackChallenge asking the student to explain the concept in their own words. Return 2-4 teachBackCriteria naming what an accurate explanation should cover, so later feedback can assess understanding. With Socratic mode, assess the setup and reasoning rather than require or reveal the final answer.\n';
+      extraSchema += ',\n  "teachBackChallenge": "A specific task the student can teach back",\n  "teachBackCriteria": ["First point their explanation should cover", "Second point to check"]';
+    }
 
-PRIVACY & PEDAGOGICAL TONE PRINCIPLE:
-- Adapt explanation depth, vocabulary, and pedagogical complexity NATURALLY.
-- Do NOT explicitly recite private demographics (e.g. do NOT say "Since you are 16 years old..." or "Because of your profile...").
-- Teach directly at their wavelength.
-
-STUDENT REQUEST:
-Question / Concept: "${question}"
-Selected Language: ${language}
-Explanation Depth: ${depth}
-Mode: ${mode}
-${pdfContext ? `Attached Document Context: """${pdfContext.substring(0, 3000)}"""` : ''}
-
-You MUST return a JSON object with this exact structure:
-{
-  "subject": "Mathematics | Science | History | Geography | Polity | Economy | Technology | English | Hindi | General Studies",
+    const finalJsonSchema = `{
+  "questionAnalysis": {
+    "subject": "Mathematics | Physics | Chemistry | Biology | History | Geography | Indian Polity | Economics | English | Hindi | Computer Science | Reasoning | Quantitative Aptitude | Current Affairs | General Knowledge | Other",
+    "topic": "Specific topic name",
+    "subtopic": "Specific subtopic or null",
+    "questionType": "FACTUAL | CONCEPTUAL | ANALYTICAL | NUMERICAL | COMPARATIVE | PROCEDURAL | EXAM_ORIENTED",
+    "difficulty": "BEGINNER | INTERMEDIATE | ADVANCED | EXAM_FOCUSED",
+    "examRelevance": "Brief exam relevance note or null"
+  },
+  "subject": "Same as questionAnalysis.subject",
   "topic": "Concise topic title",
-  "difficulty": "BEGINNER | INTERMEDIATE | ADVANCED",
+  "difficulty": "BEGINNER | INTERMEDIATE | ADVANCED | EXAM_FOCUSED",
   "isMath": false,
-  "quickAnswer": "Direct, clear, punchy answer in 1-2 sentences",
+  "quickAnswer": "${advancedModes.socratic ? 'A useful conceptual starting point and hint, without revealing the final answer' : 'Direct, clear answer in 1-3 sentences — the core takeaway'}",
   "foundation": {
     "title": "Let's Understand (Starting from Zero)",
-    "explanation": "Assume zero knowledge. Build from ground up with simple words...",
+    "explanation": "Build an intuitive picture, explain the underlying mechanism, and connect it to the exact answer in 3-4 short Markdown paragraphs. Use selective bold; do not repeat quickAnswer.",
     "technicalTerms": [
       { "term": "Term Name", "simpleMeaning": "Simple meaning", "example": "Everyday example" }
     ]
   },
   "steps": [
-    { "stepNumber": 1, "title": "Step title", "content": "Clear progressive explanation" },
-    { "stepNumber": 2, "title": "Step title", "content": "Clear progressive explanation" }
+    { "stepNumber": 1, "title": "Step title", "content": "Explain this step and its reason, connecting it to the next step; use a short Markdown paragraph" },
+    { "stepNumber": 2, "title": "Step title", "content": "Explain this step and its reason, connecting it to the next step; use a short Markdown paragraph" }
   ],
   "whyAndHow": {
     "what": "What is it?",
@@ -573,7 +664,7 @@ You MUST return a JSON object with this exact structure:
     {
       "type": "Everyday Life | Practical | Numerical | School Level",
       "title": "Example Title",
-      "description": "Relatable scenario showing the concept clearly"
+      "description": "One concrete worked example: setup, how the concept applies, and what the result tells us"
     }
   ],
   "analogy": {
@@ -604,7 +695,7 @@ You MUST return a JSON object with this exact structure:
   "diagram": {
     "title": "Concept Diagram",
     "type": "svg",
-    "svgContent": "<svg viewBox='0 0 500 180' xmlns='http://www.w3.org/2000/svg' width='100%' height='100%' style='background:transparent;'><defs><linearGradient id='diagGrad' x1='0%' y1='0%' x2='100%' y2='0%'><stop offset='0%' stop-color='#4F46E5'/><stop offset='100%' stop-color='#06B6D4'/></linearGradient></defs><rect x='30' y='50' width='120' height='70' rx='12' fill='url(#diagGrad)' opacity='0.85'/><text x='90' y='90' fill='#ffffff' font-family='sans-serif' font-size='14' font-weight='bold' text-anchor='middle'>Input</text><path d='M 155 85 L 205 85' stroke='#F59E0B' stroke-width='3' marker-end='url(#arrow)'/><rect x='210' y='50' width='120' height='70' rx='12' fill='#7C3AED' opacity='0.85'/><text x='270' y='90' fill='#ffffff' font-family='sans-serif' font-size='14' font-weight='bold' text-anchor='middle'>Process</text><path d='M 335 85 L 385 85' stroke='#10B981' stroke-width='3'/><rect x='390' y='50' width='100' height='70' rx='12' fill='#10B981' opacity='0.85'/><text x='440' y='90' fill='#ffffff' font-family='sans-serif' font-size='14' font-weight='bold' text-anchor='middle'>Output</text></svg>",
+    "svgContent": "Complete valid SVG markup illustrating THIS concept, with xmlns, viewBox, labelled parts, relevant shapes and directional connectors. Use readable labels (about 18-22 SVG units), strong contrast, and a compact landscape composition. Do not copy a generic sample, embed external images, or include scripts.",
     "caption": "Clear caption describing the diagram flow"
   },
   "comparison": {
@@ -632,185 +723,256 @@ You MUST return a JSON object with this exact structure:
     "potentialMcqFacts": ["Possible MCQ trap or numerical constant"]
   },
   "summary": [
-    "Key takeaway point 1",
-    "Key takeaway point 2",
-    "Key takeaway point 3"
+    "Key takeaway 1 (ONLY if not already stated in explanation)",
+    "Key takeaway 2 (2-3 points max)"
   ],
   "practiceQuestions": [
     {
-      "type": "MCQ",
-      "question": "Practice question 1 to test immediate understanding?",
+      "type": "MCQ | CONCEPTUAL | NUMERICAL",
+      "question": "ONE concise practice question to test understanding",
       "options": ["Option A", "Option B", "Option C", "Option D"],
-      "answer": "Option A",
-      "explanation": "Why Option A is correct"
-    },
-    {
-      "type": "CONCEPTUAL",
-      "question": "Quick conceptual check question?",
-      "options": [],
-      "answer": "Clear, concise answer",
-      "explanation": "Educational reasoning"
+      "answer": "Correct answer",
+      "explanation": "Brief reasoning"
     }
   ],
+  "sources": [
+    { "name": "Source Name (e.g. NCERT, Constitution of India)", "detail": "Brief detail or null" }
+  ],
   "followUpSuggestions": [
-    "Why does this occur under different conditions?",
-    "Can you give another real-life example in Hindi?",
-    "How does this connect to competitive exam questions?"
-  ]
+    "Natural follow-up question 1",
+    "Natural follow-up question 2"
+  ]${extraSchema}
 }`;
+
+    return `${this.systemPrompt}
+
+PERSONALIZED STUDENT CONTEXT:
+${pedagogicalDirectives}
+
+PRIVACY & PEDAGOGICAL TONE PRINCIPLE:
+- Adapt explanation depth, vocabulary, and pedagogical complexity NATURALLY.
+- Do NOT explicitly recite private demographics (e.g. do NOT say "Since you are 16 years old..." or "Because of your profile...").
+- Teach directly at their wavelength.
+
+STUDENT REQUEST:
+Question / Concept: "${question}"
+Selected Language: ${language}
+Explanation preference: ${depth === 'SIMPLE' ? 'Use plain language and concise connected reasoning. Keep every necessary calculation and answer justification.' : depth === 'DETAILED' ? 'Explain mechanisms and each necessary step thoroughly, with useful examples. Avoid repetition.' : 'Adapt the detail to this question.'}
+Teaching Level: ${ctx.levelLabel || ctx.educationLevel}
+Mode: ${mode}
+${pdfContext ? 'Answer document questions only from the included pages. If information is absent, say so; do not claim to have read the rest of the PDF.' : ''}
+${pdfContext ? `Attached Document Context: """${pdfContext}"""` : ''}
+
+CRITICAL INSTRUCTIONS:
+1. CLASSIFY the question first — determine subject, topic, question type, and complexity.
+2. ADAPT depth to complexity and student level. Explain mechanisms and reasoning thoroughly; keep simple factual questions concise.
+3. Include the tools that help this student understand: connected reasoning, a worked example, common mistakes, a useful flowchart for processes or a labelled SVG illustration for spatial/system concepts. Include comparison, memory aids and exam points when helpful. Omit unrelated sections, but never drop useful teaching content just to shorten the response.
+4. NEVER repeat the same information across quickAnswer, foundation, steps, and summary.
+5. Teach like a thoughtful notebook: an intuitive starting point, connected reasoning, a concrete example, and an important limitation or misconception. Keep the foundation enjoyable and self-contained.
+6. For statement-based or option-based questions, analyze every statement/option that affects the answer, including wording traps and exceptions, and connect the final choice to that analysis.
+${advancedModesInstructions}
+
+Return a JSON object. Include ONLY fields relevant to this question (return null for irrelevant ones):
+${finalJsonSchema}
+
+REMINDERS:
+- Every selected mentorship mode field is REQUIRED; generic section optionality must not remove selected coaching.
+- Simple questions: quickAnswer + a clear foundation; a short example only when useful. Skip flowcharts, diagrams, comparisons.
+- Math problems: Explain why the method works; show every necessary transformation with its reason in mathSolution. Do not repeat the derivation in steps. Skip analogy, flowchart unless genuinely useful.
+- Comparisons: Explain the differences in foundation, use a comparison table and a practical example; include visuals if they clarify the relationship.
+- Useful visuals are part of the lesson: include flowchart and/or labelled SVG when they improve understanding, even when advanced modes are off. All visual labels and captions must follow the selected language.
+- ${advancedModes.socratic ? 'Socratic mode: omit answer-bearing steps, worked examples, mathSolution, summary, practiceQuestions and examPoints. The foundation teaches only the setup and required concepts, without giving the solution.' : 'Keep practiceQuestions to exactly 1 question when practice is useful.'}
+- Keep summary to 2-3 points max, only if they add value beyond the explanation.
+- Return null for any field not relevant to this question.`;
   }
 
   // =========================================================================
   // GEMINI CALLER WITH MODEL ROTATION & PARSING
   // =========================================================================
 
-  async _callGeminiWithFallback(prompt, imageFile = null) {
-    const apiKey = (window.geminiService && window.geminiService.getApiKey()) || '';
-    
-    // Check if running on local server with proxy
-    const isLocalServer = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
-    
-    // Prepare contents
-    const parts = [{ text: prompt }];
-
-    if (imageFile) {
-      try {
-        const base64Data = await this._fileToBase64(imageFile);
-        parts.push({
-          inlineData: {
-            mimeType: imageFile.type || 'image/jpeg',
-            data: base64Data
-          }
-        });
-      } catch (e) {
-        console.warn('Image attachment encoding error:', e);
-      }
+  _throwIfAborted(signal) {
+    if (signal?.aborted) {
+      const error = new Error('AI Teacher request cancelled.');
+      error.name = 'AbortError';
+      throw error;
     }
+  }
 
+  async _callGeminiWithFallback(prompt, imageFile = null, options = {}) {
+    const { signal, maxOutputTokens = 8192, validateLesson = true, advancedModes = {} } = options;
+    this._throwIfAborted(signal);
+    if (!window.aiClient) throw new Error('AI transport is not loaded.');
+    const apiKey = window.geminiService?.getApiKey() || '';
+    await window.aiClient.probeServerKey();
+    this._throwIfAborted(signal);
+    if (!window.aiClient.isAvailable()) throw new Error('Live AI is not configured.');
+
+    const parts = [{ text: prompt }];
+    if (imageFile) {
+      if (!/^image\/(png|jpeg|webp)$/.test(imageFile.type) || imageFile.size > 1024 * 1024) {
+        throw new Error('Use a PNG, JPEG or WebP image under 1 MB.');
+      }
+      const data = await this._fileToBase64(imageFile);
+      this._throwIfAborted(signal);
+      parts.push({ inlineData: { mimeType: imageFile.type, data } });
+    }
     const payload = {
       contents: [{ parts }],
-      generationConfig: {
-        temperature: 0.25,
-        maxOutputTokens: 4096,
-        responseMimeType: 'application/json'
-      }
+      generationConfig: { temperature: 0.25, maxOutputTokens, responseMimeType: 'application/json' }
     };
-
-    // Candidates models
-    let modelsToTry = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-    if (window.geminiService) {
+    // Keep the entire selected PDF text; reject oversized requests rather than truncating it.
+    if (new TextEncoder().encode(JSON.stringify(payload)).length > 1800000) {
+      throw new Error('The attached content is too large. Use a smaller document or image.');
+    }
+    const activeModel = window.geminiService?.getActiveModel() || 'gemini-3.6-flash';
+    let models = window.geminiService?.candidateModels
+      ? window.geminiService.sortModelsByPreference(window.geminiService.candidateModels, activeModel)
+      : [activeModel];
+    if (window.geminiService?.discoverAvailableModels) {
       try {
         const discovered = await window.geminiService.discoverAvailableModels(apiKey);
-        if (discovered && discovered.length > 0) {
-          modelsToTry = window.geminiService.sortModelsByPreference(discovered, window.geminiService.getActiveModel());
-        }
-      } catch (e) {}
-    }
-
-    let lastError = null;
-
-    // 1. Try server proxy if available
-    if (isLocalServer && typeof window !== 'undefined') {
-      try {
-        const origin = (window.location && window.location.origin && window.location.origin !== 'null') ? window.location.origin : '';
-        const proxyUrl = origin ? `${origin}/api/gemini/gemini-2.5-flash` : '/api/gemini/gemini-2.5-flash';
-        const proxyRes = await fetch(proxyUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (proxyRes.ok) {
-          const json = await proxyRes.json();
-          const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-          const parsed = this._parseJsonSafely(text);
-          if (parsed) return { success: true, data: parsed, model: 'gemini-2.5-flash (Proxy)' };
-        }
-      } catch (proxyErr) {
-        // Continue to direct API calls
+        this._throwIfAborted(signal);
+        if (discovered?.length) models = window.geminiService.sortModelsByPreference(discovered, activeModel);
+      } catch (error) {
+        if (error.name === 'AbortError' || signal?.aborted) throw error;
       }
     }
-
-    // 2. Direct Gemini API calls with key
-    if (!window.geminiService?.isAiAvailable()) {
-      throw new Error('No Gemini API key configured.');
-    }
-
-    for (const model of modelsToTry) {
+    let lastError = new Error('Live AI could not return a lesson.');
+    for (const model of [...new Set(models)]) {
+      this._throwIfAborted(signal);
       try {
-        const res = await window.aiClient.fetchGenerateContent(model, payload, { apiKey });
-
-        if (res.ok) {
-          const json = await res.json();
-          const text = json.candidates?.[0]?.content?.parts?.[0]?.text;
-          const parsed = this._parseJsonSafely(text);
-          if (parsed) {
-            return { success: true, data: parsed, model };
+        const res = await window.aiClient.fetchGenerateContent(model, payload, { apiKey, signal });
+        this._throwIfAborted(signal);
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          lastError = new Error(errorData.error?.message || `HTTP ${res.status}`);
+          if ([400, 401, 403, 413, 429].includes(res.status)) break;
+          continue;
+        }
+        const json = await res.json();
+        this._throwIfAborted(signal);
+        const candidate = json.candidates?.[0];
+        if (json.promptFeedback?.blockReason || (candidate?.finishReason && candidate.finishReason !== 'STOP')) {
+          lastError = new Error(candidate?.finishReason === 'MAX_TOKENS'
+            ? 'AI response was cut short. Please retry with a more focused question.'
+            : 'AI could not complete this response. Please rephrase the question.');
+          continue;
+        }
+        const raw = (candidate?.content?.parts || []).map(part => part.text || '').join('');
+        const parsed = this._parseJsonSafely(raw);
+        const data = validateLesson ? this.normalizeExplanation(parsed) : parsed;
+        if (data && (!validateLesson || this.validateAdvancedOutputs(data, advancedModes))) {
+          if (validateLesson && advancedModes.socratic) {
+            // A guided attempt must not render the completed solution or an answer key.
+            for (const field of ['mathSolution', 'steps', 'examples', 'summary', 'practiceQuestions', 'examPoints']) data[field] = null;
           }
-        } else {
-          const errData = await res.json().catch(() => ({}));
-          lastError = errData.error?.message || `HTTP ${res.status}`;
-          if (res.status === 400 && lastError.toLowerCase().includes('api key')) break;
+          return { success: true, data, model };
         }
-      } catch (err) {
-        lastError = err.message;
+        lastError = new Error(Object.values(advancedModes).some(Boolean) ? 'AI did not complete all selected mentorship modes. Please retry.' : 'AI returned an invalid or empty lesson. Please retry.');
+      } catch (error) {
+        if (error.name === 'AbortError' || signal?.aborted) throw error;
+        lastError = error;
       }
     }
-
-    throw new Error(lastError || 'Failed to reach Gemini API.');
+    throw lastError;
   }
 
-  async _callGeminiRaw(prompt) {
-    const apiKey = (window.geminiService && window.geminiService.getApiKey()) || '';
-    const payload = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.3,
-        maxOutputTokens: 2048,
-        responseMimeType: 'application/json'
-      }
+  async _callGeminiRaw(prompt, { signal = null } = {}) {
+    const result = await this._callGeminiWithFallback(prompt, null, {
+      signal, maxOutputTokens: 2048, validateLesson: false
+    });
+    return JSON.stringify(result.data);
+  }
+
+  normalizeExplanation(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const text = 'string';
+    const shape = {
+      topic: text, subject: text, difficulty: text, isMath: 'boolean', quickAnswer: text,
+      questionAnalysis: { subject: text, topic: text, subtopic: text, questionType: text, difficulty: text, examRelevance: text },
+      foundation: { title: text, explanation: text, technicalTerms: [{ term: text, simpleMeaning: text, example: text }] },
+      steps: [{ stepNumber: 'step', title: text, content: text }],
+      whyAndHow: { what: text, why: text, how: text, when: text, where: text },
+      analogy: { hook: text, analogyText: text, takeaway: text },
+      examples: [{ type: text, title: text, description: text }],
+      mathSolution: { given: text, toFind: text, formula: text, formulaExplanation: text,
+        calculationSteps: [{ step: text, math: text, explanation: text }], finalAnswer: text, verification: text, alternateMethod: text },
+      flowchart: { title: text, nodes: [{ label: text, description: text }] },
+      diagram: { title: text, type: text, svgContent: text, caption: text },
+      comparison: { title: text, headers: [text], rows: [[text]] },
+      commonMistakes: [{ mistake: text, correction: text }], memoryTrick: { mnemonic: text, explanation: text },
+      examPoints: { highYieldPoints: [text], keyTerms: [text], expectedAnswerStructure: text, potentialMcqFacts: [text] },
+      summary: [text], practiceQuestions: [{ type: text, question: text, options: [text], answer: text, explanation: text }],
+      sources: [{ name: text, detail: text }], followUpSuggestions: [text],
+      mermaidMindmap: text, teachBackChallenge: text, teachBackCriteria: [text],
+      mindMap: { centralTopic: text, branches: [{ title: text, detail: text, children: [text] }] },
+      socraticTutor: { learningGoal: text, guidingQuestion: text, hints: [text] },
+      debateCoach: { claim: text, supportingPoints: [text], counterPoints: [text], boundary: text, reflectionQuestion: text },
+      advancedModes: { socratic: 'boolean', debate: 'boolean', mindmap: 'boolean', connections: 'boolean', teachBack: 'boolean' }
     };
-
-    if (!window.geminiService?.isAiAvailable()) {
-      // Try local proxy if in browser environment
-      try {
-        const origin = (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin !== 'null') ? window.location.origin : '';
-        const proxyUrl = origin ? `${origin}/api/gemini/gemini-2.5-flash` : '/api/gemini/gemini-2.5-flash';
-        const proxyRes = await fetch(proxyUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        if (proxyRes.ok) {
-          const json = await proxyRes.json();
-          return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
-        }
-      } catch (e) {}
-      throw new Error('API key missing');
-    }
-
-
-    const model = (window.geminiService && window.geminiService.getActiveModel()) || 'gemini-2.5-flash';
-    const res = await window.aiClient.fetchGenerateContent(model, payload, { apiKey });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    return json.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    const normalize = (value, spec, index = 0) => {
+      if (value == null) return value;
+      if (spec === 'step') return Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : index + 1;
+      if (typeof spec === 'string') {
+        if (typeof value !== spec) throw new Error('Invalid field type');
+        return value;
+      }
+      if (Array.isArray(spec)) {
+        if (!Array.isArray(value)) throw new Error('Invalid list');
+        if (value.some(item => item == null)) throw new Error('Invalid list entry');
+        return value.map((item, i) => normalize(item, spec[0], i));
+      }
+      if (typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid section');
+      const result = {};
+      for (const [key, field] of Object.entries(spec)) {
+        if (Object.hasOwn(value, key)) result[key] = normalize(value[key], field, index);
+      }
+      return result;
+    };
+    try {
+      const lesson = normalize(data, shape);
+      if (data.hamsaConnections != null) {
+        if (typeof data.hamsaConnections !== 'object' || Array.isArray(data.hamsaConnections)
+          || Object.values(data.hamsaConnections).some(value => typeof value !== 'string')) return null;
+        lesson.hamsaConnections = { ...data.hamsaConnections };
+      }
+      if (![lesson.quickAnswer, lesson.foundation?.explanation, lesson.mathSolution?.finalAnswer].some(value => typeof value === 'string' && value.trim())) return null;
+      if (data.studentContext && typeof data.studentContext === 'object') lesson.studentContext = { ...data.studentContext };
+      if (data.generation && typeof data.generation === 'object') lesson.generation = { ...data.generation };
+      return lesson;
+    } catch { return null; }
   }
 
-  _parseJsonSafely(raw) {
+  _supportsBuiltInLanguage(lesson, language) {
+    const content = [lesson.quickAnswer, lesson.foundation?.explanation,
+      ...(lesson.steps || []).map(step => step.content)].filter(Boolean).join(' ');
+    const hasHindi = /[\u0900-\u097f]/.test(content);
+    if (language === 'ENGLISH') return !hasHindi;
+    if (language === 'HINDI') return [lesson.quickAnswer, lesson.foundation?.explanation,
+      ...(lesson.steps || []).map(step => step.content)].filter(Boolean).every(value => /[\u0900-\u097f]/.test(value));
+    if (language === 'BILINGUAL') return hasHindi && /[a-z]/i.test(content);
+    // There are no curated Roman Hindi variants; do not relabel English as Hinglish.
+    return false;
+  }
+
+  _parseJsonSafely(raw, requiredFields = []) {
     if (!raw || typeof raw !== 'string') return null;
     let clean = raw.trim();
     // Remove Markdown code fence blocks
     clean = clean.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/\s*```$/, '').trim();
 
     try {
-      return JSON.parse(clean);
+      const data = JSON.parse(clean);
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+      if (requiredFields.length && Object.values(data).some(value => value != null && typeof value !== 'string')) return null;
+      return requiredFields.every(field => typeof data[field] === 'string' && data[field].trim()) ? data : null;
     } catch (e) {
       // Attempt JSON substring extraction
       const firstBrace = clean.indexOf('{');
       const lastBrace = clean.lastIndexOf('}');
       if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
         try {
-          return JSON.parse(clean.substring(firstBrace, lastBrace + 1));
+          return this._parseJsonSafely(clean.substring(firstBrace, lastBrace + 1), requiredFields);
         } catch (subErr) {}
       }
     }
@@ -836,16 +998,16 @@ You MUST return a JSON object with this exact structure:
   // =========================================================================
 
   getDeterministicExplanation({ question, language = 'BILINGUAL', depth = 'DETAILED', mode = 'STUDENT', studentContext = null }) {
-    const qLower = question.toLowerCase();
+    const qLower = String(question || '').toLowerCase();
     const ctx = studentContext || this._resolveStudentContext();
 
     // 0. Linear Equation: e.g. "Solve 2x + 5 = 15" or "2x + 5 = 15"
-    if ((qLower.includes('2x') && qLower.includes('15')) || qLower.includes('2x+5') || qLower.includes('2x + 5') || (qLower.includes('solve') && qLower.includes('='))) {
+    if (/^(?:solve\s+)?2\s*x\s*\+\s*5\s*=\s*15[?.!]?$/i.test(qLower.trim())) {
       return this._getMathEquationExplanation(question, language, ctx);
     }
 
     // 1. Mathematics: Percentage / 15% of 200 = 30
-    if (qLower.includes('15%') || (qLower.includes('percent') && qLower.includes('200')) || (qLower.includes('20%') && qLower.includes('500'))) {
+    if (/^(?:(?:why is|what is|calculate|find|explain)\s+)?15\s*(?:%|percent)\s+of\s+200(?:\s*(?:equal to|equals|=)\s*30)?[?.!]*$/.test(qLower.trim())) {
       return this._getMathPercentageExplanation(question, language, ctx);
     }
 
@@ -865,7 +1027,7 @@ You MUST return a JSON object with this exact structure:
     }
 
     // 5. Computer Science: RAM / Memory
-    if (qLower.includes('ram') || qLower.includes('random access memory')) {
+    if (/\bram\b/.test(qLower) || qLower.includes('random access memory')) {
       return this._getRamExplanation(language, ctx);
     }
 
@@ -879,8 +1041,8 @@ You MUST return a JSON object with this exact structure:
       return this._getInflationExplanation(language, ctx);
     }
 
-    // Universal Adaptive Fallback for any other educational topic
-    return this._getUniversalAdaptiveExplanation(question, language, depth, mode, ctx);
+    // No curated lesson matches this question; never substitute generic filler.
+    return null;
   }
 
   _getMathEquationExplanation(question, lang, ctx) {
@@ -1203,7 +1365,7 @@ You MUST return a JSON object with this exact structure:
         {
           type: "CSAT Word Problem Application",
           title: "Age Problem Translation",
-          description: "'A father is 5 years older than twice his son's age. If the father is 15 years old, find the son's age.' Equation: 2x + 5 = 15 → Son is 5 years old!"
+          description: "'Two notebooks and a ₹5 bag cost ₹15. Find the price of one notebook.' Equation: 2x + 5 = 15 → One notebook costs ₹5."
         }
       ],
       analogy: {
@@ -2902,7 +3064,7 @@ You MUST return a JSON object with this exact structure:
           },
           {
             term: "CPI vs WPI Dichotomy",
-            simpleMeaning: "CPI (Base 2012, NSO) measures retail prices with ~45.8% food weight; WPI (Base 2011-12, DPIIT) measures wholesale manufacturer prices with 64.2% manufactured products weight and zero service coverage",
+            simpleMeaning: "CPI (Base 2024=100, NSO, introduced February 2026) measures retail consumer prices; WPI (Base 2011-12, DPIIT) measures wholesale manufacturer prices with 64.2% manufactured products weight and zero service coverage",
             example: "RBI shifted policy anchor from WPI to CPI in 2014 per Urjit Patel Committee recommendations."
           },
           {
@@ -2921,7 +3083,7 @@ You MUST return a JSON object with this exact structure:
         {
           stepNumber: 2,
           title: "2. Statutory MPC Policy Intervention",
-          content: "If CPI exceeds 6% for three consecutive quarters, RBI triggers failure reporting to Parliament and hikes policy repo rate to tighten Liquidity Adjustment Facility (LAF)."
+          content: "If average CPI inflation exceeds the upper tolerance limit for three consecutive quarters, RBI must report to the Central Government explaining the failure, remedial actions and the expected time to restore inflation to target; a rate hike is not automatic."
         },
         {
           stepNumber: 3,
@@ -2967,7 +3129,7 @@ You MUST return a JSON object with this exact structure:
           { step: "Lower Tolerance", math: "4% - 2% = 2%", explanation: "Deflationary floor" },
           { step: "Central Anchor", math: "4.0%", explanation: "Optimal inflation for developing economy" },
           { step: "Upper Tolerance", math: "4% + 2% = 6%", explanation: "Overheating ceiling" },
-          { step: "Failure Trigger", math: "CPI > 6% or CPI < 2% for 3 consecutive quarters", explanation: "Mandatory report to Union Parliament" }
+          { step: "Failure Trigger", math: "CPI > 6% or CPI < 2% for 3 consecutive quarters", explanation: "Mandatory report to the Central Government under Section 45ZN" }
         ],
         finalAnswer: "4.0% (± 2.0%) band",
         units: "% CPI-Combined",
@@ -3004,9 +3166,9 @@ You MUST return a JSON object with this exact structure:
         headers: ["Parameter", "CPI-Combined", "WPI"],
         rows: [
           ["Publishing Authority", "National Statistical Office (NSO), MoSPI", "Office of Economic Adviser, DPIIT, MoC&I"],
-          ["Base Year", "2012 = 100", "2011-12 = 100"],
-          ["Food Weight", "High (~45.86% in CPI-C)", "Moderate (~24.38% including primary food)"],
-          ["Services Component", "Included (~47% non-food items)", "Completely EXCLUDED (goods only)"],
+          ["Base Year", "2024 = 100", "2011-12 = 100"],
+          ["Food and Beverages Weight", "36.753% (CPI 2024 classification; MoSPI February 2026 release)", "Moderate (~24.38% including primary food)"],
+          ["Services Component", "Included (e.g. education, health and transport services)", "Completely EXCLUDED (goods only)"],
           ["Monetary Policy Role", "Official policy anchor for RBI (since 2014)", "Auxiliary input for producer price trends"]
         ]
       },

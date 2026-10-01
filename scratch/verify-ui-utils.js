@@ -242,7 +242,8 @@ function loadUtils() {
     check('central stop runs whenever the view changes',
       /const isLeavingView = viewName !== this\.currentView/.test(app));
     check('per-view stopSpeech still runs (resets button state)',
-      /flashcardsView\.stopSpeech\(\)/.test(app) && /aiTeacherView\.stopSpeech\(\)/.test(app));
+      /flashcardsView\.stopSpeech\(\)/.test(app) && /aiTeacherView\.onLeaveView\(\)/.test(app)
+      && /onLeaveView\(\)\s*\{[\s\S]*?this\.stopSpeech\(\)/.test(read('js/views/ai-teacher.js')));
   }
 
   console.log('\n=== M7: spotlight tracking ===');

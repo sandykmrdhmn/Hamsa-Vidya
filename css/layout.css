@@ -37,11 +37,10 @@
    part of the bug — they never stretched, and widening them would make long
    text harder to read:
 
-     .teacher-book-folio   generated lesson prose
      .result-container     the quiz report
 
-   Both are centred inside the shared column, so they still feel like the same
-   page, just with a tighter measure.
+   AI Teacher panels share the full page column so question, lesson and
+   navigation edges line up.
 
    LOAD ORDER
    After every per-view stylesheet, so these rules win over the widths above.
@@ -120,15 +119,18 @@
 /* ==========================================================================
    3. READING MEASURES
 
-   Long-form text needs a tighter column than the page does. Without this, the
-   AI Teacher lesson would inherit the full 1560px and run ~180 characters per
-   line; it previously got its measure by accident, from the 1200px container
-   that section 2 has now released.
+   AI Teacher uses one width throughout its studio, including generated
+   lessons. The quiz report retains its focused reading column.
    ========================================================================== */
 
-.teacher-book-folio {
-  max-width: 1100px;
-  margin-inline: auto;
+#view-ai-teacher :is(.teacher-hero, .teacher-tabs-nav, #teacher-tab-content,
+                    .teacher-input-card, #teacher-results-container,
+                    .teacher-response-view, .teacher-loading-card,
+                    .teacher-book-folio, .teacher-actions-bar) {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  margin-inline: 0;
 }
 
 /* The quiz report keeps its own narrow column (css/quiz.css:491). Restated here
