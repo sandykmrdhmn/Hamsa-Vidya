@@ -143,7 +143,7 @@ console.log('\n=== Every view is accounted for ===');
       /heroHtml = /.test(src) && /\$\{heroHtml\}/.test(src));
 
     // Every hero says what the tab is for, in both scripts.
-    check(`${name} hero states the tab's purpose`, /tagline: '/.test(src));
+    check(`${name} hero states the tab's purpose`, /tagline:\s*'/.test(src));
     check(`${name} hero has a Devanagari line`, /hindi: '/.test(src));
   }
 

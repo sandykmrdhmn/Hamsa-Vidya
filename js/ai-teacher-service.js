@@ -841,7 +841,7 @@ REMINDERS:
     for (const model of [...new Set(models)]) {
       this._throwIfAborted(signal);
       try {
-        const res = await window.aiClient.fetchGenerateContent(model, payload, { apiKey, signal });
+        const res = await window.aiClient.fetchGenerateContent(model, payload, { apiKey, signal,stage:'teacher' });
         this._throwIfAborted(signal);
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({}));

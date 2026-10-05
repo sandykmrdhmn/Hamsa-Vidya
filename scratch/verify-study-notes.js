@@ -189,7 +189,7 @@ async function test(name,callback) {
     await w.updateNote(saved,{sections:[{...section(),content:'EDITED_SENTINEL'}]});assert.ok(store.get(saved).content.includes('EDITED_SENTINEL'));await assert.rejects(w.updateNote(999,{title:'Missing'}),/no longer exists/);
   });
   await test('Notes flashcards use structured glossary/definitions/formulas and valid navigation',async({view,w})=>{
-    w.eval(read('js/views/flashcards.js'));w.flashcardsView.startStudySession=()=>{};await view.openNote(1);await view.createFlashcardsFromNote();assert.equal(w.app.currentView,'flashcards');assert.ok(w.flashcardsView.cards.some(card=>card.badge==='Formula'));assert.ok(w.flashcardsView.cards.some(card=>card.front==='Define: Energy'));assert.ok(w.flashcardsView.cards.every(card=>card.cardKey));
+    w.eval(read('js/flashcard-tools.js'));w.eval(read('js/views/flashcards.js'));w.flashcardsView.startStudySession=()=>{w.flashcardsView.activeTab='study';};await view.openNote(1);await view.createFlashcardsFromNote();assert.equal(w.app.currentView,'flashcards');assert.ok(w.flashcardsView.cards.some(card=>card.badge==='Formula'));assert.ok(w.flashcardsView.cards.some(card=>card.front==='Define: Energy'));assert.ok(w.flashcardsView.cards.every(card=>card.cardKey));
   });
   console.log(`\nRESULT: ${passed} passed, ${failed} failed`);process.exitCode=failed?1:0;
 })();

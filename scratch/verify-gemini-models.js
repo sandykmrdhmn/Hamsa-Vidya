@@ -52,17 +52,17 @@ async function test(name, run) {
     assert.equal(w.localStorage.getItem('hamsa_theme_mode'), 'DARK');
   });
   await test('Valid manual free-tier choices persist and model prefixes normalize', ({ svc }) => {
-    svc.setActiveModel('models/gemini-3.5-flash');
-    assert.equal(svc.getActiveModel(), 'gemini-3.5-flash');
+    svc.setActiveModel('models/gemini-3.6-flash');
+    assert.equal(svc.getActiveModel(), DEFAULT);
     svc.setActiveModel('gemini-3.1-pro-preview');
     svc.setActiveModel('gemini-3.8-flash-tts');
-    assert.equal(svc.getActiveModel(), 'gemini-3.5-flash');
+    assert.equal(svc.getActiveModel(), DEFAULT);
   });
   await test('Fallback ranking prefers quality and never automatically selects unverified models', ({ svc }) => {
     const input = ['gemini-3.5-flash-lite', 'gemini-3.1-pro-preview', 'gemini-3.5-flash', DEFAULT, `models/${DEFAULT}`, 'gemini-2.0-flash', 'gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-99-flash'];
     const original = [...input];
-    assert.deepEqual(Array.from(svc.sortModelsByPreference(input)), [DEFAULT, 'gemini-3.5-flash', 'gemini-3.5-flash-lite']);
-    assert.equal(svc.sortModelsByPreference(input, 'models/gemini-3.5-flash')[0], 'gemini-3.5-flash');
+    assert.deepEqual(Array.from(svc.sortModelsByPreference(input)), [DEFAULT]);
+    assert.equal(svc.sortModelsByPreference(input, 'models/gemini-3.5-flash')[0], DEFAULT);
     assert.deepEqual(input, original);
     assert.equal(svc.sortModelsByPreference(['gemini-3.1-pro-preview']).length, 0);
   });
@@ -96,10 +96,9 @@ async function test(name, run) {
       return originalFetch(url, init);
     };
     const result = await svc.testApiKey();
-    assert.equal(result.success, true);
-    assert.equal(result.model, 'gemini-3.5-flash');
-    assert.equal(svc.getActiveModel(), 'gemini-3.5-flash');
-    assert.deepEqual(calls.filter(c => c.payload).map(c => c.url), [`/api/gemini/${DEFAULT}`, '/api/gemini/gemini-3.5-flash']);
+    assert.equal(result.success, false);
+    assert.equal(svc.getActiveModel(), DEFAULT);
+    assert.deepEqual(calls.filter(c => c.payload).map(c => c.url), [`/api/gemini/${DEFAULT}`]);
   });
   await test('Transport uses the same default and strips deprecated overrides without mutating callers', async ({ w, calls }) => {
     const payload = { contents: [{ parts: [{ text: 'Explain this' }] }], generationConfig: {
@@ -128,7 +127,7 @@ async function test(name, run) {
   await test('Omitted transport model honors a valid manual choice and works before service initialization', async ({ w, svc, calls }) => {
     svc.setActiveModel('gemini-3.5-flash');
     await w.aiClient.fetchGenerateContent(undefined, { contents: [] });
-    assert.equal(calls.at(-1).url, '/api/gemini/gemini-3.5-flash');
+    assert.equal(calls.at(-1).url, `/api/gemini/${DEFAULT}`);
     delete w.geminiService;
     await w.aiClient.fetchGenerateContent(undefined, { contents: [] });
     assert.equal(calls.at(-1).url, `/api/gemini/${DEFAULT}`);
@@ -153,9 +152,8 @@ async function test(name, run) {
       }
       return originalFetch(url, init);
     };
-    const result = await w.aiTeacherService._callGeminiWithFallback('Q', null, { validateLesson: false });
-    assert.equal(result.model, 'gemini-3.5-flash');
-    assert.equal(calls.filter(c => c.payload).length, 2);
+    await assert.rejects(w.aiTeacherService._callGeminiWithFallback('Q', null, { validateLesson: false }), /Unavailable/);
+    assert.equal(calls.filter(c => c.payload).length, 1);
   });
   await test('Settings renders the migrated selection and recommends only the default', async ({ w, svc }) => {
     w.localStorage.setItem('hamsa_gemini_model', 'gemini-3.8-flash');

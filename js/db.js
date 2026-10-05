@@ -91,6 +91,61 @@ db.version(10).stores({}).upgrade(async (tx) => {
   }
 });
 
+// Temporary source blobs are not library records and are excluded from JSON
+// backups. Completed quizzes already contain their captured original source.
+db.version(11).stores({ quizDraftFiles: 'id, savedAt' });
+
+async function saveQuizDraftFile(id, file) {
+  if (typeof id !== 'string' || !id || !(file instanceof Blob)) throw new Error('Invalid draft PDF.');
+  await db.transaction('rw', db.quizDraftFiles, async () => {
+    // A recovery ID always identifies the same immutable source file.
+    if (await db.quizDraftFiles.get(id)) throw new Error('This draft PDF is already saved.');
+    await db.quizDraftFiles.put({id, file, name:file.name || 'Source.pdf', savedAt:Date.now()});
+  });
+}
+async function getQuizDraftFile(id) {
+  if (typeof id !== 'string' || !id) return null;
+  const row = await db.quizDraftFiles.get(id);
+  if (!(row?.file instanceof Blob)) return null;
+  return new File([row.file], row.name || 'Source.pdf', {type:'application/pdf'});
+}
+async function getQuizDraftPages(id, version) {
+  if (typeof id !== 'string' || !id || typeof version !== 'string' || !version) return [];
+  const row = await db.quizDraftFiles.get(id);
+  if (!(row?.file instanceof Blob) || row.recoveryVersion !== version) return [];
+  return Object.values(row.recoveryPages || {}).filter(page => Number.isSafeInteger(page?.pageNumber) && page.pageNumber > 0 &&
+    typeof page.text === 'string' && !!page.text.trim() && ['TEXT','OCR'].includes(page.extractionMethod)).map(page => ({...page}));
+}
+async function saveQuizDraftPage(id, version, page, signal) {
+  if (typeof id !== 'string' || !id || typeof version !== 'string' || !version ||
+      !Number.isSafeInteger(page?.pageNumber) || page.pageNumber < 1 || typeof page.text !== 'string' || !page.text.trim() ||
+      !['TEXT','OCR'].includes(page.extractionMethod)) throw new Error('Invalid PDF page checkpoint.');
+  return db.transaction('rw', db.quizDraftFiles, async () => {
+    const row = await db.quizDraftFiles.get(id);
+    // Discard/reset cannot resurrect a deleted source or write into another draft.
+    if (signal?.aborted || !(row?.file instanceof Blob)) return false;
+    const recoveryPages = row.recoveryVersion === version ? {...row.recoveryPages} : {};
+    recoveryPages[page.pageNumber] = {pageNumber:page.pageNumber,text:page.text,fileName:row.name || 'Source.pdf',extractionMethod:page.extractionMethod};
+    return !!await db.quizDraftFiles.update(id, {recoveryVersion:version,recoveryPages});
+  });
+}
+async function deleteQuizDraftFile(id) {
+  if (typeof id === 'string' && id) await db.quizDraftFiles.delete(id);
+}
+async function clearQuizDrafts() {
+  if (db.quizDraftFiles) await db.quizDraftFiles.clear();
+  try {
+    localStorage.removeItem('hamsa_quiz_generation_draft');
+    localStorage.removeItem('hamsa_quiz_form_draft');
+  } catch { /* Storage can be unavailable even when IndexedDB succeeds. */ }
+  const view = window.createQuizView;
+  if (view) {
+    view.dispose();
+    window.createQuizView = new view.constructor();
+    window.pdfExtractor?.clear();
+  }
+}
+
 
 
 // =========================================================================
@@ -226,6 +281,13 @@ if (typeof window !== 'undefined') {
  * Save a newly created quiz and its questions into IndexedDB
  */
 async function saveNewQuiz(quizMeta, questionsList) {
+  if (Array.isArray(questionsList) && questionsList.some(q=>q?.reviewIssue)) throw new Error('Correct questions marked as needing review before saving a playable quiz.');
+  if (!Array.isArray(questionsList) || !questionsList.length) throw new Error('A quiz needs at least one valid question.');
+  if (window.QuizQuality) {
+    const invalid = window.QuizQuality.preview(questionsList);
+    if (invalid.length) throw new Error(`Question ${invalid[0].index + 1}: ${invalid[0].error}`);
+    questionsList = questionsList.map(question => window.QuizQuality.normalize(question));
+  }
   return await db.transaction('rw', db.quizzes, db.questions, async () => {
     const quizId = await db.quizzes.add({
       title: quizMeta.title || 'Untitled Quiz',
@@ -236,6 +298,13 @@ async function saveNewQuiz(quizMeta, questionsList) {
       sourceType: quizMeta.sourceType || 'TEXT_NOTES',
       sourceTitle: quizMeta.sourceTitle || 'Direct Ingestion',
       pageRangeText: quizMeta.pageRangeText || null,
+      coverage: quizMeta.coverage || null,
+      originalSource: quizMeta.originalSource || null,
+      distribution: window.QuizQuality?.distribution(questionsList) || null,
+      skippedPdfPages: Array.isArray(quizMeta.skippedPdfPages) ? quizMeta.skippedPdfPages.map(page=>({pageNumber:page.pageNumber,reason:page.reason})) : [],
+      requestedCount: quizMeta.requestedCount || questionsList.length,
+      generationSettings: quizMeta.generationSettings || null,
+      generationModel: quizMeta.generationModel || null,
       totalQuestions: questionsList.length,
       // Time ALREADY SPENT on the attempt, written at submit. Not a limit.
       durationSeconds: 0,
@@ -265,7 +334,10 @@ async function saveNewQuiz(quizMeta, questionsList) {
     });
 
     const formattedQuestions = questionsList.map((q, idx) => ({
+      ...q,
+      id: undefined,
       quizId: quizId,
+      sourceQuizId: q.sourceQuizId || q.quizId || quizId,
       questionText: q.questionText,
       options: q.options || [],
       correctAnswerIndex: Number(q.correctAnswerIndex ?? 0),
@@ -276,6 +348,7 @@ async function saveNewQuiz(quizMeta, questionsList) {
       userSelectedOptionIndex: null
     }));
 
+    formattedQuestions.forEach(question => { delete question.id; });
     await db.questions.bulkAdd(formattedQuestions);
     return quizId;
   });
@@ -318,11 +391,22 @@ async function getCompletedQuizHistory() {
  * Delete a quiz and its questions
  */
 async function deleteQuiz(quizId) {
-  return await db.transaction('rw', db.quizzes, db.questions, db.attempts, async () => {
+  await db.transaction('rw', [db.quizzes, db.questions, db.attempts, db.cardReviews], async () => {
+    const questions = await db.questions.where('quizId').equals(Number(quizId)).toArray();
+    const keys = new Set(questions.map(question => `q:${question.id}`));
+    if (db.cardReviews) {
+      const reviews = await db.cardReviews.toArray();
+      for (const review of reviews) if (keys.has(review.cardKey)) await db.cardReviews.delete(review.id);
+    }
     await db.questions.where('quizId').equals(Number(quizId)).delete();
     await db.attempts.where('quizId').equals(Number(quizId)).delete();
     await db.quizzes.delete(Number(quizId));
   });
+  try {
+    localStorage.removeItem(`hamsa_active_quiz_attempt:${Number(quizId)}`);
+    const raw=localStorage.getItem('hamsa_active_quiz_attempt');
+    if(raw && Number(JSON.parse(raw)?.quizId)===Number(quizId))localStorage.removeItem('hamsa_active_quiz_attempt');
+  } catch { /* Quiz deletion succeeds even when browser storage is unavailable. */ }
 }
 
 /**
@@ -345,9 +429,11 @@ function toBookmarkFlag(value) {
  * Toggle or update question bookmark state.
  */
 async function updateQuestionBookmark(questionId, isBookmarked) {
-  return await db.questions.update(Number(questionId), {
+  const updated = await db.questions.update(Number(questionId), {
     isBookmarked: toBookmarkFlag(isBookmarked)
   });
+  if (!updated) throw new Error('Question no longer exists.');
+  return updated;
 }
 
 /**
@@ -384,6 +470,7 @@ async function getBookmarkedQuestions() {
     return {
       ...q,
       quizTitle: parentQuiz ? parentQuiz.title : 'Study Quiz',
+      language:parentQuiz?.language||null,
       // `questions` rows carry no subject of their own; it lives on the parent
       // quiz. The Library groups by this value, so the fallback has to be a
       // stable string rather than undefined or an empty bucket label.
@@ -429,6 +516,12 @@ function groupBookmarksBySubject(bookmarks) {
 async function updateQuizCompletion(quizId, resultData, questionsState) {
   return await db.transaction('rw', db.quizzes, db.questions, db.attempts, async () => {
     const numId = Number(quizId);
+    const quizRecord = await db.quizzes.get(numId);
+    if (!quizRecord) throw new Error('This quiz was deleted. Export or copy your answers before leaving.');
+    if (resultData.attemptToken) {
+      const existing = (await db.attempts.where('quizId').equals(numId).toArray()).find(attempt => attempt.attemptToken === resultData.attemptToken);
+      if (existing) return existing.id;
+    }
     
     // 1. Update questions state (user selections)
     for (const q of questionsState) {
@@ -461,8 +554,11 @@ async function updateQuizCompletion(quizId, resultData, questionsState) {
 
     // 3. Log attempt — the full, immutable history lives here, so retakes never
     //    erase an earlier score even though the quiz row is overwritten.
-    await db.attempts.add({
+    return await db.attempts.add({
       quizId: numId,
+      attemptToken: resultData.attemptToken || null,
+      quizSnapshot: { title: quizRecord.title, subject: quizRecord.subject, difficulty: quizRecord.difficulty, language: quizRecord.language, quizMode: resultData.quizMode || quizRecord.quizMode, ...resolveScoringConfig(quizRecord), examDurationSeconds: quizRecord.examDurationSeconds },
+      questionsSnapshot: JSON.parse(JSON.stringify(questionsState)),
       attemptedAt: new Date().toISOString(),
       score: resultData.score,
       correct: resultData.correct,
@@ -476,6 +572,71 @@ async function updateQuizCompletion(quizId, resultData, questionsState) {
       accuracy: resultData.accuracy ?? null
     });
   });
+}
+
+/** Read the selected immutable attempt; old logs never pretend to have answer snapshots. */
+async function getQuizAttemptResult(quizId, attemptId = null) {
+  const quiz = await getQuizWithQuestions(quizId);
+  if (!quiz) return null;
+  if (attemptId == null) {
+    const attempts = await getAttemptsForQuiz(quizId);
+    if (!attempts.length) {
+      return {...quiz,questions:quiz.questions.map(q=>window.QuizQuality?.normalize(q)||{...q,options:Array.isArray(q.options)?q.options.map(String):Object.values(q.options||{}).map(String),correctAnswerIndex:-1,explanation:q.explanation||'This question needs a verified key and explanation before use.',reviewIssue:true})};
+    }
+    attemptId = attempts[0].id;
+  }
+  const attempt = await db.attempts.get(Number(attemptId));
+  if (!attempt || attempt.quizId !== Number(quizId)) return null;
+  const snapshots = Array.isArray(attempt.questionsSnapshot) ? attempt.questionsSnapshot : [];
+  const validSnapshots = snapshots.map(question => window.QuizQuality ? window.QuizQuality.normalize({ ...question, explanation: question?.explanation || 'No detailed explanation was saved for this question.' }) : question).filter(question=>question && Array.isArray(question.options));
+  const questions = validSnapshots.map((question,index) => {
+    const live = quiz.questions.find(item => item.id === question.id && item.questionText === question.questionText);
+    return { ...question, id:live?.id ?? -(index+1), originalQuestionId:question.id, bookmarkUnavailable:!live, isBookmarked: live ? live.isBookmarked : 0 };
+  });
+  return { ...quiz, ...attempt.quizSnapshot, ...attempt, id: quiz.id, attemptId: attempt.id,
+    completedAt: attempt.attemptedAt, questions, invalidSnapshotCount: snapshots.length-validSnapshots.length, legacySnapshotMissing: !Array.isArray(attempt.questionsSnapshot) };
+}
+
+/** Delete attempt results only; preserve the quiz, questions and bookmarks. */
+async function deleteQuizAttempts(keys) {
+  return await db.transaction('rw', [db.quizzes, db.questions, db.attempts], async () => {
+    const affected = new Set();
+    for (const key of keys) {
+      const [kind, rawId] = String(key).split(':'); const id = Number(rawId);
+      if (!Number.isInteger(id) || id < 1) throw new Error('Invalid attempt selected.');
+      if (kind === 'attempt') {
+        const attempt = await db.attempts.get(id);
+        if (attempt) { affected.add(attempt.quizId); await db.attempts.delete(id); }
+      } else if (kind === 'legacy') affected.add(id);
+      else throw new Error('Invalid attempt selected.');
+    }
+    for (const quizId of affected) {
+      const attempts = await db.attempts.where('quizId').equals(quizId).toArray();
+      const latest = attempts.sort((a,b) => new Date(b.attemptedAt)-new Date(a.attemptedAt) || Number(b.id)-Number(a.id))[0];
+      const fields = ['score','correct','incorrect','skipped','percentage','durationSeconds','marksObtained','marksLostToNegative','accuracy'];
+      const summary = { completedAt: latest?.attemptedAt || null };
+      fields.forEach(field => { summary[field] = latest?.[field] ?? 0; });
+      await db.quizzes.update(quizId, summary);
+      const answers = new Map((latest?.questionsSnapshot || []).map(question => [question.id, question.userSelectedOptionIndex]));
+      for (const question of await db.questions.where('quizId').equals(quizId).toArray()) await db.questions.update(question.id, { userSelectedOptionIndex: answers.get(question.id) ?? null });
+    }
+  });
+}
+
+async function updateQuizQuestion(questionId, changes) {
+  return await db.transaction('rw', [db.questions,db.quizzes], async () => {
+    const question = await db.questions.get(Number(questionId));
+    if (!question) throw new Error('Question no longer exists.');
+    const revised = { ...question, ...changes, answerOrigin: 'STUDENT_EDITED', aiReviewed: false };
+    const error = window.QuizQuality?.validate(revised);
+    if (error) throw new Error(error);
+    const normalized = window.QuizQuality ? window.QuizQuality.normalize(revised) : revised;
+    await db.questions.update(question.id, { ...normalized, answerOrigin: 'STUDENT_EDITED', aiReviewed:false, sourceMatched:false });
+  });
+}
+
+async function getQuizQuestion(questionId) {
+  return await db.questions.get(Number(questionId));
 }
 
 /**
@@ -863,10 +1024,10 @@ async function getAttemptHistory() {
         // Row actions operate on the quiz, so expose the quiz id as `id`.
         id: quizId,
         quizId,
-        title: quiz ? quiz.title : 'Deleted quiz',
-        subject: quiz ? quiz.subject : 'General',
-        difficulty: quiz ? quiz.difficulty : 'MEDIUM',
-        totalQuestions: quiz ? quiz.totalQuestions : (a.correct + a.incorrect + a.skipped),
+        title: a.quizSnapshot?.title || (quiz ? quiz.title : 'Deleted quiz'),
+        subject: a.quizSnapshot?.subject || (quiz ? quiz.subject : 'General'),
+        difficulty: a.quizSnapshot?.difficulty || (quiz ? quiz.difficulty : 'MEDIUM'),
+        totalQuestions: a.questionsSnapshot?.length ?? (quiz ? quiz.totalQuestions : (a.correct + a.incorrect + a.skipped)),
         quizMode: quiz ? quiz.quizMode : null,
         scoringPreset: quiz ? quiz.scoringPreset : null,
         // Kept so existing templates reading completedAt still render.
@@ -974,6 +1135,7 @@ const BACKUP_PREFERENCE_KEYS = [
   'hamsa_sound_muted',
   'hamsa_gemini_model',
   'hamsa_study_preferences',
+  'hamsa_flashcard_preferences',
   'hamsa_textbook_theme',
   'hamsa_textbook_font',
   'hamsa_textbook_size',
@@ -1002,11 +1164,12 @@ async function clearModuleData(moduleId) {
     }
     if (module.reviewPrefix) {
       const reviews = await db.cardReviews.toArray();
-      const matching = reviews.filter(review => String(review.cardKey || '').startsWith(module.reviewPrefix));
+      const matching = reviews.filter(review => String(review.cardKey || '').startsWith(module.reviewPrefix)||(moduleId==='NOTES'&&String(review.cardKey||'').startsWith('note:')));
       for (const review of matching) await db.cardReviews.delete(review.id);
       removed.cardReviews = matching.length;
     }
   });
+  if (moduleId === 'QUIZZES') await clearQuizDrafts();
   return removed;
 }
 
@@ -1119,6 +1282,22 @@ function _validateBackupTables(tables) {
 
       const missing = spec.required.filter(f => row[f] === undefined || row[f] === null || row[f] === '');
       if (missing.length > 0) { skipped++; continue; }
+      if (spec.key === 'customDecks' && (typeof row.title !== 'string' || !row.title.trim() || row.title.length > 200 || row.subject != null && typeof row.subject !== 'string')) { skipped++; continue; }
+      if (spec.key === 'customCards' && (typeof row.front !== 'string' || !row.front.trim() || row.front.length > 12000 || typeof row.back !== 'string' || !row.back.trim() || row.back.length > 12000 || row.explanation != null && (typeof row.explanation !== 'string' || row.explanation.length > 20000) || !Number.isSafeInteger(Number(row.deckId)) || Number(row.deckId) < 1)) { skipped++; continue; }
+      if (spec.key === 'cardReviews') {
+        if (typeof row.cardKey !== 'string' || !/^(?:(?:q|custom):\d+|note(?:_|:)\d+:.+)$/.test(row.cardKey) || ['interval','repetitions','easeFactor'].some(key=>row[key]!=null && (!Number.isFinite(Number(row[key])) || Number(row[key])<0))) { skipped++; continue; }
+        if (row.dueAt && !Number.isFinite(Date.parse(row.dueAt))) {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(row.dueDate || '')) delete row.dueAt;
+          else { skipped++; continue; }
+        }
+      }
+
+      if (spec.key === 'customCards') {
+        row.options = Array.isArray(row.options) ? row.options.filter(v => typeof v === 'string') : [];
+        row.optionExplanations = Array.isArray(row.optionExplanations) ? row.optionExplanations.map(v => typeof v === 'string' ? v : '') : [];
+        row.sourceReferences = (Array.isArray(row.sourceReferences) ? row.sourceReferences : []).filter(ref => ref && typeof ref === 'object').map(ref => ({fileName:typeof ref.fileName === 'string' ? ref.fileName : 'Source', page:Number.isSafeInteger(Number(ref.page)) && Number(ref.page)>0 ? Number(ref.page) : null}));
+        for (const key of ['memoryCue','evidenceQuote','sourceTitle']) if (typeof row[key] !== 'string') row[key] = '';
+      }
 
       // Repair representations that a newer schema requires but an older export
       // could not have written. Mutates in place — `row` is already a parsed
@@ -1136,6 +1315,12 @@ function _validateBackupTables(tables) {
     if (!spec.isCache) totalValid += kept.length;
   }
 
+  // A restored card must belong to a deck included in this backup.
+  const deckIds=new Set((tables.customDecks||[]).map(row=>Number(row.id)));
+  const cards=tables.customCards||[],validCards=cards.filter(row=>deckIds.has(Number(row.deckId)));
+  const orphans=cards.length-validCards.length;
+  tables.customCards=validCards;
+  report.customCards.imported-=orphans;report.customCards.skipped+=orphans;totalValid-=orphans;
   return { report, totalValid };
 }
 
@@ -1190,6 +1375,7 @@ async function importDatabaseBackup(jsonString, options = {}) {
   // ---- 2. Normalise + validate before any destructive work ---------------
   const { tables, preferences } = _normaliseBackupPayload(parsed);
   const { report, totalValid } = _validateBackupTables(tables);
+  let importedTotal=totalValid;
 
   const hasAnyKnownTable = BACKUP_TABLE_SPECS.some(s => Array.isArray(tables[s.key]) && tables[s.key].length > 0);
   if (!hasAnyKnownTable) {
@@ -1256,6 +1442,20 @@ async function importDatabaseBackup(jsonString, options = {}) {
             }
           }
 
+          if (spec.key === 'questions' && incoming.sourceQuizId) incoming.sourceQuizId = idMaps.quizzes?.get(Number(incoming.sourceQuizId)) || incoming.quizId;
+          if (spec.key === 'attempts' && Array.isArray(incoming.questionsSnapshot)) incoming.questionsSnapshot = incoming.questionsSnapshot.map(question => ({ ...question, id: idMaps.questions?.get(Number(question?.id)) ?? null, quizId: incoming.quizId, sourceQuizId:idMaps.quizzes?.get(Number(question?.sourceQuizId)) || incoming.quizId }));
+          if (spec.key === 'cardReviews') {
+            const key=String(incoming.cardKey||''),match=key.match(/^(q:|custom:|note:|note_)(\d+)(.*)$/);
+            const source=match&&(match[1]==='q:'?'questions':match[1]==='custom:'?'customCards':'notes');
+            const mapped=match&&idMaps[source]?.get(Number(match[2]));
+            if(!mapped){report[spec.key].skipped++;report[spec.key].imported--;if(!spec.isCache)importedTotal--;continue;}
+            incoming.cardKey=`${match[1]}${mapped}${match[3]}`;
+            const parent=await db[source].get(mapped);
+            incoming.deckId=String(source==='notes'?mapped:source==='questions'?parent?.quizId:parent?.deckId);
+            incoming.deckType=source==='notes'?'NOTE':source==='questions'?'QUIZ':'CUSTOM';
+            delete incoming.undoSnapshot;delete incoming.operationToken;
+          }
+          if (spec.key === 'attempts') incoming.attemptToken = null;
           const newId = await table.add(incoming);
           if (oldId !== undefined) map.set(oldId, newId);
         }
@@ -1310,7 +1510,7 @@ async function importDatabaseBackup(jsonString, options = {}) {
     mode,
     formatVersion: parsed.formatVersion || parsed.version || 1,
     exportedAt: parsed.exportedAt || null,
-    totalImported: totalValid,
+    totalImported: importedTotal,
     preferencesRestored,
     profileRestored: Boolean(preferences.hamsa_exam_profile),
     tables: report
@@ -1468,7 +1668,7 @@ async function saveNewNote(noteData) {
     updatedAt: new Date().toISOString()
   };
 
-  return await db.notes.add(entity);
+  return await db.notes.add(window.FlashcardTools?FlashcardTools.prepareNote(entity):entity);
 }
 
 async function getAllNotes() {
@@ -1482,11 +1682,16 @@ async function getNoteById(id) {
   const note = await db.notes.get(Number(id));
   if (!note) return null;
   const migrated = migrateLegacyNote(note);
-  // Update last read timestamp non-blockingly
+  const prepared = window.FlashcardTools ? FlashcardTools.prepareNote(migrated) : migrated;
+  const lastReadAt = new Date().toISOString();
+  // Failed read-metadata writes must not make already saved notes unreadable.
   try {
-    await db.notes.update(Number(id), { lastReadAt: new Date().toISOString() });
-  } catch (e) {}
-  return migrated;
+    await db.notes.update(Number(id), { lastReadAt, ...(prepared.flashcardIds ? {flashcardIds:prepared.flashcardIds} : {}) });
+    return {...prepared, lastReadAt};
+  } catch (error) {
+    console.warn('Study note read metadata could not be saved:', error);
+    return migrated; // Keep only durable metadata; never report a failed write as saved.
+  }
 }
 
 async function updateNote(id, data) {
@@ -1509,6 +1714,7 @@ async function updateNote(id, data) {
 
   await db.notes.update(Number(id), {
     ...data,
+    ...(window.FlashcardTools ? { flashcardIds: FlashcardTools.prepareNote({ ...current, ...data }, current).flashcardIds } : {}),
     content: contentText,
     originalSource: data.originalSource || current.originalSource || null,
     metadata: updatedMetadata,
@@ -1518,7 +1724,10 @@ async function updateNote(id, data) {
 }
 
 async function deleteNote(id) {
-  return await db.notes.delete(Number(id));
+  return db.transaction('rw',db.notes,db.cardReviews,async()=>{
+    await db.cardReviews.filter(r=>typeof r.cardKey==='string'&&(r.cardKey.startsWith(`note_${Number(id)}:`)||r.cardKey.startsWith(`note:${Number(id)}:`))).delete();
+    await db.notes.delete(Number(id));
+  });
 }
 
 async function duplicateNote(id) {
@@ -1598,6 +1807,7 @@ async function clearDatabase(options = {}) {
     }
   }
 
+  await clearQuizDrafts();
   if (options.includePreferences) {
     for (const key of BACKUP_PREFERENCE_KEYS) {
       try { localStorage.removeItem(key); } catch { /* ignore */ }
@@ -1669,6 +1879,7 @@ async function searchGlobalContent(rawQuery) {
           quizId: q.quizId,
           questionText: q.questionText,
           quizTitle: parentQuiz ? parentQuiz.title : 'Study Quiz',
+      language:parentQuiz?.language||null,
           subject: parentQuiz ? parentQuiz.subject : 'General',
           explanation: q.explanation || '',
           matchField: qTextMatch ? 'Question' : (optMatch ? 'Options' : 'Explanation')
@@ -1737,279 +1948,7 @@ async function searchGlobalContent(rawQuery) {
   }
 }
 
-// =========================================================================
-// INTERACTIVE FLASHCARDS & SPACED REPETITION (SRS) PERSISTENCE ENGINE
-// =========================================================================
-
-/**
- * Save / Update Spaced Repetition (SRS) Review Progress for a Card
- * Ratings: 1 (Again), 2 (Hard), 3 (Good), 4 (Easy)
- */
-async function saveCardReviewProgress(cardKey, deckId, deckType, rating) {
-  try {
-    const existing = await db.cardReviews.where('cardKey').equals(String(cardKey)).first();
-    const now = new Date();
-    const todayStr = now.toISOString().split('T')[0];
-
-    let interval = 1;
-    let repetitions = 0;
-    let easeFactor = 2.5;
-    let state = 'LEARNING';
-
-    if (existing) {
-      repetitions = existing.repetitions || 0;
-      easeFactor = existing.easeFactor || 2.5;
-      interval = existing.interval || 1;
-    }
-
-    if (rating === 1) {
-      // Again (Failed active recall): reset repetition, due tomorrow
-      repetitions = 0;
-      interval = 1;
-      easeFactor = Math.max(1.3, easeFactor - 0.2);
-      state = 'LEARNING';
-    } else if (rating === 2) {
-      // Hard: slight interval increase
-      repetitions += 1;
-      interval = Math.max(1, Math.round(interval * 1.2));
-      easeFactor = Math.max(1.3, easeFactor - 0.15);
-      state = 'REVIEW';
-    } else if (rating === 3) {
-      // Good: standard SM-2 progression
-      if (repetitions === 0) interval = 1;
-      else if (repetitions === 1) interval = 4;
-      else interval = Math.max(1, Math.round(interval * easeFactor));
-      repetitions += 1;
-      state = interval >= 7 ? 'MASTERED' : 'REVIEW';
-    } else if (rating === 4) {
-      // Easy: accelerated interval leap
-      if (repetitions === 0) interval = 3;
-      else if (repetitions === 1) interval = 7;
-      else interval = Math.max(1, Math.round(interval * easeFactor * 1.3));
-      repetitions += 1;
-      easeFactor += 0.15;
-      state = 'MASTERED';
-    }
-
-    const nextDueDate = new Date(Date.now() + interval * 86400000).toISOString().split('T')[0];
-
-    const record = {
-      cardKey: String(cardKey),
-      deckId: deckId ? String(deckId) : null,
-      deckType: deckType || 'GENERAL',
-      interval,
-      repetitions,
-      easeFactor: Number(easeFactor.toFixed(2)),
-      dueDate: nextDueDate,
-      state,
-      lastReviewedAt: now.toISOString(),
-      lastRating: rating
-    };
-
-    if (existing && existing.id) {
-      await db.cardReviews.update(existing.id, record);
-    } else {
-      await db.cardReviews.add(record);
-    }
-
-    return record;
-  } catch (err) {
-    console.error('Error in saveCardReviewProgress:', err);
-    return null;
-  }
-}
-
-/**
- * Get Spaced Repetition progress record for a specific card
- */
-async function getCardReviewProgress(cardKey) {
-  try {
-    return await db.cardReviews.where('cardKey').equals(String(cardKey)).first();
-  } catch (err) {
-    console.error('Error in getCardReviewProgress:', err);
-    return null;
-  }
-}
-
-/**
- * Get all card review records for a specific deck
- */
-async function getCardReviewsForDeck(deckId, deckType) {
-  try {
-    return await db.cardReviews
-      .filter(r => String(r.deckId) === String(deckId) && r.deckType === deckType)
-      .toArray();
-  } catch (err) {
-    console.error('Error in getCardReviewsForDeck:', err);
-    return [];
-  }
-}
-
-/**
- * Get count of cards that are due for revision today or overdue
- */
-async function getDueCardsCount() {
-  try {
-    const todayStr = new Date().toISOString().split('T')[0];
-    return await db.cardReviews.filter(r => r.dueDate <= todayStr).count();
-  } catch (err) {
-    console.error('Error in getDueCardsCount:', err);
-    return 0;
-  }
-}
-
-/**
- * Get all flashcards currently due for spaced repetition study
- */
-async function getAllDueCards() {
-  try {
-    const todayStr = new Date().toISOString().split('T')[0];
-    const dueReviews = await db.cardReviews.filter(r => r.dueDate <= todayStr).toArray();
-    if (dueReviews.length === 0) return [];
-
-    const dueCards = [];
-
-    for (const rev of dueReviews) {
-      const parts = rev.cardKey.split(':');
-      const type = parts[0];
-      const id = parts[1];
-
-      if (type === 'q') {
-        const q = await db.questions.get(Number(id));
-        if (q) {
-          const correctOpt = q.options && q.options[q.correctAnswerIndex] ? q.options[q.correctAnswerIndex] : 'Refer to explanation';
-          dueCards.push({
-            id: rev.cardKey,
-            cardKey: rev.cardKey,
-            front: q.questionText,
-            back: correctOpt,
-            options: q.options || [],
-            correctAnswerIndex: q.correctAnswerIndex,
-            explanation: q.explanation || '',
-            badge: 'Due Revision',
-            srs: rev
-          });
-        }
-      } else if (type === 'custom') {
-        const c = await db.customCards.get(Number(id));
-        if (c) {
-          dueCards.push({
-            id: rev.cardKey,
-            cardKey: rev.cardKey,
-            front: c.front,
-            back: c.back,
-            explanation: c.explanation || '',
-            badge: c.badge || 'Custom Due',
-            srs: rev
-          });
-        }
-      }
-    }
-
-    return dueCards;
-  } catch (err) {
-    console.error('Error in getAllDueCards:', err);
-    return [];
-  }
-}
-
-// =========================================================================
-// CUSTOM FLASHCARD DECKS CRUD
-// =========================================================================
-
-/**
- * Create a new Custom Flashcard Deck
- */
-async function createCustomDeck(meta) {
-  const now = new Date().toISOString();
-  return await db.customDecks.add({
-    title: meta.title || 'Untitled Flashcard Deck',
-    subject: meta.subject || 'General Study',
-    description: meta.description || '',
-    createdAt: now,
-    updatedAt: now
-  });
-}
-
-/**
- * Fetch all Custom Decks with their card counts
- */
-async function getAllCustomDecks() {
-  try {
-    const decks = await db.customDecks.orderBy('id').reverse().toArray();
-    const result = [];
-    for (const d of decks) {
-      const cardCount = await db.customCards.where('deckId').equals(d.id).count();
-      result.push({ ...d, cardCount });
-    }
-    return result;
-  } catch (err) {
-    console.error('Error in getAllCustomDecks:', err);
-    return [];
-  }
-}
-
-/**
- * Fetch a Custom Deck with all its Cards
- */
-async function getCustomDeckWithCards(deckId) {
-  try {
-    const deck = await db.customDecks.get(Number(deckId));
-    if (!deck) return null;
-    const cards = await db.customCards.where('deckId').equals(Number(deckId)).toArray();
-    return { ...deck, cards };
-  } catch (err) {
-    console.error('Error in getCustomDeckWithCards:', err);
-    return null;
-  }
-}
-
-/**
- * Add a new Card to a Custom Deck
- */
-async function addCustomCard(cardData) {
-  const now = new Date().toISOString();
-  const cardId = await db.customCards.add({
-    deckId: Number(cardData.deckId),
-    front: cardData.front,
-    back: cardData.back,
-    explanation: cardData.explanation || '',
-    badge: cardData.badge || 'Custom Card',
-    createdAt: now
-  });
-
-  await db.customDecks.update(Number(cardData.deckId), { updatedAt: now });
-  return cardId;
-}
-
-/**
- * Update an existing Custom Card
- */
-async function updateCustomCard(cardId, cardData) {
-  return await db.customCards.update(Number(cardId), {
-    front: cardData.front,
-    back: cardData.back,
-    explanation: cardData.explanation || '',
-    badge: cardData.badge || 'Custom Card'
-  });
-}
-
-/**
- * Delete a Custom Card
- */
-async function deleteCustomCard(cardId) {
-  return await db.customCards.delete(Number(cardId));
-}
-
-/**
- * Delete a Custom Deck and all its Cards
- */
-async function deleteCustomDeck(deckId) {
-  return await db.transaction('rw', db.customDecks, db.customCards, db.cardReviews, async () => {
-    await db.customCards.where('deckId').equals(Number(deckId)).delete();
-    await db.customDecks.delete(Number(deckId));
-  });
-}
+// Flashcard persistence is implemented in flashcard-store.js.
 
 // =========================================================================
 // ANSWER WRITING & DESCRIPTIVE EVALUATION STORE

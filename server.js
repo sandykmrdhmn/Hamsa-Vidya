@@ -6,7 +6,9 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const {Buffer} = require('buffer');
 const liveExamsScraper = require('./live-exams-scraper');
+const {ProxyBudget,positiveLimit,estimateInput,validatePayload} = require('./ai-proxy-policy');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = __dirname;
@@ -23,6 +25,15 @@ const GEMINI_RATE_LIMIT = {
 };
 const MAX_PROXY_BODY_BYTES = 2 * 1024 * 1024; // 2 MB — large PDF prompts still fit
 const GEMINI_UPSTREAM_TIMEOUT_MS = 120000;
+const GEMINI_MODEL = 'gemini-3.6-flash';
+const proxyBudget = new ProxyBudget({
+  rpm:positiveLimit(process.env.GEMINI_PROJECT_RPM,5),
+  tpm:positiveLimit(process.env.GEMINI_PROJECT_TPM,12000),
+  dailyRequests:positiveLimit(process.env.GEMINI_PROJECT_DAILY_REQUESTS,100),
+  dailyTokens:positiveLimit(process.env.GEMINI_PROJECT_DAILY_TOKENS,500000),
+  strictInputLimit:Boolean(process.env.GEMINI_PROJECT_TPM),
+  file:process.env.GEMINI_API_KEY ? path.join(PUBLIC_DIR,'.hamsa-ai-budget.json') : null
+});
 
 /** requestCounts: ip -> { count, windowStart } */
 const _rateBuckets = new Map();
@@ -112,6 +123,7 @@ const SERVABLE_EXTENSIONS = new Set([
 const DENIED_FILES = new Set([
   '/server.js',
   '/live-exams-scraper.js',
+  '/ai-proxy-policy.js',
   '/package.json',
   '/package-lock.json',
   '/start-server.bat'
@@ -215,11 +227,23 @@ const server = http.createServer((req, res) => {
     const urlParts = req.url.split('?');
     const apiPath = urlParts[0].replace('/api/gemini', '');
     const serverApiKey = process.env.GEMINI_API_KEY || '';
+    const ip = getClientIp(req);
+    // There is no backend user authentication in this application yet. Keep
+    // the shared key local rather than granting public access through a UI gate.
+    if (!['127.0.0.1','::1','::ffff:127.0.0.1'].includes(ip)) return sendJson(res,403,{error:{code:'AI_PROXY_ACCESS',message:'Shared AI access is restricted to this computer. Use a personal key, or add authenticated server access before public hosting.'}});
+    let requestHost;
+    try { requestHost = new URL(`http://${req.headers.host}`); }
+    catch { return sendJson(res,403,{error:'Invalid shared AI host.'}); }
+    if (!['localhost','127.0.0.1','[::1]'].includes(requestHost.hostname)) return sendJson(res,403,{error:'Shared AI access requires a localhost host.'});
+    if (req.headers.origin) {
+      let origin;
+      try { origin = new URL(req.headers.origin); } catch { return sendJson(res,403,{error:'Invalid request origin.'}); }
+      if (origin.host !== req.headers.host || !['http:','https:'].includes(origin.protocol)) return sendJson(res,403,{error:'Cross-origin shared AI requests are not allowed.'});
+    }
 
     // Handle CORS preflight before anything else.
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
-        'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type'
       });
@@ -234,29 +258,26 @@ const server = http.createServer((req, res) => {
           maxRequests: GEMINI_RATE_LIMIT.maxRequests,
           windowSeconds: GEMINI_RATE_LIMIT.windowMs / 1000
         }
-      }, { 'Access-Control-Allow-Origin': '*' });
+      });
     }
 
     if (!serverApiKey) {
       return sendJson(res, 503, {
         error: 'GEMINI_API_KEY is not configured on the server. Set the environment variable, or add a personal key in Settings to use direct mode.'
-      }, { 'Access-Control-Allow-Origin': '*' });
+      });
     }
 
     // -- Rate limit every request that spends the server's quota. --
-    const ip = getClientIp(req);
     const limit = checkRateLimit(ip);
     if (!limit.allowed) {
       return sendJson(res, 429, {
         error: `Rate limit exceeded. Max ${GEMINI_RATE_LIMIT.maxRequests} AI requests per ${GEMINI_RATE_LIMIT.windowMs / 1000}s. Retry in ${limit.retryAfterSec}s.`
       }, {
-        'Access-Control-Allow-Origin': '*',
         'Retry-After': String(limit.retryAfterSec)
       });
     }
 
     const forwardHeaders = {
-      'Access-Control-Allow-Origin': '*',
       'X-RateLimit-Remaining': String(limit.remaining)
     };
 
@@ -267,6 +288,7 @@ const server = http.createServer((req, res) => {
           res.writeHead(r.status, {
             'Content-Type': 'application/json; charset=utf-8',
             'Cache-Control': 'no-store',
+            ...(r.headers.get('Retry-After') ? { 'Retry-After': r.headers.get('Retry-After') } : {}),
             ...forwardHeaders
           });
           res.end(body);
@@ -279,15 +301,18 @@ const server = http.createServer((req, res) => {
 
     if (req.method === 'POST') {
       // Extract model from path: /api/gemini/gemini-3.6-flash -> gemini-3.6-flash
-      const rawModel = decodeURIComponent(apiPath.replace(/^\//, '')) || 'gemini-3.6-flash';
+      let rawModel;
+      try { rawModel = decodeURIComponent(apiPath.replace(/^\//, '')) || GEMINI_MODEL; }
+      catch { return sendJson(res,400,{error:'Invalid model path encoding.'},forwardHeaders); }
 
       // Only allow plausible model identifiers so the path cannot be used to
       // reach arbitrary Google endpoints.
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(rawModel)) {
         return sendJson(res, 400, { error: `Invalid model identifier: ${rawModel}` }, forwardHeaders);
       }
+      if (rawModel !== GEMINI_MODEL) return sendJson(res,400,{error:'This shared proxy only enables Gemini 3.6 Flash.'},forwardHeaders);
 
-      let body = '';
+      const chunks = [];
       let bytes = 0;
       let aborted = false;
 
@@ -302,41 +327,55 @@ const server = http.createServer((req, res) => {
           req.destroy();
           return;
         }
-        body += chunk;
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
       });
 
       req.on('end', () => {
         if (aborted) return;
+        const body = Buffer.concat(chunks).toString('utf8');
+        let payload;
 
         // Reject malformed JSON here rather than paying for an upstream round trip.
         try {
-          JSON.parse(body);
+          payload = JSON.parse(body);
         } catch {
           return sendJson(res, 400, { error: 'Request body is not valid JSON.' }, forwardHeaders);
         }
+        const invalid = validatePayload(payload);
+        if (invalid) return sendJson(res,400,{error:invalid},forwardHeaders);
+        const safePayload = {...payload,generationConfig:{...payload.generationConfig,maxOutputTokens:payload.generationConfig?.maxOutputTokens || 8192,thinkingConfig:{...payload.generationConfig?.thinkingConfig,thinkingLevel:payload.generationConfig?.thinkingConfig?.thinkingLevel || 'low'}}};
+        const budgetError = proxyBudget.reserve(estimateInput(safePayload),safePayload.generationConfig.maxOutputTokens);
+        if (budgetError) return sendJson(res,budgetError.status,{error:{code:budgetError.code,message:budgetError.message,retryable:budgetError.retryable}}, {...forwardHeaders,...(budgetError.retryAfter ? {'Retry-After':String(budgetError.retryAfter)} : {})});
 
         const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${rawModel}:generateContent?key=${serverApiKey}`;
-
+        const upstreamController = new AbortController();
+        let upstreamTimedOut = false;
+        const upstreamTimer = setTimeout(() => { upstreamTimedOut = true; upstreamController.abort(); }, GEMINI_UPSTREAM_TIMEOUT_MS);
+        const cancelUpstream = () => { if (!res.writableEnded) upstreamController.abort(); };
+        res.on('close', cancelUpstream);
         fetch(targetUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: body,
-          signal: AbortSignal.timeout(GEMINI_UPSTREAM_TIMEOUT_MS)
+          body: JSON.stringify(safePayload),
+          signal: upstreamController.signal
         })
           .then(r => r.text().then(responseBody => {
+            if (res.destroyed) return;
             res.writeHead(r.status, {
               'Content-Type': 'application/json; charset=utf-8',
               'Cache-Control': 'no-store',
+              ...(r.headers.get('Retry-After') ? { 'Retry-After': r.headers.get('Retry-After') } : {}),
               ...forwardHeaders
             });
             res.end(responseBody);
           }))
           .catch(err => {
-            const msg = err.name === 'TimeoutError'
+            if (res.destroyed) return;
+            const msg = upstreamTimedOut || err.name === 'TimeoutError'
               ? `Gemini upstream timed out after ${GEMINI_UPSTREAM_TIMEOUT_MS / 1000}s.`
               : 'Failed to reach Gemini API: ' + err.message;
-            sendJson(res, 502, { error: msg }, forwardHeaders);
-          });
+            sendJson(res, 502, { error: {message:msg,code:upstreamTimedOut || err.name === 'TimeoutError' ? 'AI_UPSTREAM_TIMEOUT' : 'AI_NETWORK_UNCERTAIN',retryable:false} }, forwardHeaders);
+          }).finally(() => { clearTimeout(upstreamTimer); res.removeListener('close', cancelUpstream); });
       });
 
       req.on('error', () => {
@@ -381,7 +420,13 @@ const server = http.createServer((req, res) => {
 
   fs.stat(filePath, (err, stats) => {
     if (err || !stats.isFile()) {
-      // If file not found and is an HTML request, fallback to index.html for SPA routing
+      // Missing assets must not become successful HTML responses: browsers and
+      // service workers otherwise cache the document as a script/worker.
+      if (requestedExt && requestedExt !== '.html') {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+        return res.end('404 Not Found');
+      }
+      // Extensionless/HTML page routes can still use the SPA shell.
       const indexPath = path.join(PUBLIC_DIR, 'index.html');
       fs.readFile(indexPath, (indexErr, content) => {
         if (indexErr) {

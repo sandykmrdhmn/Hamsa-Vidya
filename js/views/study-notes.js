@@ -30,7 +30,7 @@ class StudyNotesView {
 
   _clone(value) { return JSON.parse(JSON.stringify(value)); }
 
-  _controller() { const controller=new AbortController();this._controllers.add(controller);return controller; }
+  _controller() { const controller=new AbortController();this._controllers.add(controller);const signal=window.app?._isGenerating?window.app.getGenerationContext?.().signal:null;if(signal){const abort=()=>controller.abort();if(signal.aborted)abort();else signal.addEventListener('abort',abort,{once:true});controller.signal.addEventListener('abort',()=>signal.removeEventListener('abort',abort),{once:true});}return controller; }
 
   _checkRun(controller) {
     if(controller.signal.aborted || window.app?.isGenerationCancelled()) throw new DOMException('Cancelled','AbortError');
@@ -201,6 +201,8 @@ class StudyNotesView {
       if(item.type==='PDF') {
         const bytes=new Uint8Array(await item.file.arrayBuffer());
         if(new TextDecoder().decode(bytes.slice(0,5))!=='%PDF-')throw new Error(`${item.name} is not a valid PDF.`);
+        if(window.pdfReader)await window.pdfReader.ensure();
+        this._checkRun(controller);
         if(!window.pdfjsLib)throw new Error('PDF reader is unavailable. Reload and retry.');
         const task=window.pdfjsLib.getDocument({data:bytes});let doc;
         const stop=()=>task.destroy();controller.signal.addEventListener('abort',stop,{once:true});
@@ -2136,76 +2138,28 @@ class StudyNotesView {
     catch(error){window.app?.showToast(`Annotation could not be removed: ${error.message}`,'error');}
   }
 
-  createFlashcardsFromSection(secId) {
-    const sec = this.activeNote?.sections?.find(s => s.id === secId);
-    if (!sec) return;
-
-    const cards = [];
-
-    // Definitions
-    if (Array.isArray(sec.definitions) && sec.definitions.length > 0) {
-      sec.definitions.forEach(d => {
-        cards.push({
-          front: d.term,
-          back: d.definition,
-          explanation: `From section: ${sec.heading}`,
-          badge: 'Definition'
-        });
-      });
-    }
-
-    // Formulas
-    if (Array.isArray(sec.formulas) && sec.formulas.length > 0) {
-      sec.formulas.forEach(f => {
-        cards.push({
-          front: f.name,
-          back: f.formula + (f.explanation ? `\n\n${f.explanation}` : ''),
-          explanation: `Formula from: ${sec.heading}`,
-          badge: 'Formula'
-        });
-      });
-    }
-
-    // Key Points
-    if (Array.isArray(sec.keyPoints) && sec.keyPoints.length > 0) {
-      sec.keyPoints.forEach((kp, idx) => {
-        cards.push({
-          front: `Core Principle #${idx + 1} (${sec.heading})`,
-          back: kp,
-          explanation: sec.heading,
-          badge: 'Key Point'
-        });
-      });
-    }
-
-    if (cards.length === 0) {
-      app.showToast('No definitions or key points found in this section to create flashcards.', 'info');
-      return;
-    }
-
-    if (!window.flashcardsView) {
-      window.flashcardsView = new FlashcardsView();
-    }
-
-    window.flashcardsView.currentDeck = {
-      title: `${this.activeNote.title} — ${sec.heading}`,
-      type: 'SECTION',
-      subject: this.activeNote.subject || 'General'
-    };
-    window.flashcardsView.cards = cards.map((card,index)=>({...card,id:`note-${this.activeNote.id}-${secId}-${index}`,cardKey:`note:${this.activeNote.id}:${secId}:${card.front}`}));
-    window.flashcardsView.startStudySession();
-
-    if (window.app) {
-      window.app.navigate('flashcards');
-      app.showToast(`Loaded ${cards.length} 3D flashcards for "${sec.heading}"!`, 'success');
-    }
+  async createFlashcardsFromSection(secId) {
+    const activeId=this.activeNote?.id,version=this._viewVersion;if(!activeId)return;
+    if(window.flashcardsView?.busy?.()){app.showToast('Wait for the current card save to finish.','info');return;}
+    let note;
+    try{await this.flushAutoSave();note=await getNoteById(activeId);}catch(error){window.app?.showToast(`Flashcards could not be opened: ${error.message}`,'error');return;}
+    if(!note||version!==this._viewVersion||this.activeNote?.id!==activeId||window.flashcardsView?.busy?.())return;
+    const cards=FlashcardTools.noteCards(note,secId);
+    if(!cards.length){app.showToast('No structured cards in this section.','info');return;}
+    const section=note.sections.find(s=>String(s.id)===String(secId));
+    window.flashcardsView.currentDeck={id:note.id,title:note.title+' — '+section.heading,type:'SECTION',sectionId:secId,subject:note.subject||'General Study'};
+    window.flashcardsView.cards=cards;window.flashcardsView.startStudySession();window.app?.navigate('flashcards');
   }
 
   async createFlashcardsFromNote() {
-    if(!this.activeNote)return;
+    const id=this.activeNote?.id,version=this._viewVersion;if(!id)return;
     if(!window.flashcardsView)window.flashcardsView=new FlashcardsView();
-    await window.flashcardsView.loadNotesDeck(this.activeNote.id);
-    if(window.flashcardsView.cards.length)window.app?.navigate('flashcards');
+    if(window.flashcardsView.busy?.()){window.app?.showToast('Finish the current flashcard action first.','info');return;}
+    try{
+      await this.flushAutoSave();if(version!==this._viewVersion||this.activeNote?.id!==id)return;
+      const loaded=await window.flashcardsView.loadNotesDeck(id);
+      if(loaded&&version===this._viewVersion&&this.activeNote?.id===id)window.app?.navigate('flashcards');
+    }catch(error){window.app?.showToast(`Flashcards could not be opened: ${error.message}`,'error');}
   }
 
   sendQuickAiQuestion(question) {
@@ -2251,6 +2205,7 @@ class StudyNotesView {
 
   async generateFreshSummary(noteId) {
     if(!app.beginGeneration('Preparing revision notes…'))return;
+    const jobId=window.app?.getGenerationContext?.().id;
     const controller=this._controller(),version=this._viewVersion;
     try {
       await this.flushAutoSave();const note=await getNoteById(Number(noteId));if(!note)throw new Error('Note not found.');
@@ -2258,9 +2213,9 @@ class StudyNotesView {
       this._checkRun(controller);await updateNote(note.id,{summary});
       if(version===this._viewVersion&&Number(this.activeNoteId)===Number(note.id)){this.activeNote.summary=summary;this.readerActiveTab='SUMMARY';await this.render();}
       app.showToast(summary.generationSource==='GEMINI_AI'?'Revision updated for all sections.':'Revision extracted locally from source text.','success');
-      app.endGeneration();
+      app.endGeneration(jobId);
     } catch(error) {
-      app.endGeneration();if(app.isGenerationCancelled()||error.name==='AbortError')return;
+      app.endGeneration(jobId);if(app.isGenerationCancelled()||error.name==='AbortError')return;
       app.showToast(`Revision failed: ${error.message}`,'error');
     } finally{this._controllers.delete(controller);}
   }
@@ -2294,6 +2249,7 @@ class StudyNotesView {
 
   async launchGeneratedQuizForNote(noteId) {
     if(!app.beginGeneration('Preparing source-based practice…'))return;
+    const jobId=window.app?.getGenerationContext?.().id;
     const controller=this._controller();
     try {
       await this.flushAutoSave();const note=await getNoteById(Number(noteId));if(!note)throw new Error('Note not found.');
@@ -2303,8 +2259,8 @@ class StudyNotesView {
       this._checkRun(controller);
       const quizId=await saveNewQuiz({title:`${note.title} · Practice`,subject:note.subject,difficulty:this.quizConfig.difficulty,quizMode:'PRACTICE',language:note.settings?.language||'AUTO',sourceType:'TEXT_NOTES',sourceTitle:note.title},generated.questions);
       await updateNote(note.id,{quizzes:[...(note.quizzes||[]),quizId]});
-      app.endGeneration();app.startQuiz(quizId);
-    }catch(error){app.endGeneration();if(app.isGenerationCancelled()||error.name==='AbortError')return;app.showToast(`Practice failed: ${error.message}`,'error');}
+      app.endGeneration(jobId);app.startQuiz(quizId);
+    }catch(error){app.endGeneration(jobId);if(app.isGenerationCancelled()||error.name==='AbortError')return;app.showToast(`Practice failed: ${error.message}`,'error');}
     finally{this._controllers.delete(controller);}
   }
 
@@ -2340,6 +2296,7 @@ class StudyNotesView {
     const printWindow=window.open('','_blank');
     if(!printWindow){window.app?.showToast('Allow pop-ups for this site to export the quiz.','warning');return;}
     if(!app.beginGeneration('Preparing your printable practice paper…')){printWindow.close();return;}
+    const jobId=window.app?.getGenerationContext?.().id;
     printWindow.document.body.textContent='Preparing source-based practice questions…';
     const controller=this._controller(),config={...this.quizConfig};
     try {
@@ -2348,7 +2305,7 @@ class StudyNotesView {
       this._checkRun(controller);
       window.pdfGenerator.exportPrintableQuizPdf({title:`${note.title} · Practice Paper`},generated.questions,printWindow);
     }catch(error){printWindow.close();if(error.name!=='AbortError')app.showToast(`Printable quiz failed: ${error.message}`,'error');}
-    finally{this._controllers.delete(controller);app.endGeneration();}
+    finally{this._controllers.delete(controller);app.endGeneration(jobId);}
   }
 
   async toggleEditMode() {
@@ -2380,6 +2337,7 @@ class StudyNotesView {
     try{await this.flushAutoSave();}catch(error){window.app?.showToast(error.message,'error');return;}
     const note=this.activeNote,section=note?.sections?.find(section=>section.id===id);if(!section)return;
     if(!window.app?.beginGeneration('Rebuilding teaching aids from your explanation…'))return;
+    const jobId=window.app?.getGenerationContext?.().id;
     const version=this._viewVersion,content=section.content,controller=this._controller();
     try{
       const result=await window.geminiService.generateStructuredStudyBook({topic:section.heading,subject:note.subject,rawText:content,settings:note.settings,signal:controller.signal,onProgress:progress=>window.app?.handleGenerationProgress(progress)});
@@ -2395,7 +2353,7 @@ class StudyNotesView {
       section.supportingContentStale=false;this.triggerAutoSave();await this.flushAutoSave();await this.render();
       window.app?.showToast('Teaching aids rebuilt from your explanation.','success');
     }catch(error){if(error.name!=='AbortError'&&version===this._viewVersion)window.app?.showToast(`Teaching aids could not be refreshed: ${error.message}`,'error');}
-    finally{this._controllers.delete(controller);window.app?.endGeneration();}
+    finally{this._controllers.delete(controller);window.app?.endGeneration(jobId);}
   }
 
   updateActiveNoteTitle(newTitle) {
@@ -2650,6 +2608,7 @@ class StudyNotesView {
     if(!this.newFiles.length&&!this.manualText.trim()){app.showToast('Please upload a PDF / Image or paste study text.','error');return;}
     const focus=(this.focusInstruction||'').trim();
     if(!app.beginGeneration(focus?'Building your focused notes…':'Reading your study material…'))return;
+    const jobId=window.app?.getGenerationContext?.().id;
     const controller=this._controller(),version=this._viewVersion;
     const files=this.newFiles.map(item=>({...item})),manual=this.manualText,settings={...this.noteSettings};
     const subject=this.isCustomSubject?(this.customSubject.trim()||'General Study'):(this.newSubject||'General Study');
@@ -2664,12 +2623,12 @@ class StudyNotesView {
       structuredBook.originalSource = { text: combinedSourceText, pages:extracted.pages,files:extracted.originals,importedAt:new Date().toISOString() };
       this._checkRun(controller);const noteId=await saveNewNote(structuredBook);
       app.handleGenerationProgress({message:'All selected source batches processed · note saved',percent:100,showBatchCard:true});
-      app.endGeneration();this.isCreating=false;this.newFiles=[];this.manualText='';this._retryState=null;this._sourcePages=null;
+      app.endGeneration(jobId);this.isCreating=false;this.newFiles=[];this.manualText='';this._retryState=null;this._sourcePages=null;
       // The focus is intentionally KEPT when building another focused note.
       app.showToast(structuredBook.metadata?.generatedByAI?'Your textbook is ready.':'Source organised locally; AI teaching has not been generated.','success');
       if(version===this._viewVersion)await this.openNote(noteId);
     }catch(err){
-      app.endGeneration();this.isCreating=false;
+      app.endGeneration(jobId);this.isCreating=false;
       if(app.isGenerationCancelled()||err.name==='AbortError')return;
       this._retryState=err.retryState||null;this._creationError={message:err.message,failures:err.failures};await this.render();
       if(err.code==='SCOPE_NO_MATCH'){app.showToast(err.message,'warning');return;}

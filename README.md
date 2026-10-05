@@ -27,14 +27,14 @@
 
 ### 2. Google Gemini AI & Deterministic Fallback Engine
 - Direct REST integration with Google Gemini, defaulting to stable `gemini-3.6-flash`. Automatic fallbacks use earlier free-tier Flash models; 3.7 and 3.8 are excluded from automatic selection (Google's usage quotas still apply; a billing-enabled API project uses its configured paid tier). Model availability and [pricing](https://ai.google.dev/gemini-api/docs/pricing) verified on October 1, 2026.
-- Built-in intelligent deterministic MCQ generator when offline or if no API key is provided.
+- Quiz generation requires configured Gemini access. Offline doubt review shows saved explanations; it does not invent answers to follow-up questions. Saved quizzes remain playable offline.
 - Multi-step animated progress overlay ("Reading PDF...", "Extracting concepts...", "Formulating MCQs...", "Crafting answer key...").
 
 ### 3. Dual Quiz Playback Modes
 - **Practice Mode**:
   - Immediate question lock upon answer selection.
   - Emerald green highlight for correct, crimson red for wrong.
-  - Instant slide-in conceptual explanation card with verified source page citations.
+  - Instant explanation with option reasoning, memory cues and source references when available.
 - **Exam Mode**:
   - Timed countdown timer with under-2-minute warning pulse.
   - Answers hidden until final evaluation.
@@ -48,10 +48,10 @@
   - Subject Mastery Bar Chart.
 
 ### 5. Native Printable A4 PDF Question Paper Generator
-- Generates official, print-ready A4 PDF documents using `jspdf` and `jspdf-autotable`.
-- Running headers and footers with total page numbering.
+- Opens a native A4 print preview with selectable text and bundled Hindi fonts. Choose Save as PDF in the print dialog.
+- Quiz title, student details and saved time/marking information in the paper header.
 - **Section I**: Clean formatted MCQs with page break protection.
-- **Section II**: AutoTable Official Answer Key & detailed conceptual explanations.
+- Export questions only, answer key only, or the complete paper with explanations. Printed time and marks follow the saved quiz settings; source and AI keys are labelled accurately.
 
 ### 6. Study Library & Bookmarks Knowledge Base
 - **All Quizzes**: Search, sort (Newest, Oldest, Highest/Lowest score), filter by difficulty, retake, view results, or export PDF.
@@ -62,6 +62,23 @@
 - **6 Curated Color Palettes**: Indigo, Emerald Teal, Radiant Amber, Vivid Rose, Ocean Cyan, Slate.
 - Font scaling (Small to Extra Large) and typography font families.
 - Portable JSON backup and restore.
+
+### 8. Flashcards & Active Recall
+- Study validated quiz answers, note definitions/formulas/key points, bookmarks and custom decks in a compact layout.
+- Reveal before rating; displayed Again/Hard/Good/Easy intervals match saved schedules. Again is due in ten minutes and repeats in a bounded practice queue. Scheduling uses local calendar dates and a custom ease-factor algorithm.
+- Undo the last rating, resume a saved session, practise weak cards, or restart the full deck. Edited/deleted cards are omitted from recovery; corrected custom answers reset their schedules.
+- Manage and search cards, edit deck titles, import quoted CSV files, or create fill-in-the-blank prompts with `{{c1::phrase}}`. Imports validate all rows before saving and skip duplicates.
+- Optional typed recall compares normalized wording with the saved answer; it does not use AI grading. Daily new/review limits, source references, memory cues and honest session counts support revision.
+- Export the full deck as a printable A4 sheet with answers, explanations and available source context. No additional API calls are needed for these tools.
+- Compact animated header, mobile toolbar and sticky rating controls keep studying usable on small screens. Keyboard focus follows reveal, answer feedback and the next question.
+- Notes retain their card identities after insertion or reordering; edited answers invalidate their old schedules. Long note explanations are split into smaller recall cards, with source references retained.
+- Add/Edit/Import forms recover unfinished drafts on this device. Discard is explicit; successful saves, deletion and Flashcard resets clear the appropriate drafts. Form drafts are local recovery data and are not included in portable backups.
+- Import preview reports existing/batch duplicates and invalid rows before saving. BOM-prefixed CSV files are supported; unsupported or incomplete cloze groups are rejected.
+- Mathematical signs, decimals and technical type names remain distinct answers. Formula cards and explicitly delimited TeX render through the bundled MIT-licensed KaTeX 0.19.0 renderer using native MathML; invalid formulas fall back to readable text. The renderer uses [untrusted TeX and bounded expansion](https://katex.org/docs/options), with a separate MathML allow-list.
+- Superscripts/subscripts and chemical case are preserved (`x²` differs from `x2`, `CO` from `Co`); ordinary prose comparison still tolerates case. Currency stays literal. Invalid optional backup metadata is repaired before display/export.
+- Recall mode and optional swipe ratings are remembered. Scrolling code, formulas and tables never rates a card. Typed responses collapse after submission and mobile Reveal brings the answer into view.
+- Original Note PDF/image references open locally at the cited page, with saved text when the original file is unavailable. Quiz decks explain excluded questions; due counts refresh as time passes and when returning to the tab.
+- CSV reads block imports until complete; later file selections win, and errors report the original physical line numbers. Long Note cards split at sentence/paragraph boundaries while preserving complete code/math blocks. Indexed bulk review cleanup avoids rebuilding Notes for every review.
 
 ---
 
@@ -76,7 +93,7 @@ node server.js
 ```
 Open your browser and navigate to `http://localhost:3000`.
 
-### 🔒 Recommended: run with the API key server-side
+### 🔒 Local use: run with the API key server-side
 
 By default the app looks for a personal Gemini key in browser `localStorage`, which means
 the key is readable by anyone with access to the browser profile and travels in every
@@ -98,6 +115,31 @@ The startup banner tells you which mode is active:
 Settings → *Google Gemini AI Configuration* shows the same status, so you can confirm it
 in the UI.
 
+The shared-key Gemini routes accept loopback connections with a localhost host and
+same-origin browser requests. Remote visitors use their own key from Settings. The
+app's browser login is not backend authorization; sharing the server key on a public
+deployment requires an authenticated backend before relaxing this local restriction.
+
+The shared proxy enables Gemini 3.6 Flash, text output, inline-image OCR and one
+candidate, with at most 8,192 output tokens and minimal/low thinking. Defaults are
+application safeguards, not Google's published quota or a billing limit:
+
+| Environment variable | Default | Guard |
+|---|---:|---|
+| `GEMINI_PROJECT_RPM` | 5 | Shared generation requests per rolling minute |
+| `GEMINI_PROJECT_TPM` | 12,000 | Estimated input tokens per rolling minute |
+| `GEMINI_PROJECT_DAILY_REQUESTS` | 100 | Shared generation requests per Pacific calendar day |
+| `GEMINI_PROJECT_DAILY_TOKENS` | 500,000 | Estimated input plus maximum output reservations per day |
+
+Set positive integer overrides to match your actual project allowance. Explicitly
+setting TPM also rejects a single oversized request. With the default TPM, an existing
+large study request can use an otherwise empty minute. Daily reservations persist in
+the private, git-ignored `.hamsa-ai-budget.json`; corrupt, unreadable or unwritable budget
+storage pauses shared generation. A missing file starts a fresh budget, so preserve it
+across restarts. Failed requests retain reservations because upstream usage can be
+unknown. These guards cover one server process; other apps, replicas and personal keys
+sharing the same Google project need a common authenticated quota store for a global cap.
+
 ---
 
 ## ✅ Verification
@@ -106,15 +148,15 @@ The project ships a regression suite covering the security-, data- and scoring-c
 paths. Run it after any change:
 
 ```powershell
-npm test          # 10 suites, 477 checks
+npm test          # 35 suites, including Quiz and Flashcard regressions
 npm run check     # syntax only (fast)
 ```
 
 Server-dependent checks (rate limiting, the static-file deny-list, asset availability) need
 a running server — see `scratch/README.md` for the exact commands.
 
-`jsdom` is a **devDependency** used only to exercise the HTML/SVG sanitizers against real
-XSS payloads. Nothing in `node_modules` is served to the browser; the app's own vendor
+`jsdom` is a **devDependency** used for isolated view, storage and sanitizer regression
+checks. Nothing in `node_modules` is served to the browser; the app's own vendor
 libraries live in `assets/vendor/`.
 
 ---
@@ -163,8 +205,10 @@ Hamsa Vidya Website/
 │   ├── ai-client.js             # Single Gemini transport: proxy/direct, timeout, abort
 │   ├── db.js                    # Dexie IndexedDB: 12 tables, scoring engine, backup v3
 │   ├── pdf-extractor.js         # PDF.js loader & strict [fromPage..toPage] extraction
-│   ├── pdf-generator.js         # jsPDF + AutoTable A4 question paper & answer key
-│   ├── gemini-service.js        # Gemini prompts, model rotation, deterministic fallback
+│   ├── pdf-generator.js         # Native A4 question papers, answer keys and study booklets
+│   ├── quiz-quality.js          # Shared answer validation, deduplication and source matching
+│   ├── quiz-engine.js           # Source coverage, independent answer review and checkpoints
+│   ├── gemini-service.js        # Gemini prompts, model rotation, saved-explanation fallback
 │   ├── eligibility-engine.js    # Exam eligibility with provenance-aware verdicts
 │   ├── charts.js                # SVG donut, trend line, subject mastery bars
 │   ├── app.js                   # Router, view lifecycle, generation lifecycle, a11y promotion
@@ -190,3 +234,25 @@ The reader includes compact expandable teaching blocks, source-grounded tables/f
 PDF exports preserve all requested revision sections and full reference content. Allow site pop-ups to open the print preview, then choose Save as PDF. Runtime coverage is in `scratch/verify-study-notes.js`; optional isolated Edge verification is in `scratch/verify-study-notes-browser.cjs`.
 
 Study PDF previews load a bundled Noto Sans Devanagari font and wait for fonts before printing, including offline use. The font is from [Google Fonts](https://github.com/google/fonts/tree/main/ofl/notosansdevanagari), distributed with its SIL Open Font License in `assets/fonts/OFL-NotoSansDevanagari.txt`. PDF imports with replacement or null characters are sent through OCR rather than treated as reliable extracted text.
+
+
+## Quiz reliability & learning workflow
+
+Generated questions pass structural validation, exact source-quote matching when a source is supplied, and a separate AI solving/review pass. Missing keys, duplicate or placeholder options, conflicting source keys and unsupported citations are excluded. This improves reliability but does not guarantee factual correctness. Topic-only questions do not get fabricated page references.
+
+Long sources are split into chunks and supplied as bounded excerpts. Small quizzes can sample parts of a long source; the quiz records its coverage and the player identifies sampled material. Sampling uses unseen chunks before repeating them. One generation is limited to 1 million extracted characters; oversized sources require a smaller page range. Optional OCR uses the configured API quota. Quiz creation can skip unreadable PDF pages and nonterminal OCR failures, then generate questions from remaining readable pages. Authentication, quota, timeout and uncertain network failures pause extraction instead of spending on later pages. Each successfully extracted page is saved against the original draft file and OCR version before processing the next page, so reload/resume reuses it. A PDF source note lists skipped original page numbers and reasons in the player, saved results and every PDF export; it is preserved in generation drafts. A PDF with no readable pages cannot generate a source-based quiz. Existing PDF questions are imported only with an unambiguous printed key, matching printed question and complete ordered options; ambiguous layouts can be excluded conservatively. Completed quizzes save and start directly, without a manual review screen. Interrupted runs offer Continue quiz or an explicit start of the ready questions. Save failures retain the completed draft for retry without regenerating. Accepted batches are checkpointed locally, including quick drills and mock tests. Browser storage limits can prevent a persistent checkpoint; the view reports that condition and pauses paid OCR when its recovery page cannot be saved.
+
+All generation features share browser pacing for the active model and credentials: five requests/minute and a 12,000 estimated input-token/minute quiz budget, with stricter provider cooldowns applied when reported. Small requests have no fixed 12.1-second gap. OCR estimates account for image resolution; actual reported input usage can raise a reservation. Cancelled queued requests cannot send later. Job timing accounts for writer/reviewer stages and known waits under the existing 15-minute ceiling. Blocked/truncated responses and uncertain timeout/network outcomes pause without an identical automatic resend; a malformed completed response retains bounded repair. Transient connection-status failures expire and can recover on reconnect. Processing uses student messages for reading material, creating questions, checking answers and opening the quiz. These application safeguards do not guarantee a project's available Google quota or live generation speed.
+
+Opening a question's doubt panel shows saved explanations immediately without an AI
+call. Extra AI help requires an explicit action; unchanged successful preset replies
+can be reused in the current result view. Question corrections and changed source,
+settings or model invalidate reuse. Custom conversations retain their history. Bounded
+in-memory request/stage diagnostics record timings, outcomes and reported usage without
+keys, prompts or source text; unknown usage is never presented as zero.
+
+Practice feedback includes option reasoning and memory cues. Exam mode supports Clear Response, keyboard controls, wall-clock timing and saved progress; a failed expired submission can be restored for saving its result. The quick drill is timed for five minutes; the 15-question UPSC mock uses 18 minutes and its +2 / −2⁄3 marking scheme. Student language, level, exam and explanation preferences guide generation.
+
+Every new attempt stores its question, answer and scoring snapshot. History opens the selected attempt and deletes only that attempt. Older logs without snapshots show their saved summary rather than fabricated answers. Results provide topic revision priorities, attempt comparisons, separate wrong/skipped filters, paginated review and local question corrections for future attempts. Corrections preserve completed snapshots. Quiz deletion also removes its related flashcard review records.
+
+Run `npm test` for the automated regression suites. Optional `node scratch/verify-quiz-browser.cjs` verifies desktop and 390px/320px mobile layouts, actual IndexedDB attempt flows and native PDF text rendering in an isolated Edge profile; it never uses a real API key or personal browser data.

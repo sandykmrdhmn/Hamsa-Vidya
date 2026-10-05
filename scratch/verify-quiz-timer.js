@@ -316,14 +316,15 @@ console.log('\n=== Persistence contract ===');
 
   // The create form is the only caller that sets it today; the drill paths
   // deliberately do not, and must therefore still work.
-  const callers = ['js/app.js', 'js/views/library.js', 'js/views/quiz-result.js',
+  const callers = ['js/views/library.js', 'js/views/quiz-result.js',
                    'js/views/study-notes.js'];
   for (const f of callers) {
     check(`${f} still calls saveNewQuiz without a limit (uses the fallback)`,
       /saveNewQuiz\(/.test(read(f)) && !/examDurationSeconds/.test(read(f)));
   }
+  check('quick drill uses five minutes and UPSC mock stores its marking preset', /examDurationSeconds:300/.test(read('js/app.js')) && /scoringPreset:'UPSC_PRELIMS',examDurationSeconds:1080/.test(read('js/app.js')));
   check('create-quiz.js passes the resolved limit',
-    /examDurationSeconds: this\.getExamDurationSecondsForSave\(\)/.test(CREATE_SRC));
+    /examDurationSeconds:this\.getExamDurationSecondsForSave\(\)/.test(CREATE_SRC) && /examDurationSeconds:o\.examDurationSeconds/.test(CREATE_SRC));
 }
 
 // ===========================================================================

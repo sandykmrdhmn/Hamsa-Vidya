@@ -14,10 +14,19 @@ const path = require('path');
 const SUITES = [
   { file: 'syntax-check.js', label: 'Syntax (all JS parses)' },
   { file: 'verify-ai-client.js', label: 'AI transport + API key safety' },
-  { file: 'verify-gemini-models.js', label: 'Gemini default + free-tier fallback + request compatibility' },
+  { file: 'verify-gemini-models.js', label: 'Gemini single-model selection + request compatibility' },
   { file: 'verify-settings.js', label: 'Settings credentials, rendering, accessibility and data actions' },
   { file: 'verify-ai-teacher.js', label: 'AI Teacher correctness + lifecycle + persistence' },
   { file: 'verify-backup.js', label: 'Backup / restore / rollback' },
+  { file: 'verify-quiz-reliability.js', label: 'Quiz validation, source coverage, review, snapshots, PDF and lifecycle' },
+  { file: 'verify-quiz-quota.js', label: 'Quiz quota classification, shared cooldown, retry and review recovery' },
+  { file: 'verify-quiz-efficiency.js', label: 'Quiz call count, Hindi budget, OCR recovery, credentials and proxy cancellation' },
+  { file: 'verify-quiz-generation-blockers.js', label: 'Quiz partial responses, adaptive Hindi budgets and bounded PDF reads' },
+  { file: 'verify-quiz-approved-integrity.js', label: 'Printed source fidelity, sampling, terminal failures and bounded jobs' },
+  { file: 'verify-quiz-ocr-recovery.js', label: 'Durable per-page OCR recovery, cancellation and draft ownership' },
+  { file: 'verify-quiz-doubt-reuse.js', label: 'Saved-first explanations and explicit versioned AI reuse' },
+  { file: 'verify-quiz-transport-budget.js', label: 'Unicode transport, connection recovery and shared AI budgets' },
+  { file: 'verify-flashcards.js', label: 'Flashcards schedules, source identities, recall, recovery, manager and import' },
   { file: 'verify-quiz-scoring.js', label: 'Marking scheme + timer + resume' },
   { file: 'verify-data-honesty.js', label: 'Data provenance + eligibility + attempts' },
   { file: 'verify-hardening.js', label: 'A11y + sanitizer + AI cancellation' },
@@ -96,7 +105,6 @@ console.log('='.repeat(64));
 console.log('\nServer suites (need a running server):');
 console.log('  node server.js');
 console.log('  powershell -ExecutionPolicy Bypass -File scratch/verify-server-hardening.ps1');
-console.log('  $env:GEMINI_API_KEY="test"; $env:PORT="3100"; node server.js');
-console.log('  powershell -ExecutionPolicy Bypass -File scratch/verify-proxy-limits.ps1\n');
+console.log('  Shared AI budgets are covered above with a mocked upstream; no live key needed.\n');
 
 process.exit(totalFail > 0 ? 1 : 0);

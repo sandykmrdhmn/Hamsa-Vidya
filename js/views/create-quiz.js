@@ -43,6 +43,83 @@ class CreateQuizView {
     this.selectedLanguage = 'ENGLISH'; // 'ENGLISH', 'HINDI', 'BILINGUAL'
     this.customTopicTitle = '';
     this.notesText = '';
+    this.useOcr = false;
+    this.importSourceQuestions = false;
+    try { this.generationDraft = JSON.parse(localStorage.getItem('hamsa_quiz_generation_draft') || 'null'); } catch { this.generationDraft = null; }
+    if (!this.generationDraft?.options) this.generationDraft = null;
+    this.restoreForm();
+    // Delegation also captures controls with inline state assignments. Never
+    // store credentials/files here.
+    if (this.container) {
+      this._onFormChange = () => this.persistForm();
+      this.container.addEventListener('input', this._onFormChange);
+      this.container.addEventListener('change', this._onFormChange);
+    }
+    this._onFormUnload = () => this.persistForm();
+    window.addEventListener?.('pagehide', this._onFormUnload);
+  }
+
+  getFormFields() {
+    return ['activeSource','includeAllPages','fromPage','toPage','fromPageInputRaw','toPageInputRaw',
+      'selectedSubject','customSubject','_presetSubject','selectedDifficulty','selectedQuestionCount',
+      'selectedQuizMode','selectedScoringPreset','_scoringPresetTouched','durationMode',
+      'customDurationMinutes','customDurationRaw','selectedLanguage','customTopicTitle','notesText',
+      'useOcr','importSourceQuestions','studentSettings'];
+  }
+  restoreForm() {
+    try {
+      const saved = JSON.parse(localStorage.getItem('hamsa_quiz_form_draft') || 'null');
+      if (!saved || saved.version !== 1 || !saved.fields) return;
+      const enums = { activeSource:['PDF','TEXT'], selectedDifficulty:['EASY','MEDIUM','HARD','MIXED'],
+        selectedQuizMode:['PRACTICE','EXAM'], durationMode:['AUTO','CUSTOM'],
+        selectedLanguage:['ENGLISH','HINDI','BILINGUAL','HINGLISH'],
+        selectedScoringPreset:['NONE','UPSC_PRELIMS','SSC','BANKING','NEET'] };
+      for (const key of this.getFormFields()) {
+        const value = saved.fields[key];
+        if (key === 'studentSettings') {
+          const levels=['AUTO','CLASS_6_8','CLASS_9_10','CLASS_11_12','CLASS_12_SCIENCE','COLLEGE','SSC_CGL','BANKING_RAILWAY','UPSC','ADVANCED'];
+          if (value && levels.includes(value.level) && ['AUTO','SIMPLE','DETAILED'].includes(value.depth)) {
+            this.studentSettings={level:value.level,depth:value.depth,exam:typeof value.exam==='string'?value.exam.slice(0,120):''};
+          }
+        } else if (enums[key]) {
+          if (enums[key].includes(value)) this[key] = value;
+        } else if (typeof this[key] === 'boolean' && typeof value === 'boolean') this[key] = value;
+        else if (typeof value === 'string' && (typeof this[key] === 'string' || key === '_presetSubject') && value.length <= 1000000) this[key] = value;
+        else if (typeof this[key] === 'number' && Number.isSafeInteger(value) && value > 0) {
+          const max=key==='selectedQuestionCount'?200:key==='customDurationMinutes'?600:100000;
+          if (value <= max) this[key] = value;
+        }
+      }
+      this._formRestored = true;
+      // Track preference defaults without reapplying them over restored choices.
+      const prefs=window.studyPreferences?.get() || {};
+      if (enums.selectedLanguage.includes(saved.fields.selectedLanguage)) this._studyDefaults={selectedLanguage:prefs.language==='AUTO'?'ENGLISH':prefs.language || 'ENGLISH'};
+      if (this.studentSettings) this.studentSettings._quizDefaults={level:prefs.level || 'AUTO',exam:prefs.exam || '',depth:prefs.depth || 'AUTO'};
+    } catch { /* A malformed/unavailable draft must not block quiz creation. */ }
+  }
+  persistForm() {
+    try {
+      const fields = {};
+      for (const key of this.getFormFields()) if (this[key] !== undefined) fields[key] = this[key];
+      if(this.studentSettings) fields.studentSettings={level:this.studentSettings.level,exam:this.studentSettings.exam,depth:this.studentSettings.depth};
+      localStorage.setItem('hamsa_quiz_form_draft', JSON.stringify({version:1,fields}));
+      this._formWarning = false;
+      return true;
+    } catch {
+      if (!this._formWarning) {
+        this._formWarning = true;
+        window.app?.showToast('Quiz form could not be autosaved. Keep this tab open and free browser storage before closing it.', 'warning');
+      }
+      return false;
+    }
+  }
+  dispose() {
+    this._renderVersion=(this._renderVersion || 0)+1;
+    this._leaveVersion=(this._leaveVersion || 0)+1;
+    this.container?.removeEventListener('input', this._onFormChange);
+    this.container?.removeEventListener('change', this._onFormChange);
+    window.removeEventListener?.('pagehide', this._onFormUnload);
+    this.stopMic();
   }
 
   /**
@@ -92,15 +169,21 @@ class CreateQuizView {
   async render() {
     const preferredLanguage = window.studyPreferences?.get().language;
     if (preferredLanguage) {
-      window.studyPreferences.applyDefaults(this, { selectedLanguage: preferredLanguage === 'AUTO' ? 'ENGLISH' : preferredLanguage === 'HINGLISH' ? 'BILINGUAL' : preferredLanguage }, '_studyDefaults');
+      window.studyPreferences.applyDefaults(this, { selectedLanguage: preferredLanguage === 'AUTO' ? 'ENGLISH' : preferredLanguage }, '_studyDefaults');
     }
     if (!this.container) return;
 
+    const renderVersion = this._renderVersion = (this._renderVersion || 0) + 1;
+    this.stopMic();
+    this.persistForm();
     const heroHtml = await this._buildHero();
+    if (renderVersion !== this._renderVersion) return;
 
     this.container.innerHTML = `
       <div class="create-quiz-container">
         ${heroHtml}
+        ${this.renderDraftBanner()}
+        ${this.renderStudentSettings()}
 
         <!-- Source Tabs -->
         <div class="source-tabs">
@@ -120,7 +203,7 @@ class CreateQuizView {
         <div id="tab-panel-pdf" class="tab-panel ${this.activeSource === 'PDF' ? 'active' : ''}">
           ${!this.loadedPdfMeta ? `
             <!-- Dropzone -->
-            <div id="pdf-dropzone" class="dropzone-area" onclick="document.getElementById('pdf-file-input').click()">
+            <div id="pdf-dropzone" class="dropzone-area" role="button" tabindex="0" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('pdf-file-input').click();}" ondragover="event.preventDefault();this.classList.add('drag-over')" ondragleave="this.classList.remove('drag-over')" ondrop="event.preventDefault();this.classList.remove('drag-over');createQuizView.handleFileSelect({target:{files:event.dataTransfer.files}})" onclick="if(event.target.id!=='pdf-file-input')document.getElementById('pdf-file-input').click()">
               <input type="file" id="pdf-file-input" accept="application/pdf" style="display:none;" onchange="createQuizView.handleFileSelect(event)">
               <div class="dropzone-icon">
                 <i data-lucide="upload-cloud" style="width:28px;height:28px;"></i>
@@ -143,7 +226,7 @@ class CreateQuizView {
                 </div>
                 <div style="min-width:0;">
                   <div style="font-weight:700; font-size:1.02rem; color:var(--text-main);" class="text-truncate">
-                    ${this.loadedPdfMeta.fileName}
+                    ${SecurityUtils.escapeHtml(this.loadedPdfMeta.fileName)}
                   </div>
                   <div style="font-size:0.82rem; color:var(--text-muted); display:flex; gap:0.75rem; align-items:center;">
                     <span>Size: ${this.loadedPdfMeta.formattedSize}</span>
@@ -169,7 +252,7 @@ class CreateQuizView {
               </div>
 
               <label class="switch-label">
-                <input type="checkbox" id="all-pages-toggle" ${this.includeAllPages ? 'checked' : ''} onchange="createQuizView.toggleAllPages(event.target.checked)">
+                <input type="checkbox" id="all-pages-toggle" aria-label="Include all PDF pages" ${this.includeAllPages ? 'checked' : ''} onchange="createQuizView.toggleAllPages(event.target.checked)">
                 <span class="switch-slider"></span>
               </label>
             </div>
@@ -199,27 +282,27 @@ class CreateQuizView {
               <div class="stepper-inputs-grid">
                 <!-- From Page Stepper -->
                 <div class="stepper-group">
-                  <label>From Page (Start)</label>
+                  <label for="from-page-input">From Page (Start)</label>
                   <div class="stepper-control">
-                    <button class="stepper-btn" onclick="createQuizView.stepFromPage(-1)">−</button>
-                    <input type="text" id="from-page-input" class="stepper-input" value="${this.fromPageInputRaw}" 
+                    <button class="stepper-btn" aria-label="Decrease start page" onclick="createQuizView.stepFromPage(-1)">−</button>
+                    <input type="text" id="from-page-input" class="stepper-input" value="${SecurityUtils.escapeHtml(this.fromPageInputRaw)}"
                       oninput="createQuizView.onFromPageInput(this.value)"
                       onblur="createQuizView.onFromPageBlur()"
                       onkeydown="if(event.key==='Enter') createQuizView.onFromPageBlur()">
-                    <button class="stepper-btn" onclick="createQuizView.stepFromPage(1)">+</button>
+                    <button class="stepper-btn" aria-label="Increase start page" onclick="createQuizView.stepFromPage(1)">+</button>
                   </div>
                 </div>
 
                 <!-- To Page Stepper -->
                 <div class="stepper-group">
-                  <label>To Page (End)</label>
+                  <label for="to-page-input">To Page (End)</label>
                   <div class="stepper-control">
-                    <button class="stepper-btn" onclick="createQuizView.stepToPage(-1)">−</button>
-                    <input type="text" id="to-page-input" class="stepper-input" value="${this.toPageInputRaw}" 
+                    <button class="stepper-btn" aria-label="Decrease end page" onclick="createQuizView.stepToPage(-1)">−</button>
+                    <input type="text" id="to-page-input" class="stepper-input" value="${SecurityUtils.escapeHtml(this.toPageInputRaw)}"
                       oninput="createQuizView.onToPageInput(this.value)"
                       onblur="createQuizView.onToPageBlur()"
                       onkeydown="if(event.key==='Enter') createQuizView.onToPageBlur()">
-                    <button class="stepper-btn" onclick="createQuizView.stepToPage(1)">+</button>
+                    <button class="stepper-btn" aria-label="Increase end page" onclick="createQuizView.stepToPage(1)">+</button>
                   </div>
                 </div>
               </div>
@@ -228,8 +311,8 @@ class CreateQuizView {
               <div class="dual-slider-wrapper">
                 <div class="slider-track"></div>
                 <div id="slider-range-fill" class="slider-range"></div>
-                <input type="range" id="slider-from" class="dual-slider-input" min="1" max="${this.pdfTotalPages}" value="${this.fromPage}" oninput="createQuizView.onSliderFromChange(this.value)">
-                <input type="range" id="slider-to" class="dual-slider-input" min="1" max="${this.pdfTotalPages}" value="${this.toPage}" oninput="createQuizView.onSliderToChange(this.value)">
+                <input type="range" id="slider-from" aria-label="PDF start page" class="dual-slider-input" min="1" max="${this.pdfTotalPages}" value="${this.fromPage}" oninput="createQuizView.onSliderFromChange(this.value)">
+                <input type="range" id="slider-to" aria-label="PDF end page" class="dual-slider-input" min="1" max="${this.pdfTotalPages}" value="${this.toPage}" oninput="createQuizView.onSliderToChange(this.value)">
               </div>
             </div>
           `}
@@ -245,9 +328,9 @@ class CreateQuizView {
               <label style="font-weight:700; font-size:0.96rem; color:var(--text-main);">
                 Specific Topic / Chapter Name <span style="color:var(--color-primary-light);">*</span>
               </label>
-              <input type="text" id="topic-title-input" class="study-textarea" style="min-height:44px; padding:0.5rem 0.85rem;" 
-                placeholder="Enter exact topic (e.g. Fundamental Rights, Mughal Empire, Photosynthesis, Thermodynamics)..." 
-                value="${this.customTopicTitle}" oninput="createQuizView.onTopicTitleChange(this.value)">
+              <input type="text" id="topic-title-input" class="study-textarea" style="min-height:44px; padding:0.5rem 0.85rem;"
+                placeholder="Enter exact topic (e.g. Fundamental Rights, Mughal Empire, Photosynthesis, Thermodynamics)..."
+                value="${SecurityUtils.escapeHtml(this.customTopicTitle)}" oninput="createQuizView.onTopicTitleChange(this.value)">
               <span style="font-size:0.75rem; color:var(--text-muted);">AI will formulate questions specifically on this topic.</span>
             </div>
 
@@ -261,8 +344,8 @@ class CreateQuizView {
                 <span id="char-count-badge" style="font-size:0.8rem; color:var(--text-muted);">${this.notesText.length} characters</span>
               </div>
             </div>
-            <textarea id="notes-textarea" class="study-textarea" placeholder="Paste textbook excerpts, chapter summaries, syllabus points, or handwritten notes here (or leave empty if you just specified a topic above)..." oninput="createQuizView.onNotesChange(this.value)">${this.notesText}</textarea>
-            
+            <textarea id="notes-textarea" class="study-textarea" placeholder="Paste textbook excerpts, chapter summaries, syllabus points, or handwritten notes here (or leave empty if you just specified a topic above)..." oninput="createQuizView.onNotesChange(this.value)">${SecurityUtils.escapeHtml(this.notesText)}</textarea>
+
             <!-- Quick Topic Inspiration Pills -->
             <div>
               <div style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">Quick Topic Inspiration:</div>
@@ -298,7 +381,7 @@ class CreateQuizView {
             `).join('')}
           </div>
           <div style="display:flex; align-items:center; gap:0.5rem; margin-top:0.35rem;">
-            <input type="text" id="custom-subject-input" placeholder="Or enter custom subject..." value="${this.customSubject}" class="study-textarea" style="min-height:42px; padding:0.4rem 0.85rem;" oninput="createQuizView.onCustomSubjectInput(this.value)">
+            <input type="text" id="custom-subject-input" aria-label="Custom quiz subject" placeholder="Or enter custom subject..." value="${SecurityUtils.escapeHtml(this.customSubject)}" class="study-textarea" style="min-height:42px; padding:0.4rem 0.85rem;" oninput="createQuizView.onCustomSubjectInput(this.value)">
           </div>
         </div>
 
@@ -349,7 +432,7 @@ class CreateQuizView {
                 <i data-lucide="clock" style="color:var(--color-warning);"></i>
               </div>
               <div class="mode-radio-desc">
-                Timed mock test environment with Question Palette drawer; answers revealed upon final submission.
+                Timed mock test with Question Palette; answers appear after submission. Leaving the quiz or closing the page pauses the saved time; background tabs continue counting down.
               </div>
             </div>
           </div>
@@ -431,7 +514,7 @@ class CreateQuizView {
                 <button class="stepper-btn" type="button" onclick="createQuizView.stepDuration(-5)"
                   aria-label="Decrease time limit by 5 minutes">−</button>
                 <input type="text" inputmode="numeric" id="custom-duration-input" class="stepper-input"
-                  value="${this.customDurationRaw}"
+                  value="${SecurityUtils.escapeHtml(this.customDurationRaw)}"
                   aria-label="Custom total time in minutes"
                   oninput="createQuizView.onCustomDurationInput(this.value)"
                   onblur="createQuizView.onCustomDurationBlur()"
@@ -466,6 +549,7 @@ class CreateQuizView {
             <div class="select-chip ${this.selectedLanguage === 'ENGLISH' ? 'active' : ''}" onclick="createQuizView.setLanguage('ENGLISH')">
               English
             </div>
+            <div class="select-chip ${this.selectedLanguage==='HINGLISH'?'active':''}" onclick="createQuizView.setLanguage('HINGLISH')">Hinglish</div>
             <div class="select-chip ${this.selectedLanguage === 'HINDI' ? 'active' : ''}" onclick="createQuizView.setLanguage('HINDI')">
               हिंदी (Hindi)
             </div>
@@ -475,6 +559,11 @@ class CreateQuizView {
           </div>
         </div>
 
+        <div class="form-group-card quiz-source-options">
+          <label><input type="checkbox" ${this.useOcr ? 'checked' : ''} onchange="createQuizView.useOcr=this.checked"> Read scanned PDF pages with OCR (uses your API quota)</label>
+          <p>Generate new reviewed questions in your selected language and difficulty. Enable import for a printed question paper with answer keys; it checks all selected pages. If no keyed questions are found, new questions are generated.</p><label><input type="checkbox" ${this.importSourceQuestions ? 'checked' : ''} onchange="createQuizView.importSourceQuestions=this.checked"> Import original PDF questions with printed keys (all valid questions; original language and difficulty)</label>
+          <small>Only complete source questions with explicit keys are imported. Otherwise, new questions are generated and reviewed. AI review can still make mistakes.</small>
+        </div>
         <!-- Bottom CTA -->
         <div style="display:flex; justify-content:flex-end; gap:1rem; margin-top:2rem; margin-bottom:3rem;">
           <button class="btn btn-secondary btn-lg" onclick="app.navigate('dashboard')">
@@ -489,6 +578,7 @@ class CreateQuizView {
     `;
 
     this.updateSliderRangeVisuals();
+    this.updatePdfUploadStatus();
     if (window.app) window.app.refreshIcons();
   }
 
@@ -500,39 +590,67 @@ class CreateQuizView {
   // =========================================================================
   // PDF UPLOAD & HANDLING
   // =========================================================================
-  async handleFileSelect(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+  updatePdfUploadStatus() {
+    const dropzone=document.getElementById('pdf-dropzone'),status=dropzone?.querySelector('p');
+    if(this._pdfUploading) {
+      dropzone?.setAttribute('aria-busy','true');
+      if(status) {
+        if(status.dataset.uploadHint===undefined)status.dataset.uploadHint=status.textContent;
+        status.textContent='Loading your PDF…';
+      }
+    } else {
+      dropzone?.removeAttribute('aria-busy');
+      if(status && status.dataset.uploadHint!==undefined) {
+        status.textContent=status.dataset.uploadHint;delete status.dataset.uploadHint;
+      }
+    }
+  }
 
-    if (file.type !== 'application/pdf' && !file.name.endsWith('.pdf')) {
+  async handleFileSelect(event) {
+    const input=event.target,file=input.files?.[0];
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+      if('value' in input)input.value='';
       app.showToast('Please select a valid PDF document.', 'error');
       return;
     }
-
+    const version=this._pdfUploadVersion=(this._pdfUploadVersion||0)+1,viewVersion=this._leaveVersion||0;
+    this._pdfUploading=true;
+    this.updatePdfUploadStatus();
     try {
       app.showToast('Loading PDF metadata...', 'info');
       const meta = await window.pdfExtractor.loadPdfFile(file);
+      if(version!==this._pdfUploadVersion)return;
       this.loadedPdfMeta = meta;
       this.pdfTotalPages = meta.pageCount;
       this.includeAllPages = true;
-      this.fromPage = 1;
-      this.toPage = meta.pageCount;
-      this.fromPageInputRaw = '1';
-      this.toPageInputRaw = String(meta.pageCount);
-
-      app.showToast(`Loaded ${meta.fileName} (${meta.pageCount} pages)`, 'success');
-      this.render();
+      this.fromPage = 1;this.toPage = meta.pageCount;
+      this.fromPageInputRaw = '1';this.toPageInputRaw = String(meta.pageCount);
+      if(viewVersion===(this._leaveVersion||0) && (!app.currentView || app.currentView==='create-quiz')) {
+        app.showToast(`Loaded ${meta.fileName} (${meta.pageCount} pages)`, 'success');
+        this.render();
+      }
     } catch (err) {
+      if (err.name === 'AbortError' || version!==this._pdfUploadVersion)return;
       console.error(err);
-      app.showToast(`Failed to parse PDF: ${err.message}`, 'error');
+      if(viewVersion===(this._leaveVersion||0) && (!app.currentView || app.currentView==='create-quiz')) {
+        const message=err.name==='PasswordException'?'This PDF is password-protected. Upload an unlocked copy.':err.name==='InvalidPDFException'?'This file is not a readable PDF or is damaged. Choose another PDF.':err.message;
+        app.showToast(`Failed to parse PDF: ${message}`, 'error');
+      }
+    } finally {
+      if('value' in input)input.value='';
+      if(version===this._pdfUploadVersion) {
+        this._pdfUploading=false;this.updatePdfUploadStatus();
+      }
     }
   }
 
   removeLoadedPdf() {
+    this._pdfUploadVersion=(this._pdfUploadVersion||0)+1;this._pdfUploading=false;
     window.pdfExtractor.clear();
-    this.loadedPdfMeta = null;
-    this.pdfTotalPages = 1;
-    this.includeAllPages = true;
+    this.loadedPdfMeta = null;this.pdfTotalPages = 1;
+    this.includeAllPages = true;this.fromPage=1;this.toPage=1;
+    this.fromPageInputRaw='1';this.toPageInputRaw='1';
     this.render();
   }
 
@@ -672,6 +790,7 @@ class CreateQuizView {
   // =========================================================================
   onNotesChange(val) {
     this.notesText = val;
+    this.persistForm();
     const charBadge = document.getElementById('char-count-badge');
     if (charBadge) charBadge.textContent = `${val.length} characters`;
   }
@@ -693,7 +812,7 @@ class CreateQuizView {
     this.recognition = new SpeechRecognition();
     this.recognition.continuous = true;
     this.recognition.interimResults = true;
-    this.recognition.lang = 'en-IN'; // Set to Indian English as it's an Indian education app
+    this.recognition.lang = ['HINDI', 'BILINGUAL', 'HINGLISH'].includes(this.selectedLanguage) ? 'hi-IN' : 'en-IN'; // Set to Indian English as it's an Indian education app
 
     const micBtn = document.getElementById('mic-btn');
     const micIcon = document.getElementById('mic-icon');
@@ -738,7 +857,7 @@ class CreateQuizView {
       this.stopMicUI();
     };
 
-    this.recognition.start();
+    try { this.recognition.start(); } catch (error) { this.stopMicUI(); app.showToast('Microphone could not start. Check browser permission.', 'error'); }
   }
 
   stopMicUI() {
@@ -755,6 +874,7 @@ class CreateQuizView {
 
   onTopicTitleChange(val) {
     this.customTopicTitle = val;
+    this.persistForm();
   }
 
   populateTopic(type) {
@@ -811,12 +931,12 @@ class CreateQuizView {
       const textarea = document.getElementById('notes-textarea');
       if (textarea) textarea.value = this.notesText;
       this.onNotesChange(this.notesText);
-      
+
       if (type === 'POLITY') this.selectedSubject = 'Indian Polity';
       if (type === 'HISTORY') this.selectedSubject = 'History & Culture';
       if (type === 'SCIENCE') this.selectedSubject = 'Science & Tech';
       if (type === 'ECONOMY') this.selectedSubject = 'Economy';
-      
+
       this.render();
       app.showToast('Pre-populated study notes successfully!', 'success');
     }
@@ -827,13 +947,15 @@ class CreateQuizView {
   // =========================================================================
   setSubject(subj) {
     this.selectedSubject = subj;
+    this._presetSubject = subj;
     this.customSubject = '';
     this.render();
   }
 
   onCustomSubjectInput(val) {
     this.customSubject = val;
-    if (val.trim()) this.selectedSubject = val.trim();
+    this.selectedSubject = val.trim() || this._presetSubject || 'Indian Polity';
+    this.persistForm();
   }
 
   setDifficulty(diff) {
@@ -997,191 +1119,186 @@ class CreateQuizView {
 
   setLanguage(lang) {
     this.selectedLanguage = lang;
+    const preferred=window.studyPreferences?.get().language;
+    this._studyDefaults={selectedLanguage:preferred==='AUTO'?'ENGLISH':preferred || 'ENGLISH'};
     this.render();
   }
 
   // =========================================================================
   // GENERATE AI QUIZ
   // =========================================================================
-  async generateQuiz() {
-    let sourceContent = '';
-    let sourceTitle = '';
-    let fromPageNum = 1;
-    let toPageNum = 1;
-
-    // Validate inputs
-    if (this.activeSource === 'PDF') {
-      if (!this.loadedPdfMeta) {
-        app.showToast('Please upload a study PDF document first.', 'error');
-        return;
-      }
-      fromPageNum = this.includeAllPages ? 1 : this.fromPage;
-      toPageNum = this.includeAllPages ? this.pdfTotalPages : this.toPage;
-      sourceTitle = this.loadedPdfMeta.fileName;
-    } else {
-      const topic = (this.customTopicTitle || '').trim();
-      const notes = (this.notesText || '').trim();
-      if (!topic && !notes) {
-        app.showToast('Please enter a Topic Name or paste study notes.', 'error');
-        return;
-      }
-      sourceTitle = topic || this.selectedSubject;
-      sourceContent = notes;
-    }
-
-    // Opens the overlay, resets its visuals, and refuses to start a second
-    // concurrent generation (which used to be possible by double-clicking).
-    if (!app.beginGeneration('Hamsa AI Ingestion in Progress...')) return;
-
-    const updateStep = (id, active = true, completed = false) => {
-      const el = document.getElementById(id);
-      if (el) {
-        if (completed) {
-          el.className = 'step-progress-item completed';
-        } else if (active) {
-          el.className = 'step-progress-item active';
-        }
-      }
-    };
-
+  renderStudentSettings() {
+    const prefs=window.studyPreferences?.get()||{};
+    const defaults={level:prefs.level||'AUTO',exam:prefs.exam||'',depth:prefs.depth||'AUTO'};
+    this.studentSettings ||= {...defaults};
+    window.studyPreferences?.applyDefaults?.(this.studentSettings,defaults,'_quizDefaults');
+    const s=this.studentSettings,e=SecurityUtils.escapeHtml;
+    return `<details class="form-group-card quiz-student-settings"><summary>Student level & explanation preferences</summary><div class="quiz-settings-grid">
+      <label>Level<select onchange="createQuizView.studentSettings.level=this.value">${['AUTO','CLASS_6_8','CLASS_9_10','CLASS_11_12','CLASS_12_SCIENCE','COLLEGE','SSC_CGL','BANKING_RAILWAY','UPSC','ADVANCED'].map(level=>`<option value="${level}" ${s.level===level?'selected':''}>${level.replaceAll('_',' ')}</option>`).join('')}</select></label>
+      <label>Target exam<input maxlength="120" value="${e(s.exam)}" oninput="createQuizView.studentSettings.exam=this.value" placeholder="Optional exam / syllabus"></label>
+      <label>Explanation depth<select onchange="createQuizView.studentSettings.depth=this.value">${['AUTO','SIMPLE','DETAILED'].map(depth=>`<option ${s.depth===depth?'selected':''}>${depth}</option>`).join('')}</select></label>
+    </div></details>`;
+  }
+  renderDraftBanner() {
+    if(!this.generationDraft) return '';
+    const count=this.generationDraft.result?.questions?.length || this.generationDraft.state?.questions?.length || 0;
+    return `<div class="glass-panel quiz-draft-banner"><div><strong>Saved quiz draft</strong><p>${SecurityUtils.escapeHtml(this.generationDraft.options.sourceTitle)} · ${count} questions ready</p></div><div class="quiz-button-row"><button class="btn btn-primary btn-sm" onclick="createQuizView.generateQuiz(true)">${this.generationDraft.result || this.generationDraft.savedQuizId?'Start quiz':'Continue quiz'}</button>${count && !this.generationDraft.result && !this.generationDraft.savedQuizId?`<button class="btn btn-secondary btn-sm" onclick="createQuizView.generateQuiz(true,true)">Start ${count} ready questions</button>`:''}<button class="btn btn-secondary btn-sm" onclick="createQuizView.discardDraft()">Discard draft</button></div></div>`;
+  }
+  persistDraft() {
+    try { localStorage.setItem('hamsa_quiz_generation_draft',JSON.stringify(this.generationDraft)); }
+    catch { if(!this._draftWarning) { this._draftWarning=true;app.showToast('Draft stays available in this tab; browser storage is full. Retry before closing the page.','warning'); } }
+  }
+  async releaseDraftFile(options) {
+    try { if (options?.draftPdfId && typeof deleteQuizDraftFile === 'function') await deleteQuizDraftFile(options.draftPdfId); }
+    catch { app.showToast('The temporary PDF could not be removed. Reset Quiz data in Settings to clear it.', 'warning'); }
+  }
+  discardDraft() {
+    const options=this.generationDraft?.options;
+    this.generationDraft=null;
+    try {localStorage.removeItem('hamsa_quiz_generation_draft');} catch {app.showToast('Could not clear the saved draft from browser storage.', 'warning');}
+    this.releaseDraftFile(options);this.render();
+  }
+  mergeDraftEdits(questions, draft=this.generationDraft) {
+    const edits=draft?.editedQuestions || {};
+    return questions.map(q=>{const key=QuizQuality.stem(q.questionText);return JSON.parse(JSON.stringify(Object.hasOwn(edits,key)?edits[key]:q));});
+  }
+  readyQuiz(draft=this.generationDraft) {
+    if(!draft) throw new Error('Choose your study material and create a quiz first.');
+    const state=draft.state;
+    const coverage=Number.isInteger(state?.totalSourceChunks)?{readChunks:state.sentChunks?.length||0,totalChunks:state.totalSourceChunks,sampled:(state.sentChunks?.length||0)<state.totalSourceChunks}:undefined;
+    const result=draft.result || {title:state?.title||draft.options.sourceTitle,questions:state?.questions||[],model:state?.model||'',coverage};
+    const pages=QuizQuality.sourcePages(draft.options.sourceContent,draft.options.sourcePages||[]);
+    const questions=(result.questions||[]).map(q=>QuizQuality.normalize(q,{extraction:draft.phase==='EXTRACT'})).filter(q=>q && (q.answerOrigin!=='SOURCE_KEY' || (!pages.length ? QuizQuality.keyMatches(q) : (QuizQuality.ground(q,pages) && QuizQuality.sourceKeySupported(q,pages)))));
+    if(!questions.length) throw new Error('No questions are ready yet. Continue creating your quiz or choose new study material.');
+    // Keep corrections from drafts saved by earlier versions.
+    const ready=this.mergeDraftEdits(questions,draft);
+    if(QuizQuality.preview(ready).length || ready.some(q=>q.reviewIssue)) throw new Error('This saved draft has questions that need correction. Discard the draft and create a fresh quiz.');
+    return {...result,questions:ready,options:draft.options};
+  }
+  async saveReadyQuiz(jobId,signal) {
+    if(this._saving) return;
+    const draft=this.generationDraft,p=this.readyQuiz(draft),o=p.options,version=this._leaveVersion||0;
+    this._saving=true;
+    const saveStartedAt=Date.now();let saveSucceeded=false;
     try {
-      updateStep('step-reading', true);
-
-      // Extract PDF content if PDF source
-      if (this.activeSource === 'PDF') {
-        const extractRes = await window.pdfExtractor.extractTextFromPageRange(fromPageNum, toPageNum);
-        sourceContent = extractRes.text;
+      const questions=JSON.parse(JSON.stringify(p.questions));
+      app.handleGenerationProgress?.({workflow:'quiz',message:'Opening your quiz…',badgeText:'Almost ready',completedQuestions:questions.length,totalQuestions:o.questionCount,percent:100});
+      const originalSource=draft.savedQuizId?null:await quizSourceView.capture(o);
+      QuizQuality.abort(signal);
+      const id=draft.savedQuizId || await saveNewQuiz({title:p.title,subject:o.subject,difficulty:o.difficulty,quizMode:o.quizMode,language:o.language,scoringPreset:o.scoringPreset,examDurationSeconds:o.examDurationSeconds,sourceType:o.sourceType,sourceTitle:o.sourceTitle,pageRangeText:o.pageRangeText,generationModel:p.model||null,coverage:p.coverage,skippedPdfPages:o.skippedPdfPages,requestedCount:o.questionCount,generationSettings:o.settings,originalSource},questions);
+      const owned=this.generationDraft===draft;
+      // A cancellation during the database write must not create a duplicate
+      // quiz when the student continues the saved draft.
+      if(owned){draft.savedQuizId=id;this.persistDraft();}
+      QuizQuality.abort(signal);
+      const visible=version===(this._leaveVersion||0) && (!app.currentView || app.currentView==='create-quiz');
+      if(owned){this.generationDraft=null;try {localStorage.removeItem('hamsa_quiz_generation_draft');}catch {}this.releaseDraftFile(o);}
+      app.endGeneration(jobId);
+      if(visible && owned)app.startQuiz(id);
+      else app.showToast('Your quiz is saved in My Quizzes.','success');
+      saveSucceeded=true;
+    } finally {this._saving=false;window.aiClient?.recordStageTiming?.('quiz-save',saveStartedAt,{jobId,outcome:saveSucceeded?'saved':'failed',questions:p.questions.length});}
+  }
+  stopMic() { if(this.recognition) {this.recognition.onresult=null;this.recognition.onend=null;this.recognition.onstart=null;this.recognition.onerror=null;try {this.recognition.abort();} catch {}this.recognition=null;}this.isRecording=false;this.stopMicUI(); }
+  onLeaveView() {this.persistForm();window.quizSourceView?.close();this._leaveVersion=(this._leaveVersion||0)+1;this.stopMic();this._renderVersion=(this._renderVersion||0)+1;}
+  async generateQuiz(resume=false,readyOnly=false) {
+    if(this._saving) return;
+    this.persistForm();
+    if(!resume && this.activeSource==='PDF' && this._pdfUploading) return app.showToast('Wait for your PDF to finish loading, then generate the quiz.','info');
+    let options;
+    if(resume && this.generationDraft) {options={...this.generationDraft.options};if(this.generationDraft.options._pdfFile)Object.defineProperty(options,'_pdfFile',{value:this.generationDraft.options._pdfFile,configurable:true});}
+    else {
+      if(this.activeSource==='PDF' && !this.loadedPdfMeta) return app.showToast('Upload a study PDF first.','error');
+      if(this.activeSource!=='PDF' && !this.customTopicTitle.trim() && !this.notesText.trim()) return app.showToast('Enter a topic or paste study notes.','error');
+      options={sourceType:this.activeSource,sourceTitle:this.activeSource==='PDF'?this.loadedPdfMeta.fileName:this.customTopicTitle.trim()||this.selectedSubject,sourceContent:this.activeSource==='PDF'?'':this.notesText.trim(),subject:this.selectedSubject,difficulty:this.selectedDifficulty,questionCount:this.selectedQuestionCount,quizMode:this.selectedQuizMode,language:this.selectedLanguage,scoringPreset:this.selectedScoringPreset,examDurationSeconds:this.getExamDurationSecondsForSave(),settings:{...(this.studentSettings||window.studyPreferences?.get()||{})},fromPage:this.includeAllPages?1:this.fromPage,toPage:this.includeAllPages?this.pdfTotalPages:this.toPage,ocr:this.useOcr,importSourceQuestions:this.importSourceQuestions};
+      options.pageRangeText=options.sourceType==='PDF'?`Pages ${options.fromPage}–${options.toPage}`:null;
+    }
+    if(!app.beginGeneration('Preparing your quiz…')) return;
+    this.stopMic();const {id:jobId,signal}=app.getGenerationContext();
+    let ownedDraft;
+    const ownsDraft=()=>app.getGenerationContext().id===jobId && this.generationDraft===ownedDraft;
+    const current=()=>!signal.aborted && app.getGenerationContext().id===jobId && (!ownedDraft || this.generationDraft===ownedDraft);
+    let lastPercent=0;
+    const progress=status=>{if(current()) {
+      if(status && typeof status==='object' && Number.isFinite(status.percent)){lastPercent=Math.max(lastPercent,status.percent);status={...status,percent:lastPercent};}
+      app.handleGenerationProgress(typeof status==='string'?{workflow:'quiz',message:status}:{...status,workflow:'quiz'});
+    }};
+    try {
+      if(resume && this.generationDraft && (readyOnly || this.generationDraft.result || this.generationDraft.savedQuizId)) {
+        await this.saveReadyQuiz(jobId,signal);return;
       }
-
-      updateStep('step-reading', false, true);
-      updateStep('step-extracting', true);
-
-      // ---- PDF Quiz Detection Step ----
-      // Before generating new questions, check if the PDF already contains
-      // quiz/MCQ questions. If it does, extract and use them directly.
-      if (this.activeSource === 'PDF' && sourceContent) {
-        app.handleGenerationProgress({
-          message: 'Scanning PDF for existing quiz questions...',
-          badgeText: 'Quiz Detection',
-          countText: 'Checking if PDF already contains MCQs...',
-          percent: 20,
-          showBatchCard: true
-        });
-
-        const detection = await window.geminiService.detectAndExtractExistingQuiz({
-          sourceContent,
-          sourceTitle,
-          subject: this.selectedSubject,
-          language: this.selectedLanguage,
-          onStatusUpdate: (status) => {
-            app.handleGenerationProgress(status);
-          }
-        });
-
-        if (detection.found && detection.questions && detection.questions.length > 0) {
-          // Existing quiz detected! Use extracted questions directly.
-          updateStep('step-extracting', false, true);
-          updateStep('step-formulating', false, true);
-          updateStep('step-crafting', true);
-
-          app.handleGenerationProgress({
-            message: `Found ${detection.questions.length} existing MCQs in PDF! Extracting...`,
-            badgeText: 'Quiz Detected ✓',
-            countText: `${detection.questions.length} questions extracted from PDF`,
-            percent: 90,
-            showBatchCard: true
-          });
-
-          await new Promise(r => setTimeout(r, 500));
-          updateStep('step-crafting', false, true);
-
-          // Save extracted quiz into IndexedDB
-          const quizId = await saveNewQuiz({
-            title: detection.title || `${sourceTitle} — Extracted Quiz`,
-            subject: this.selectedSubject,
-            difficulty: this.selectedDifficulty,
-            quizMode: this.selectedQuizMode,
-            language: this.selectedLanguage,
-            scoringPreset: this.selectedScoringPreset,
-            examDurationSeconds: this.getExamDurationSecondsForSave(),
-            sourceType: this.activeSource,
-            sourceTitle: sourceTitle,
-            pageRangeText: `Pages ${fromPageNum}–${toPageNum}`
-          }, detection.questions);
-
-          app.endGeneration();
-          app.showToast(`${detection.questions.length} existing quiz questions extracted from PDF! 📋`, 'success');
-          app.startQuiz(quizId);
-          return;
-        }
-
-        // No existing quiz found — proceed with normal AI generation
-        app.handleGenerationProgress({
-          message: 'No existing quiz found in PDF. Generating fresh MCQs...',
-          badgeText: 'AI Generation',
-          countText: 'Preparing AI quiz generation...',
-          percent: 30,
-          showBatchCard: true
-        });
+      if(!resume) {
+        const previous=this.generationDraft?.options;
+        if(options.sourceType==='PDF')Object.defineProperty(options,'_pdfFile',{value:pdfExtractor.currentFile,configurable:true});
+        this.generationDraft={options,phase:options.sourceType==='PDF'&&options.importSourceQuestions?'EXTRACT':'GENERATE',state:null};
+        if(previous?.draftPdfId!==options.draftPdfId)this.releaseDraftFile(previous);
       }
-
-      await new Promise(r => setTimeout(r, 400));
-      updateStep('step-extracting', false, true);
-
-      updateStep('step-formulating', true);
-
-      // Call Gemini AI (strictly using user API key with automatic smart batching)
-      const generated = await window.geminiService.generateQuiz({
-        sourceContent,
-        sourceTitle,
-        subject: this.selectedSubject,
-        difficulty: this.selectedDifficulty,
-        questionCount: this.selectedQuestionCount,
-        quizMode: this.selectedQuizMode,
-        language: this.selectedLanguage,
-        fromPage: fromPageNum,
-        toPage: toPageNum,
-        allowDemoFallback: false,
-        onStatusUpdate: (status) => {
-          app.handleGenerationProgress(status);
+      ownedDraft=this.generationDraft;
+      ownedDraft.options=options;this.persistDraft();
+      if(options.sourceType==='PDF' && !options.sourceContent && resume) {
+        // Always recover this draft's immutable source, never a newly uploaded PDF.
+        let file=options._pdfFile;
+        if(options.draftPdfId && pdfExtractor._draftPdfId!==options.draftPdfId) {
+          file=typeof getQuizDraftFile==='function'?await getQuizDraftFile(options.draftPdfId):null;
+          QuizQuality.abort(signal);if(!current())return;
+          if(!(file instanceof Blob))throw new Error('The saved draft PDF is unavailable. Re-upload the source and create a new quiz; this draft remains saved.');
+          await pdfExtractor.loadPdfFile(file,{draftPdfId:options.draftPdfId});
+        } else if(!options.draftPdfId && file && pdfExtractor.currentFile!==file) {
+          await pdfExtractor.loadPdfFile(file);
+        } else if(!options.draftPdfId && !file) {
+          throw new Error('This older draft has no saved PDF. Re-upload the source and create a new quiz.');
         }
-      });
-
-      updateStep('step-formulating', false, true);
-      updateStep('step-crafting', true);
-      await new Promise(r => setTimeout(r, 400));
-      updateStep('step-crafting', false, true);
-
-
-      // Save into IndexedDB
-      const quizId = await saveNewQuiz({
-        title: generated.title || `${sourceTitle} Quiz`,
-        subject: this.selectedSubject,
-        difficulty: this.selectedDifficulty,
-        quizMode: this.selectedQuizMode,
-        language: this.selectedLanguage,
-        scoringPreset: this.selectedScoringPreset,
-        // null for AUTO — the player then derives the window from the questions
-        // it actually received. See getExamDurationSecondsForSave().
-        examDurationSeconds: this.getExamDurationSecondsForSave(),
-        sourceType: this.activeSource,
-        sourceTitle: sourceTitle,
-        pageRangeText: this.activeSource === 'PDF' ? `Pages ${fromPageNum}–${toPageNum}` : null
-      }, generated.questions);
-
-      app.endGeneration();
-      app.showToast('Quiz generated successfully!', 'success');
-
-      // Navigate to active quiz playback
-      app.startQuiz(quizId);
-    } catch (err) {
-      app.endGeneration();
-      // Cancelling already informed the user; don't also report it as a failure.
-      if (app.isGenerationCancelled() || err.name === 'AbortError') return;
-      console.error(err);
-      app.showToast(`Generation failed: ${err.message}`, 'error');
+        QuizQuality.abort(signal);if(!current())return;
+        Object.defineProperty(options,'_pdfFile',{value:file || pdfExtractor.currentFile,configurable:true});
+      }
+      if(options.sourceType==='PDF' && options._pdfFile && !options.draftPdfId) {
+        const id=window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
+        const saveStartedAt=Date.now();let saved=false,saveFailed=false;
+        try {
+          if(typeof saveQuizDraftFile!=='function') throw new Error('Draft file storage unavailable');
+          await saveQuizDraftFile(id,options._pdfFile);
+          saved=true;
+          if(!ownsDraft()){await this.releaseDraftFile({draftPdfId:id});return;}
+          options.draftPdfId=id;
+          pdfExtractor.bindDraftFile?.(id,options._pdfFile);
+          this.persistDraft();
+        } catch {
+          saveFailed=true;
+          if(current())app.showToast('Original PDF could not be saved for recovery. Keep this tab open; after reload, reattach the PDF when reviewing your source.', 'warning');
+        } finally {window.aiClient?.recordStageTiming?.('pdf-draft-save',saveStartedAt,{jobId,outcome:saved?'saved':'failed'});}
+        if(saveFailed && options.ocr && current())throw new Error('Scanned-page reading is paused because the original PDF could not be saved for recovery. Free browser storage and continue this draft before using OCR credits.');
+      }
+      QuizQuality.abort(signal);
+      if(!current())return;
+      if(options.sourceType==='PDF' && !options.sourceContent) {
+        const extractionStartedAt=Date.now();let extracted;
+        try {
+          extracted=await pdfExtractor.extractTextFromPageRange(options.fromPage,options.toPage,(done,total,message)=>progress({message,percent:Math.round(done/total*15)}),{signal,ocr:options.ocr,skipUnreadable:true,draftPdfId:options.draftPdfId,isCurrent:current,jobId});
+        } finally {window.aiClient?.recordStageTiming?.('pdf-extraction',extractionStartedAt,{jobId,outcome:extracted?'completed':'failed',pages:options.toPage-options.fromPage+1});}
+        QuizQuality.abort(signal);if(!current())return;
+        options.sourceContent=extracted.text;options.sourcePages=extracted.extractedPages;options.skippedPdfPages=extracted.skippedPages;
+      }
+      this.persistDraft();
+      const checkpoint=state=>{if(current()) {this.generationDraft.state=state;this.persistDraft();}};
+      let generated;
+      if(this.generationDraft.phase==='EXTRACT') {
+        generated=await geminiService.detectAndExtractExistingQuiz({...options,jobId,signal,onStatusUpdate:progress,onCheckpoint:checkpoint,retryState:this.generationDraft.state});
+        QuizQuality.abort(signal);
+        if(!generated.found) throw new Error('No source MCQs with a supported printed answer key were found. Turn off Import source questions and generate a new quiz explicitly; no extra AI generation was started.');
+      }
+      if(!generated) generated=await geminiService.generateQuiz({...options,jobId,signal,onStatusUpdate:progress,onCheckpoint:checkpoint,retryState:this.generationDraft.state});
+      QuizQuality.abort(signal);if(!current()) return;
+      this.generationDraft.result=generated;this.persistDraft();await this.saveReadyQuiz(jobId,signal);
+    } catch(error) {
+      if(current() && error.retryState) {this.generationDraft.state=error.retryState;this.persistDraft();}
+      app.endGeneration(jobId);
+      if(error.name==='AbortError' || signal.aborted) {if(app.currentView==='create-quiz') this.render();return;}
+      app.showToast(`Generation paused: ${error.userMessage || error.message}`,'error',7000);
+      if(app.currentView==='create-quiz') this.render();
+    } finally {
+      app.endGeneration(jobId);
+      if(signal.aborted && app.currentView==='create-quiz') this.render();
     }
   }
 }
-
-window.createQuizView = new CreateQuizView();
+window.createQuizView=new CreateQuizView();

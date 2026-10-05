@@ -78,7 +78,7 @@ function makeSandbox(port, storedKey) {
   console.log('\n=== PROXY mode (server has a key) ===');
   {
     const { server, port, seen } = await startFakeServer(true);
-    const { sandbox, outbound } = makeSandbox(port, 'user-local-key-SHOULD-NOT-BE-SENT');
+    const { sandbox, outbound } = makeSandbox(port, '');
     const client = sandbox.window.aiClient;
 
     await client.probeServerKey();
@@ -88,6 +88,7 @@ function makeSandbox(port, storedKey) {
 
     const res = await client.fetchGenerateContent('gemini-2.5-flash', { contents: [] });
     check('request succeeded', res.ok);
+    check('response body remains readable by the caller', (await res.json()).candidates[0].content.parts[0].text === 'PONG');
 
     const genCall = outbound.find(u => u.includes('gemini-2.5-flash'));
     check('used relative proxy path', genCall === '/api/gemini/gemini-2.5-flash', `got ${genCall}`);
@@ -183,6 +184,44 @@ function makeSandbox(port, storedKey) {
     check('abortAll() cancels in-flight request', aborted);
 
     hanging.close();
+  }
+
+  console.log('\n=== Deadlines and cancellation after response headers ===');
+  {
+    const hanging = http.createServer((req, res) => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (req.url === '/api/gemini/status') return res.end(JSON.stringify({configured:true}));
+      res.flushHeaders();
+      res.write('{"candidates":['); // Headers arrive immediately, body never completes.
+    });
+    await new Promise(resolve => hanging.listen(0, resolve));
+    const { sandbox } = makeSandbox(hanging.address().port, null);
+    const client=sandbox.window.aiClient;
+    let headersReceived=0;
+    const nativeFetch=sandbox.fetch;
+    sandbox.fetch=async(...args)=>{const response=await nativeFetch(...args);if(!String(args[0]).endsWith('/status'))headersReceived++;return response;};
+    try {
+      await client.probeServerKey();
+      let timeout;
+      try { await client.fetchGenerateContent('gemini-test', {contents:[]}, {timeoutMs:150}); } catch(error) { timeout=error; }
+      check('timeout includes a stalled body after successful headers', headersReceived===1 && timeout?.code==='AI_TIMEOUT');
+      check('body timeout drains the controller registry', client.inFlightCount===0);
+
+      const controller=new AbortController();
+      const cancelled=client.fetchGenerateContent('gemini-test', {contents:[]}, {signal:controller.signal,timeoutMs:2000});
+      while(headersReceived<2)await new Promise(resolve=>setTimeout(resolve,5));
+      check('request stays registered while response body is pending', client.inFlightCount===1);
+      controller.abort();let cancellation;
+      try { await cancelled; } catch(error) { cancellation=error; }
+      check('caller cancellation still aborts after headers', cancellation?.name==='AbortError');
+      check('late caller cancellation drains the registry', client.inFlightCount===0);
+
+      const stopped=client.fetchGenerateContent('gemini-test', {contents:[]}, {timeoutMs:2000});
+      while(headersReceived<3)await new Promise(resolve=>setTimeout(resolve,5));
+      client.abortAll();let aborted;
+      try { await stopped; } catch(error) { aborted=error; }
+      check('abortAll stops a response stalled after headers', aborted?.name==='AbortError' && client.inFlightCount===0);
+    } finally { hanging.closeAllConnections();hanging.close(); }
   }
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);

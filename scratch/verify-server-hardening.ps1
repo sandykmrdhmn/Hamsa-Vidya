@@ -1,5 +1,5 @@
+param([string]$Base = 'http://localhost:3000')
 $ProgressPreference = 'SilentlyContinue'
-$base = 'http://localhost:3000'
 $pass = 0
 $fail = 0
 
@@ -24,7 +24,7 @@ function Check($name, $condition, $detail) {
 
 Write-Host ""
 Write-Host "=== Private files must NOT be served ==="
-foreach ($p in @('/server.js', '/package.json', '/package-lock.json', '/live-exams-scraper.js',
+foreach ($p in @('/server.js', '/ai-proxy-policy.js', '/.hamsa-ai-budget.json', '/.hamsa-ai-budget.json.tmp', '/package.json', '/package-lock.json', '/live-exams-scraper.js',
                  '/CODE-REVIEW-CHECKLIST.md', '/README.md', '/start-server.bat',
                  '/scratch/verify-server-hardening.ps1', '/assets/icons/hamsa-logo-3d.png.bak')) {
   $r = Probe "$base$p"
@@ -35,10 +35,19 @@ Write-Host ""
 Write-Host "=== App files MUST still be served ==="
 foreach ($p in @('/index.html', '/css/tokens.css', '/css/components.css', '/js/app.js',
                  '/js/ai-client.js', '/js/db.js', '/js/views/quiz-player.js',
+                 '/js/pdf-reader.js?v=20261002-pdf2', '/js/pdf-extractor.js?v=20261002-pdf2',
+                 '/assets/vendor/pdf.min.js?v=20261002-pdf2', '/assets/vendor/pdf.worker.min.js?v=20261002-pdf2',
                  '/assets/vendor/marked.min.js', '/assets/icons/hamsa-logo.svg',
                  '/assets/icons/hamsa-logo-3d.png', '/robots.txt')) {
   $r = Probe "$base$p"
   Check "served $p" ($r.status -eq 200) "got HTTP $($r.status)"
+}
+
+Write-Host ""
+Write-Host "=== Missing assets must not be successful HTML fallbacks ==="
+foreach ($p in @('/assets/vendor/missing-pdf-reader-fixture.js', '/assets/vendor/missing-worker-fixture.js', '/js/missing-pdf-support-fixture.js', '/css/missing-style-fixture.css')) {
+  $r = Probe "$base$p"
+  Check "missing asset $p returns 404" ($r.status -eq 404) "got HTTP $($r.status)"
 }
 
 Write-Host ""

@@ -7,7 +7,7 @@ class LibraryView {
   constructor() {
     this.container = document.getElementById('view-library');
     this.activeTab = 'QUIZZES'; // 'QUIZZES' or 'BOOKMARKS'
-    
+
     // Search & Filter State
     this.searchQuery = '';
     this.selectedDifficulty = 'ALL';
@@ -17,6 +17,7 @@ class LibraryView {
     // Saved-questions subject switch. 'ALL' shows every subject, grouped under
     // its own heading; any other value narrows to that one subject.
     this.bookmarkSubject = 'ALL';
+    this.page=0;
   }
 
   async render(initialTab) {
@@ -25,8 +26,9 @@ class LibraryView {
     }
     if (!this.container) return;
 
-    const allQuizzes = await getAllQuizzes();
-    const bookmarks = await getBookmarkedQuestions();
+    const version=this._renderVersion=(this._renderVersion||0)+1;
+    const [allQuizzes,bookmarks]=await Promise.all([getAllQuizzes(),getBookmarkedQuestions()]);
+    if(version!==this._renderVersion) return;
 
     // Subject buckets for the saved-questions switch. Derived from the same
     // helper the sections render from, so a chip's count can never disagree
@@ -90,6 +92,10 @@ class LibraryView {
       ]
     });
 
+    const focused=document.activeElement?.id==='quiz-library-search';const start=document.activeElement?.selectionStart,end=document.activeElement?.selectionEnd;
+    const visibleCount=this.activeTab==='QUIZZES'?filteredQuizzes.length:visibleBookmarkCount;
+    this.page=Math.min(this.page,Math.max(0,Math.ceil(visibleCount/20)-1));
+    const visibleIds=new Set(visibleGroups.flatMap(g=>g.questions).slice(this.page*20,this.page*20+20).map(q=>q.id));
     this.container.innerHTML = `
       <div class="page-column">
         ${heroHtml}
@@ -106,6 +112,7 @@ class LibraryView {
           </button>
         </div>
 
+        <div class="quiz-pagination"><button class="btn btn-secondary btn-sm" ${this.page===0?'disabled':''} onclick="libraryView.page--;libraryView.render()">Previous</button><span>Page ${this.page+1} / ${Math.max(1,Math.ceil(visibleCount/20))}</span><button class="btn btn-secondary btn-sm" ${(this.page+1)*20>=visibleCount?'disabled':''} onclick="libraryView.page++;libraryView.render()">Next</button></div>
         <!-- ================================================================= -->
         <!-- TAB 1: ALL QUIZZES -->
         <!-- ================================================================= -->
@@ -114,8 +121,8 @@ class LibraryView {
           <div class="glass-panel" style="padding:1rem 1.25rem; display:flex; flex-direction:column; gap:0.85rem;">
             <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
               <div style="flex:1; min-width:240px; position:relative;">
-                <input type="text" class="study-textarea" style="min-height:42px; padding:0.4rem 0.85rem 0.4rem 2.2rem;" 
-                  placeholder="Search quizzes by title or subject..." value="${this.searchQuery}" oninput="libraryView.onSearchChange(this.value)">
+                <input id="quiz-library-search" type="text" class="study-textarea" style="min-height:42px; padding:0.4rem 0.85rem 0.4rem 2.2rem;"
+                  placeholder="Search quizzes by title or subject..." value="${SecurityUtils.escapeHtml(this.searchQuery)}" oninput="libraryView.onSearchChange(this.value)">
                 <i data-lucide="search" style="position:absolute; left:10px; top:12px; width:16px; height:16px; color:var(--text-muted);"></i>
               </div>
 
@@ -147,7 +154,7 @@ class LibraryView {
                 <p style="font-size:1.05rem; font-weight:600;">No quizzes found</p>
                 <p style="font-size:0.85rem; margin-top:0.25rem;">Try adjusting your search query or generate a new quiz.</p>
               </div>
-            ` : filteredQuizzes.map(q => `
+            ` : filteredQuizzes.slice(this.page*20,this.page*20+20).map(q => `
               <div class="quiz-list-item">
                 <div class="quiz-info">
                   <div class="quiz-item-title">${SecurityUtils.escapeHtml(q.title)}</div>
@@ -155,7 +162,7 @@ class LibraryView {
                     <span class="badge badge-primary">${SecurityUtils.escapeHtml(q.subject)}</span>
                     <span class="badge badge-muted">${SecurityUtils.escapeHtml(q.difficulty)}</span>
                     <span class="badge badge-muted">${SecurityUtils.escapeHtml(q.quizMode)}</span>
-                    <span>${q.totalQuestions} Questions</span>
+                    <span>${Number(q.totalQuestions)||0} Questions</span>
                     ${q.pageRangeText ? `<span>• ${SecurityUtils.escapeHtml(q.pageRangeText)}</span>` : ''}
                     <span>• ${new Date(q.createdAt).toLocaleDateString()}</span>
                   </div>
@@ -164,29 +171,29 @@ class LibraryView {
                 <div class="quiz-item-actions">
                   ${q.completedAt ? `
                     <span class="badge ${q.percentage >= 70 ? 'badge-success' : 'badge-warning'}">
-                      Score: ${q.percentage}%
+                      Score: ${Number(q.percentage)||0}%
                     </span>
-                    <button class="btn btn-secondary btn-sm" onclick="app.viewQuizResult(${q.id})">
+                    <button class="btn btn-secondary btn-sm" onclick="app.viewQuizResult(${Number(q.id)})">
                       <i data-lucide="bar-chart"></i>
                       <span>Results</span>
                     </button>
                   ` : `
                     <span class="badge badge-muted">Not Attempted</span>
-                    <button class="btn btn-primary btn-sm" onclick="app.startQuiz(${q.id})">
+                    <button class="btn btn-primary btn-sm" onclick="app.startQuiz(${Number(q.id)})">
                       <i data-lucide="play"></i>
                       <span>Take Quiz</span>
                     </button>
                   `}
 
-                  <button class="btn btn-secondary btn-sm" title="Retake Quiz" onclick="app.startQuiz(${q.id})">
+                  <button class="btn btn-secondary btn-sm" title="Retake Quiz" onclick="app.startQuiz(${Number(q.id)})">
                     <i data-lucide="rotate-ccw" style="width:16px;height:16px;"></i>
                   </button>
 
-                  <button class="icon-btn" title="Export A4 PDF" onclick="app.exportQuizPdf(${q.id})">
+                  <button class="icon-btn" title="Export A4 PDF" onclick="app.exportQuizPdf(${Number(q.id)})">
                     <i data-lucide="file-down" style="width:18px;height:18px;"></i>
                   </button>
 
-                  <button class="icon-btn" style="color:var(--color-error);" title="Delete Quiz" onclick="libraryView.confirmDelete(${q.id})">
+                  <button class="icon-btn" style="color:var(--color-error);" title="Delete Quiz" onclick="libraryView.confirmDelete(${Number(q.id)})">
                     <i data-lucide="trash-2" style="width:18px;height:18px;"></i>
                   </button>
                 </div>
@@ -259,7 +266,7 @@ class LibraryView {
                   <p style="font-size:1.05rem; font-weight:600;">No saved questions yet</p>
                   <p style="font-size:0.85rem; margin-top:0.25rem;">Tap the bookmark icon on any question — during a quiz or on the results screen — and it lands here, filed under its subject.</p>
                 </div>
-              ` : visibleGroups.map(group => `
+              ` : visibleGroups.filter(group=>group.questions.some(q=>visibleIds.has(q.id))).map(group => `
                 <section class="bm-subject-group" aria-label="${SecurityUtils.escapeHtml(group.subject)}">
                   <header class="bm-group-header">
                     <h3 class="bm-group-title">${SecurityUtils.escapeHtml(group.subject)}</h3>
@@ -274,7 +281,7 @@ class LibraryView {
                   </header>
 
                   <div style="display:flex; flex-direction:column; gap:1rem;">
-                    ${group.questions.map((q, idx) => {
+                    ${group.questions.filter(q=>visibleIds.has(q.id)).map((q, idx) => {
                       const isRevealed = this.revealedBookmarkIds.has(q.id);
                       const letters = ['A', 'B', 'C', 'D'];
                       const correct = (q.options || [])[q.correctAnswerIndex];
@@ -284,11 +291,11 @@ class LibraryView {
                           <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
                             <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
                               <span class="badge badge-primary">${SecurityUtils.escapeHtml(q.subject)}</span>
-                              ${q.sourcePage ? `<span class="badge badge-muted">Page ${q.sourcePage}</span>` : ''}
+                              ${q.sourcePage ? `<span class="badge badge-muted">Page ${Number(q.sourcePage)}</span>` : ''}
                               <span style="font-size:0.8rem; color:var(--text-muted);">From: ${SecurityUtils.escapeHtml(q.quizTitle)}</span>
                             </div>
 
-                            <button class="bookmark-toggle-btn bookmarked" title="Remove Bookmark" onclick="libraryView.removeBookmark(${q.id})">
+                            <button class="bookmark-toggle-btn bookmarked" title="Remove Bookmark" onclick="libraryView.removeBookmark(${Number(q.id)})">
                               <i data-lucide="bookmark" style="width:20px;height:20px;fill:currentColor;"></i>
                             </button>
                           </div>
@@ -299,7 +306,7 @@ class LibraryView {
 
                           <!-- Collapsible Reveal Accordion -->
                           <div>
-                            <button class="btn btn-secondary btn-sm" onclick="libraryView.toggleReveal(${q.id})">
+                            <button class="btn btn-secondary btn-sm" onclick="libraryView.toggleReveal(${Number(q.id)})">
                               <i data-lucide="${isRevealed ? 'chevron-up' : 'eye'}"></i>
                               <span>${isRevealed ? 'Hide Answer & Explanation' : 'Reveal Answer & Explanation'}</span>
                             </button>
@@ -333,32 +340,33 @@ class LibraryView {
       </div>
     `;
 
+    if(focused){const input=document.getElementById('quiz-library-search');input?.focus();input?.setSelectionRange(start,end);}
     if (window.app) window.app.refreshIcons();
   }
 
   setTab(tab) {
-    this.activeTab = tab;
+    this.activeTab = tab;this.page=0;
     this.render();
   }
 
   onSearchChange(val) {
-    this.searchQuery = val;
-    this.render();
+    this.searchQuery = val;this.page=0;this._renderVersion=(this._renderVersion||0)+1;
+    clearTimeout(this._debounce);this._debounce=setTimeout(()=>this.render(),200);
   }
 
   onSortChange(val) {
-    this.selectedSort = val;
+    this.selectedSort = val;this.page=0;
     this.render();
   }
 
   setDifficultyFilter(diff) {
-    this.selectedDifficulty = diff;
+    this.selectedDifficulty = diff;this.page=0;
     this.render();
   }
 
   /** Narrow the saved-questions list to one subject, or 'ALL' for every group. */
   setBookmarkSubject(subject) {
-    this.bookmarkSubject = subject || 'ALL';
+    this.bookmarkSubject = subject || 'ALL';this.page=0;
     if (window.audioEngine) window.audioEngine.playClick();
     this.render();
   }
@@ -373,9 +381,7 @@ class LibraryView {
   }
 
   async removeBookmark(qId) {
-    await updateQuestionBookmark(qId, false);
-    app.showToast('Bookmark removed', 'info');
-    this.render();
+    try{await updateQuestionBookmark(qId,false);app.showToast('Bookmark removed','info');this.render();}catch(error){app.showToast('Could not remove bookmark.','error');}
   }
 
   confirmDelete(quizId) {
@@ -384,9 +390,7 @@ class LibraryView {
       message: 'This will remove the quiz, its questions, and your past evaluation records from your local storage. This action cannot be undone.',
       confirmText: 'Delete Quiz',
       onConfirm: async () => {
-        await deleteQuiz(quizId);
-        app.showToast('Quiz deleted successfully', 'success');
-        this.render();
+        try{await deleteQuiz(quizId);app.showToast('Quiz deleted successfully','success');this.render();}catch(error){app.showToast(`Delete failed: ${error.message}`,'error');}
       }
     });
   }
@@ -400,11 +404,16 @@ class LibraryView {
    *        right bucket instead of landing in a generic "Mixed" pile.
    */
   async startBookmarksDrill(subject) {
+    if(this._drillPending) return;this._drillPending=true;
+    try {
     const all = await getBookmarkedQuestions();
-    const scoped = (!subject || subject === 'ALL')
+    const selected = (!subject || subject === 'ALL')
       ? all
       : all.filter(q => q.subject === subject);
 
+    const scoped=selected.filter(q=>!q.reviewIssue && (!window.QuizQuality || !QuizQuality.validate(q)));
+    const excluded=selected.length-scoped.length;
+    if (excluded) app.showToast(`${excluded} saved questions need correction and were excluded from the drill.`, 'warning');
     if (scoped.length === 0) {
       app.showToast(
         subject && subject !== 'ALL'
@@ -427,7 +436,7 @@ class LibraryView {
       subject: isScoped ? subject : 'Mixed Revisions',
       difficulty: 'MIXED',
       quizMode: 'PRACTICE',
-      language: 'ENGLISH',
+      language: [...new Set(scoped.map(q=>q.language).filter(Boolean))].length===1?scoped.find(q=>q.language)?.language:(window.studyPreferences?.get().language||'BILINGUAL'),
       sourceType: 'TEXT_NOTES',
       sourceTitle: 'Saved Bookmarks'
     }, scoped);
@@ -437,7 +446,9 @@ class LibraryView {
       'success'
     );
     app.startQuiz(drillId);
+    } catch(error){app.showToast(`Could not build bookmark drill: ${error.message}`,'error');}finally{this._drillPending=false;}
   }
+  onLeaveView(){this._renderVersion=(this._renderVersion||0)+1;clearTimeout(this._debounce);}
 }
 
 window.libraryView = new LibraryView();

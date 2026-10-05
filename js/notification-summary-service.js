@@ -80,7 +80,7 @@ Return ONLY the 5 numbered bullet points, nothing else.`;
             maxOutputTokens: 600,
             topP: 0.8
           }
-        }, { apiKey });
+        }, { apiKey,stage:'notification-summary' });
 
       if (!response.ok) {
         throw new Error(`API returned ${response.status}`);

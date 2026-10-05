@@ -76,6 +76,7 @@ function loadDb() {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(DB_SRC, { filename: 'db.js' }).runInContext(sandbox);
+  for (const file of ['quiz-quality.js','flashcard-tools.js','flashcard-store.js']) new vm.Script(fs.readFileSync(path.join(ROOT,'js',file),'utf8'),{filename:file}).runInContext(sandbox);
   new vm.Script(ELIG_SRC, { filename: 'eligibility-engine.js' }).runInContext(sandbox);
   return { sandbox, db };
 }

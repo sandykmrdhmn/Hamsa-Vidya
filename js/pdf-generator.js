@@ -8,202 +8,22 @@ class PdfGeneratorService {
   /**
    * Generates an authentic A4 HTML Document string for the Question Paper & Answer Key
    */
-  buildDocumentHtml(quiz, questions) {
-    const letters = ['(A)', '(B)', '(C)', '(D)'];
-    const maxTime = Math.max(5, Math.round(questions.length * 1.5));
-    const todayStr = new Date().toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric'
-    });
-
-    const questionsHtml = questions.map((q, idx) => `
-      <div style="page-break-inside: avoid; margin-bottom: 16px; padding: 8px 12px; background: #fafafa; border: 1px solid #e5e7eb; border-radius: 6px;">
-        <div style="font-weight: 700; font-size: 13.5px; color: #111827; margin-bottom: 8px; line-height: 1.5;">
-          Q${idx + 1}. ${q.questionText}
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr; gap: 6px; font-size: 12.5px; color: #374151; padding-left: 8px;">
-          ${(q.options || []).map((opt, optIdx) => `
-            <div style="display: flex; gap: 8px; align-items: baseline;">
-              <span style="font-weight: 700; color: #4f46e5; min-width: 24px;">${letters[optIdx] || `(${optIdx + 1})`}</span>
-              <span style="line-height: 1.45;">${opt}</span>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `).join('');
-
-    const answerTableRows = questions.map((q, idx) => {
-      const correctLetter = letters[q.correctAnswerIndex] || '(A)';
-      const correctOptionText = q.options && q.options[q.correctAnswerIndex] ? q.options[q.correctAnswerIndex] : '';
-      const sourceRef = q.sourcePage ? `Page ${q.sourcePage}` : 'Study Material';
-      return `
-        <tr style="border-bottom: 1px solid #e5e7eb; background: ${idx % 2 === 0 ? '#ffffff' : '#f9fafb'};">
-          <td style="padding: 6px 10px; font-weight: 700; color: #4f46e5; border-right: 1px solid #e5e7eb; width: 60px;">Q${idx + 1}</td>
-          <td style="padding: 6px 10px; font-weight: 600; color: #065f46; border-right: 1px solid #e5e7eb;">
-            <span style="background: #d1fae5; padding: 2px 6px; border-radius: 4px; margin-right: 6px;">${correctLetter}</span>
-            ${correctOptionText}
-          </td>
-          <td style="padding: 6px 10px; color: #6b7280; font-size: 11.5px; width: 110px;">${sourceRef}</td>
-        </tr>
-      `;
-    }).join('');
-
-    const explanationsHtml = questions.map((q, idx) => {
-      const correctLetter = letters[q.correctAnswerIndex] || '(A)';
-      return `
-        <div style="page-break-inside: avoid; margin-bottom: 14px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-            <span style="font-weight: 700; font-size: 13px; color: #4f46e5;">
-              Question ${idx + 1} Answer: Option ${correctLetter}
-            </span>
-            ${q.sourcePage ? `<span style="font-size: 11px; color: #64748b; font-style: italic;">Verified Reference: Page ${q.sourcePage}</span>` : ''}
-          </div>
-          <div style="font-size: 12px; color: #334155; line-height: 1.55;">
-            ${q.explanation || 'No detailed conceptual explanation provided.'}
-          </div>
-        </div>
-      `;
-    }).join('');
-
-    const studentName = (window.examProfileManager && window.examProfileManager.getStudentName()) || 'Scholar';
-
-    return `
-      <div id="hamsa-printable-paper" style="font-family: 'Noto Sans Devanagari', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; color: #111827; background: #ffffff; width: 100%; max-width: 800px; margin: 0 auto; line-height: 1.5; padding: 20px 24px;">
-        <!-- Running Header -->
-        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1.5px solid #4f46e5; padding-bottom: 6px; margin-bottom: 16px; font-size: 11px; color: #6b7280;">
-          <div style="font-weight: 700; color: #4f46e5; display: flex; align-items: center; gap: 6px;">
-            <span>🪿 HAMSA VIDYA (हंस विद्या)</span>
-            <span>•</span>
-            <span>AI Generated Examination Paper</span>
-          </div>
-          <div>${todayStr} • Candidate: <strong>${studentName}</strong></div>
-        </div>
-
-        <!-- Document Header Box -->
-        <div style="background: #4f46e5; color: #ffffff; padding: 14px 18px; border-radius: 8px; margin-bottom: 14px;">
-          <h1 style="font-size: 18px; font-weight: 800; margin: 0 0 4px 0; letter-spacing: -0.01em; text-transform: uppercase;">
-            ${quiz.title || 'Mastery Examination Paper'}
-          </h1>
-          <div style="font-size: 12px; color: #e0e7ff; display: flex; gap: 14px; flex-wrap: wrap;">
-            <span><strong>Candidate:</strong> ${studentName}</span>
-            <span><strong>Subject:</strong> ${quiz.subject || 'General'}</span>
-            <span><strong>Difficulty:</strong> ${quiz.difficulty || 'MEDIUM'}</span>
-            <span><strong>Mode:</strong> ${quiz.quizMode || 'PRACTICE'}</span>
-            <span><strong>Language:</strong> ${quiz.language || 'English'}</span>
-          </div>
-        </div>
-
-        <!-- Instructions Meta Box -->
-        <div style="background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 14px; margin-bottom: 20px; font-size: 11.5px; color: #374151;">
-          <div style="display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 4px;">
-            <span>Total Questions: ${questions.length}</span>
-            <span>Time Allowed: ${maxTime} Minutes</span>
-            <span>Maximum Marks: ${questions.length}</span>
-          </div>
-          <div style="color: #6b7280; font-style: italic;">
-            Instructions: All questions are compulsory. Select the most appropriate option. There is no negative marking.
-          </div>
-        </div>
-
-        <!-- SECTION I: QUESTION PAPER -->
-        <div style="margin-bottom: 24px;">
-          <div style="background: #e0e7ff; color: #3730a3; padding: 6px 12px; border-radius: 4px; font-weight: 800; font-size: 13px; margin-bottom: 14px; letter-spacing: 0.04em;">
-            SECTION I — MULTIPLE CHOICE QUESTIONS (${questions.length} MCQs)
-          </div>
-          ${questionsHtml}
-        </div>
-
-        <!-- Page Break for Answer Key -->
-        <div style="page-break-before: always; height: 1px; margin-top: 20px;"></div>
-
-        <!-- SECTION II: OFFICIAL ANSWER KEY & DETAILED EXPLANATIONS -->
-        <div style="margin-top: 20px;">
-          <div style="background: #d1fae5; color: #065f46; padding: 6px 12px; border-radius: 4px; font-weight: 800; font-size: 13px; margin-bottom: 14px; letter-spacing: 0.04em;">
-            SECTION II — OFFICIAL ANSWER KEY & DETAILED EXPLANATIONS
-          </div>
-
-          <!-- Answer Key Table -->
-          <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 12px; border: 1px solid #e5e7eb; border-radius: 6px; overflow: hidden;">
-            <thead>
-              <tr style="background: #4f46e5; color: #ffffff; text-align: left;">
-                <th style="padding: 8px 10px; font-weight: 700;">#</th>
-                <th style="padding: 8px 10px; font-weight: 700;">Official Answer Key</th>
-                <th style="padding: 8px 10px; font-weight: 700;">Source Page</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${answerTableRows}
-            </tbody>
-          </table>
-
-          <!-- Detailed Explanations -->
-          <div style="font-weight: 700; font-size: 14px; color: #1f2937; margin-bottom: 10px;">
-            Detailed Conceptual Explanations:
-          </div>
-          ${explanationsHtml}
-        </div>
-
-        <!-- Running Footer -->
-        <div style="border-top: 1px solid #e5e7eb; padding-top: 10px; margin-top: 24px; display: flex; justify-content: space-between; font-size: 11px; color: #9ca3af;">
-          <span>Hamsa Vidya (हंस विद्या) • AI Wisdom & Quiz Companion</span>
-          <span>Sharpen Your Intellect • Confidential Study Material</span>
-        </div>
-      </div>
-    `;
+  buildDocumentHtml(quiz,questions,{variant='FULL'}={}) {
+    const e=SecurityUtils.escapeHtml,letters='ABCD';
+    const scoring=typeof resolveScoringConfig==='function'?resolveScoringConfig(quiz):{marksPerCorrect:1,negativeMarkPerWrong:0};
+    const negative=scoring.scoringPreset==='UPSC_PRELIMS' && Math.abs(scoring.negativeMarkPerWrong-2/3)<1e-10 ? '2/3 (≈0.67)' : scoring.negativeMarkPerWrong;
+    const seconds=Number.isFinite(Number(quiz.examDurationSeconds))&&Number(quiz.examDurationSeconds)>0?Math.round(Number(quiz.examDurationSeconds)):Math.max(5,Math.round(questions.length*1.5))*60;
+    const time=quiz.quizMode==='EXAM'?`${Math.floor(seconds/60)}m ${seconds%60}s`:'Untimed practice';
+    const student=window.examProfileManager?.getStudentName()||'Scholar';
+    const questionRows=questions.map((q,i)=>`<section class="print-question"><h3>Q${i+1}. ${e(q.questionText)}</h3>${q.options.map((opt,j)=>`<p><b>(${letters[j]})</b> ${e(opt)}</p>`).join('')}</section>`).join('');
+    const answers=questions.map((q,i)=>`<section class="print-question"><h3>Q${i+1} · (${letters[q.correctAnswerIndex]||'?'}) ${e(q.options[q.correctAnswerIndex]||'Key unavailable')}</h3><p>${e(q.explanation)}</p>${(q.optionExplanations||[]).map((reason,j)=>reason?`<p><b>${letters[j]}:</b> ${e(reason)}</p>`:'').join('')}${q.memoryCue?`<p><b>Memory cue:</b> ${e(q.memoryCue)}</p>`:''}${q.evidenceQuote?`<blockquote>${e(q.evidenceQuote)}${q.sourcePage?` · Page ${Number(q.sourcePage)}`:''}</blockquote>`:''}<small>${q.answerOrigin==='SOURCE_KEY'?'Imported source key':q.answerOrigin==='STUDENT_EDITED'?'Student edited':q.aiReviewed?'AI reviewed answer':'AI answer; review against your textbook'}</small></section>`).join('');
+    return `<style>#hamsa-printable-paper{font-family:'Noto Sans Devanagari',sans-serif;color:#172033;background:#fff;max-width:800px;margin:auto;padding:20px;font-size:12px;line-height:1.6;overflow-wrap:anywhere}#hamsa-printable-paper h1{font-size:20px}#hamsa-printable-paper h2{font-size:16px;border-bottom:1px solid #bbb}#hamsa-printable-paper h3{font-size:13px;margin:0 0 8px}#hamsa-printable-paper p{white-space:pre-wrap;margin:5px 0}.print-question{margin:0 0 16px;padding-bottom:10px;border-bottom:1px solid #ddd;break-inside:avoid}.print-key{break-before:page}#hamsa-printable-paper blockquote{margin:8px 0;padding-left:10px;border-left:2px solid #bbb}@media print{#hamsa-printable-paper{padding:0;max-width:none}.print-question{break-inside:auto}}</style>
+    <main id="hamsa-printable-paper"><small>HAMSA VIDYA · ${e(student)} · ${e(new Date().toLocaleDateString())}</small><h1>${e(quiz.title||'Practice Quiz')}</h1><p>${e(quiz.subject)} · ${e(quiz.language)} · ${e(quiz.quizMode||'PRACTICE')}</p><p>${questions.length} questions · ${time} · Maximum marks: ${Number((questions.length*scoring.marksPerCorrect).toFixed(2))}</p><p>Correct: +${scoring.marksPerCorrect}; wrong: −${negative}; skipped: 0. Select one option per question.</p>
+    ${QuizQuality.skippedPdfNote(quiz.skippedPdfPages)?`<p class="print-source-note">${e(QuizQuality.skippedPdfNote(quiz.skippedPdfPages))}</p>`:''}
+    ${variant!=='ANSWER_KEY'?`<h2>Question paper</h2>${questionRows}`:''}${variant!=='QUESTIONS'?`<div class="${variant==='FULL'?'print-key':''}"><h2>Answer key & explanations</h2>${answers}</div>`:''}<small>Use with your textbook. AI review does not guarantee factual correctness.</small></main>`;
   }
-
-  /**
-   * Generates and downloads a complete A4 Question Paper PDF with 100% Hindi/English font fidelity
-   */
-  async generateQuestionPaperPdf(quiz, questions) {
-    const cleanFileName = (quiz.title || 'hamsa-vidya-quiz')
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '-')
-      .replace(/-+/g, '-');
-
-    const htmlContent = this.buildDocumentHtml(quiz, questions);
-
-    // Create a temporary offscreen container
-    const container = document.createElement('div');
-    container.id = 'temp-pdf-render-container';
-    container.style.position = 'absolute';
-    container.style.left = '-9999px';
-    container.style.top = '0';
-    container.style.width = '800px';
-    container.innerHTML = htmlContent;
-    document.body.appendChild(container);
-
-    try {
-      if (window.html2pdf) {
-        const opt = {
-          margin: [10, 10, 10, 10], // 10mm margins
-          filename: `${cleanFileName}-question-paper.pdf`,
-          image: { type: 'jpeg', quality: 0.98 },
-          html2canvas: {
-            scale: 2,
-            useCORS: true,
-            letterRendering: true,
-            logging: false
-          },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-          pagebreak: { mode: ['css', 'legacy'] }
-        };
-
-        const targetEl = container.querySelector('#hamsa-printable-paper');
-        await window.html2pdf().set(opt).from(targetEl).save();
-      } else {
-        // Fallback to print preview window
-        this.openPrintWindow(htmlContent);
-      }
-    } catch (err) {
-      console.warn('html2pdf failed, falling back to print dialog:', err);
-      this.openPrintWindow(htmlContent);
-    } finally {
-      if (container.parentNode) {
-        container.parentNode.removeChild(container);
-      }
-    }
+  async generateQuestionPaperPdf(quiz,questions,options={}) {
+    return this.openPrintWindow(this.buildDocumentHtml(quiz,questions,options),options.printWindow||null);
   }
 
   /**
@@ -213,7 +33,7 @@ class PdfGeneratorService {
     const printWindow = reservedWindow || window.open('', '_blank');
     if (!printWindow) {
       window.app?.showToast('Allow pop-ups for this site to export the PDF.','warning');
-      return;
+      return false;
     }
 
     printWindow.document.write(`
@@ -222,10 +42,8 @@ class PdfGeneratorService {
       <head>
         <title>Hamsa Vidya - PDF Preview</title>
         <meta charset="UTF-8">
-        <link rel="preconnect" href="https://fonts.googleapis.com">
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&family=Noto+Sans+Devanagari:wght@400;600;700&display=swap" rel="stylesheet">
         <style>
+          @font-face { font-family: 'Noto Sans Devanagari'; src: url('${new URL('assets/fonts/NotoSansDevanagari.ttf', document.baseURI).href}'); font-weight: 100 900; }
           @page {
             size: A4 portrait;
             margin: 12mm;
@@ -260,6 +78,7 @@ class PdfGeneratorService {
       </html>
     `);
     printWindow.document.close();
+    return true;
   }
 
   /**

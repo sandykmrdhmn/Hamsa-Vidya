@@ -3,7 +3,7 @@
  * Dual Modes: Practice Mode (Instant feedback & explanations) & Exam Mode (Timed with Question Palette)
  */
 
-/** localStorage key holding the single in-progress attempt. */
+/** Legacy last-attempt mirror; per-quiz entries preserve independent progress. */
 const ACTIVE_ATTEMPT_STORAGE_KEY = 'hamsa_active_quiz_attempt';
 
 /** Saved progress older than this is considered stale and discarded. */
@@ -65,14 +65,22 @@ class QuizPlayerView {
     return this.getElapsedSeconds();
   }
 
-  async loadAndStart(quizId) {
+  async loadAndStart(quizId, mode = null) {
+    const version = this._loadVersion = (this._loadVersion || 0) + 1;
     const data = await getQuizWithQuestions(quizId);
+    if (version !== this._loadVersion || (app.currentView && app.currentView !== 'quiz-player')) return;
+    if (data && ['PRACTICE','EXAM'].includes(mode)) data.quizMode = mode;
     if (!data || !data.questions || data.questions.length === 0) {
       app.showToast('Quiz not found or contains no questions.', 'error');
       app.navigate('dashboard');
       return;
     }
 
+    const invalid=window.QuizQuality?.preview(data.questions)||[];
+    if(data.questions.some(q=>!Number.isSafeInteger(q.id)||q.id<1)) {app.showToast('Saved question IDs are malformed. Regenerate this quiz from your source.','error');app.navigate('library');return;}
+    if(data.questions.some(q=>q.reviewIssue)){app.showToast('Correct questions marked as needing review before starting this quiz.','warning');app.viewQuizResult(quizId);return;}
+    if(invalid.length){app.showToast('This quiz contains invalid answer keys or options. Correct the flagged questions before playing.','error');app.viewQuizResult(quizId);return;}
+    if(window.QuizQuality) data.questions=data.questions.map(q=>window.QuizQuality.normalize(q));
     this.quiz = data;
     this.questions = data.questions;
 
@@ -81,6 +89,7 @@ class QuizPlayerView {
     if (saved) {
       const answered = Object.keys(saved.userAnswers || {}).length;
       const resume = await this._askResume(saved, answered);
+      if (version !== this._loadVersion || (app.currentView && app.currentView !== 'quiz-player')) return;
       if (resume) {
         this._applySavedProgress(saved);
         this._beginSitting();
@@ -96,6 +105,11 @@ class QuizPlayerView {
 
   /** Fresh attempt state. */
   _resetAttemptState() {
+    this._terminal = false;
+    this._timeUpHandled = false;
+    this._isSubmitting = false;
+    this._submissionPending = false;
+    this._attemptToken = window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
     this.currentIndex = 0;
     this.userAnswers = {};
     this.flaggedQuestions.clear();
@@ -146,12 +160,15 @@ class QuizPlayerView {
   // =========================================================================
 
   _persistProgress() {
-    if (!this.quiz) return;
+    if (!this.quiz || this._terminal) return;
     try {
       const payload = {
         quizId: this.quiz.id,
         quizMode: this.quiz.quizMode,
         totalQuestions: this.questions.length,
+        fingerprint: window.QuizQuality?.fingerprint(this.questions) || null,
+        attemptToken: this._attemptToken,
+        submissionPending: this._submissionPending,
         currentIndex: this.currentIndex,
         userAnswers: this.userAnswers,
         flagged: Array.from(this.flaggedQuestions),
@@ -162,16 +179,26 @@ class QuizPlayerView {
         elapsedSeconds: this.getElapsedSeconds(),
         savedAt: Date.now()
       };
+      localStorage.setItem(`${ACTIVE_ATTEMPT_STORAGE_KEY}:${this.quiz.id}`, JSON.stringify(payload));
       localStorage.setItem(ACTIVE_ATTEMPT_STORAGE_KEY, JSON.stringify(payload));
+      return true;
     } catch (err) {
       // Storage full or unavailable — progress saving is best-effort.
       console.warn('Could not persist quiz progress:', err);
+      if (!this._progressWarning) { this._progressWarning=true; app.showToast('Browser storage is full. Keep this tab open and free storage before leaving your quiz.','warning'); }
+      return false;
     }
   }
 
   _loadSavedProgress(quizId) {
     try {
-      const raw = localStorage.getItem(ACTIVE_ATTEMPT_STORAGE_KEY);
+      const legacy = localStorage.getItem(ACTIVE_ATTEMPT_STORAGE_KEY);
+      let raw = localStorage.getItem(`${ACTIVE_ATTEMPT_STORAGE_KEY}:${quizId}`);
+      // Honor matching legacy entries so existing saves and older clients migrate safely.
+      if (legacy) {
+        try { if (Number(JSON.parse(legacy)?.quizId) === Number(quizId)) raw = legacy; }
+        catch { localStorage.removeItem(ACTIVE_ATTEMPT_STORAGE_KEY); }
+      }
       if (!raw) return null;
 
       const saved = JSON.parse(raw);
@@ -180,12 +207,13 @@ class QuizPlayerView {
         this._clearSavedProgress();
         return null;
       }
+      if (saved.quizMode !== this.quiz.quizMode || (saved.fingerprint && saved.fingerprint !== window.QuizQuality?.fingerprint(this.questions))) return null;
       // Nothing worth resuming.
       const answered = Object.keys(saved.userAnswers || {}).length;
-      if (answered === 0 && (saved.currentIndex || 0) === 0) return null;
+      if (answered === 0 && (saved.currentIndex || 0) === 0 && !saved.flagged?.length && !saved.locked?.length && !(Number(saved.elapsedSeconds)>0) && !saved.submissionPending && !(saved.quizMode==='EXAM' && Number(saved.remainingSeconds)<this.getExamWindowSeconds())) return null;
 
       // An expired exam cannot be meaningfully resumed.
-      if (saved.quizMode === 'EXAM' && Number(saved.remainingSeconds) <= 0) {
+      if (saved.quizMode === 'EXAM' && (!Number.isFinite(Number(saved.remainingSeconds)) || (Number(saved.remainingSeconds) <= 0 && !saved.submissionPending))) {
         this._clearSavedProgress();
         return null;
       }
@@ -197,24 +225,33 @@ class QuizPlayerView {
   }
 
   _applySavedProgress(saved) {
+    this._terminal = false; this._timeUpHandled = false; this._isSubmitting = false;
+    this._submissionPending = Boolean(saved.submissionPending);
+    this._attemptToken = saved.attemptToken || window.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
     this.currentIndex = Math.min(
-      Math.max(0, Number(saved.currentIndex) || 0),
+      Math.max(0, Math.floor(Number(saved.currentIndex) || 0)),
       this.questions.length - 1
     );
-    this.userAnswers = saved.userAnswers && typeof saved.userAnswers === 'object' ? saved.userAnswers : {};
-    this.flaggedQuestions = new Set(Array.isArray(saved.flagged) ? saved.flagged : []);
-    this.lockedQuestions = new Set(Array.isArray(saved.locked) ? saved.locked : []);
-    this.accumulatedSeconds = Math.max(0, Number(saved.elapsedSeconds) || 0);
+    this.userAnswers = {};
+    for (const question of this.questions) {
+      const chosen = saved.userAnswers?.[question.id];
+      if (Number.isInteger(chosen) && chosen >= 0 && chosen < (question.options?.length || 4)) this.userAnswers[question.id] = chosen;
+    }
+    this.flaggedQuestions = new Set((Array.isArray(saved.flagged) ? saved.flagged : []).filter(id => this.questions.some(question => question.id === id)));
+    this.lockedQuestions = new Set((Array.isArray(saved.locked) ? saved.locked : []).filter(id => this.userAnswers[id] !== undefined));
+    this.accumulatedSeconds = Number.isFinite(Number(saved.elapsedSeconds))?Math.max(0,Number(saved.elapsedSeconds)):0;
 
     this.examDeadline = (this.quiz.quizMode === 'EXAM' && Number(saved.remainingSeconds) > 0)
-      ? Date.now() + Number(saved.remainingSeconds) * 1000
-      : null;
+      ? Date.now() + Math.min(Number(saved.remainingSeconds),this.getExamWindowSeconds()) * 1000
+      : this.quiz.quizMode === 'EXAM' && saved.submissionPending ? Date.now()-1 : null;
   }
 
   _clearSavedProgress() {
     try {
-      localStorage.removeItem(ACTIVE_ATTEMPT_STORAGE_KEY);
-    } catch { /* ignore */ }
+      localStorage.removeItem(`${ACTIVE_ATTEMPT_STORAGE_KEY}:${this.quiz?.id}`);
+      const legacy = localStorage.getItem(ACTIVE_ATTEMPT_STORAGE_KEY);
+      if (!legacy || Number(JSON.parse(legacy)?.quizId) === Number(this.quiz?.id)) localStorage.removeItem(ACTIVE_ATTEMPT_STORAGE_KEY);
+    } catch { localStorage.removeItem(ACTIVE_ATTEMPT_STORAGE_KEY); }
   }
 
   /** Ask the user whether to resume. Resolves true to resume. */
@@ -229,7 +266,7 @@ class QuizPlayerView {
         message:
           `You have an unfinished attempt at this quiz.\n\n` +
           `Progress: ${answered} of ${saved.totalQuestions} answered (question ${(saved.currentIndex || 0) + 1})` +
-          `${timeNote}\n\nResume where you left off, or start over?`,
+          `${timeNote}${saved.quizMode==='EXAM'?'\nThis mock pauses when you leave the quiz or close the page. Background tabs continue counting down.':''}\n\nResume where you left off, or start over?`,
         confirmText: 'Resume',
         cancelText: 'Start Over',
         onConfirm: () => resolve(true),
@@ -283,6 +320,9 @@ class QuizPlayerView {
    * views were still routed into the abandoned quiz.
    */
   onLeaveView() {
+    window.quizSourceView?.close();
+    this._loadVersion = (this._loadVersion || 0) + 1;
+    this.togglePalette(false);
     this._persistProgress();
     this.stopExamTimer();
     this.detachKeyboard();
@@ -292,7 +332,17 @@ class QuizPlayerView {
   attachKeyboard() {
     this.detachKeyboard();
     this._handleKey = (e) => {
-      if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+      if (e.key === 'Escape' && document.getElementById('palette-drawer')?.classList.contains('active')) { e.preventDefault(); this.togglePalette(false); return; }
+      const palette = document.getElementById('palette-drawer');
+      if (e.key === 'Tab' && palette?.classList.contains('active')) {
+        const controls = [...palette.querySelectorAll('button:not([disabled]),[tabindex="0"]')];
+        const first = controls[0], last = controls.at(-1);
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last?.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+        return;
+      }
+      if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || document.querySelector('#confirmation-modal.active, #global-search-modal.active')) return;
+      if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON', 'A', 'SUMMARY'].includes(document.activeElement?.tagName) || document.activeElement?.isContentEditable) return;
       const key = e.key.toUpperCase();
       const q = this.questions[this.currentIndex];
       if (!q) return;
@@ -404,6 +454,10 @@ class QuizPlayerView {
   render() {
     if (!this.container || !this.quiz || !this.questions[this.currentIndex]) return;
 
+    const focused=document.activeElement;
+    const focusedOption=focused?.closest?.('[data-quiz-option]');
+    const restoreOption=focusedOption && this.container.contains(focusedOption) ? focusedOption.dataset.quizOption : null;
+
     const q = this.questions[this.currentIndex];
     const total = this.questions.length;
     const progressPct = Math.round(((this.currentIndex + 1) / total) * 100);
@@ -425,7 +479,7 @@ class QuizPlayerView {
         <div class="quiz-nav-card">
           <div class="quiz-nav-top-row">
             <div class="quiz-title-box">
-              <div class="quiz-active-title" title="${this.quiz.title}">${this.quiz.title}</div>
+              <div class="quiz-active-title" title="${SecurityUtils.escapeHtml(this.quiz.title)}">${SecurityUtils.escapeHtml(this.quiz.title)}</div>
               <div class="quiz-step-text">Question ${this.currentIndex + 1} of ${total}</div>
             </div>
 
@@ -455,6 +509,9 @@ class QuizPlayerView {
             </div>
           </div>
 
+          ${isExam?'<p class="quiz-timing-policy">Mock timing: pauses when you leave this quiz or close the page; continues in background tabs.</p>':''}
+          ${this.currentIndex===0 && this.quiz.coverage?.sampled?'<p class="quiz-notice">This quiz uses selected parts of your study material.</p>':''}
+          ${this.currentIndex===0 && QuizQuality.skippedPdfNote(this.quiz.skippedPdfPages)?`<p class="quiz-notice">${SecurityUtils.escapeHtml(QuizQuality.skippedPdfNote(this.quiz.skippedPdfPages))}</p>`:''}
           <!-- Progress Bar -->
           <div class="quiz-progress-track">
             <div class="quiz-progress-fill" style="width: ${progressPct}%;"></div>
@@ -465,26 +522,27 @@ class QuizPlayerView {
         <div class="question-card">
           <div class="question-card-meta">
             <div class="meta-tags-left">
-              <span class="badge badge-primary">${this.quiz.subject}</span>
-              <span class="badge badge-muted">${this.quiz.difficulty}</span>
-              ${q.sourcePage ? `<span class="badge badge-muted">Source: Page ${q.sourcePage}</span>` : ''}
+              <span class="badge badge-primary">${SecurityUtils.escapeHtml(this.quiz.subject)}</span>
+              <span class="badge badge-muted">${SecurityUtils.escapeHtml(this.quiz.difficulty)}</span>
+              ${q.sourcePage ? `<span class="badge badge-muted">Source: Page ${Number(q.sourcePage)}</span>` : ''}
               ${isFlagged ? `<span class="badge badge-warning">Marked for Review</span>` : ''}
             </div>
 
             <button class="bookmark-toggle-btn ${q.isBookmarked ? 'bookmarked' : ''}" 
-              onclick="quizPlayerView.toggleBookmark(${q.id})" 
+              onclick="quizPlayerView.toggleBookmark(${Number(q.id)})"
               title="${q.isBookmarked ? 'Remove Bookmark' : 'Bookmark Question'}">
               <i data-lucide="bookmark" style="width:20px;height:20px; ${q.isBookmarked ? 'fill:currentColor;' : ''}"></i>
             </button>
           </div>
 
+${q.reviewIssue?'<p class="quiz-notice">This question is flagged for review. Check its key against your source.</p>':''}
           <!-- Question Stem -->
-          <div class="question-text">
-            ${SecurityUtils.sanitizeHtml(q.questionText)}
+           <div class="question-text" id="quiz-question-text">
+            ${QuizQuality.format(q.questionText)}
           </div>
 
           <!-- 4 Interactive Option Cards -->
-          <div class="options-grid">
+          <div class="options-grid" role="group" aria-labelledby="quiz-question-text">
             ${(q.options || []).map((opt, optIdx) => {
               let optionClasses = 'option-card';
               let badgeContent = letters[optIdx] || (optIdx + 1);
@@ -505,9 +563,9 @@ class QuizPlayerView {
               }
 
               return `
-                <div class="${optionClasses}" onclick="quizPlayerView.selectOption(${optIdx})">
+                <div class="${optionClasses}" data-quiz-option="${optIdx}" role="button" tabindex="0" aria-label="Option ${letters[optIdx]}: ${SecurityUtils.escapeHtml(opt)}" aria-pressed="${selectedOption===optIdx}" aria-disabled="${Boolean(isLocked || this._isSubmitting || this._terminal)}" onclick="quizPlayerView.selectOption(${optIdx})">
                   <div class="option-badge">${badgeContent}</div>
-                  <div class="option-label-text">${SecurityUtils.sanitizeHtml(opt)}</div>
+                  <div class="option-label-text">${QuizQuality.format(opt)}</div>
                 </div>
               `;
             }).join('')}
@@ -521,12 +579,15 @@ class QuizPlayerView {
                 <span>Correct Option: (${letters[q.correctAnswerIndex]})</span>
               </div>
               <div class="explanation-body">
-                ${SecurityUtils.sanitizeHtml(q.explanation)}
+                <details class="quiz-reasoning" open><summary>Reasoning & worked steps</summary>${QuizQuality.format(q.explanation)}</details>
+                ${(q.optionExplanations||[]).some(Boolean)?`<details class="quiz-option-reasons"><summary>Option-by-option reasoning</summary>${q.optionExplanations.map((reason,i)=>reason?`<div class="quiz-option-reason"><b>${'ABCD'[i]}:</b> ${QuizQuality.format(reason)}</div>`:'').join('')}</details>`:''}
+                ${q.memoryCue?`<div class="quiz-memory"><b>Memory cue:</b> ${QuizQuality.format(q.memoryCue)}</div>`:''}
               </div>
+              ${q.keySourcePage&&q.keyEvidenceQuote?`<button type="button" class="btn btn-secondary btn-sm" onclick="quizSourceView.open(quizPlayerView.quiz,quizPlayerView.questions[quizPlayerView.currentIndex],'key')">Open printed key · Page ${Number(q.keySourcePage)}</button>`:''}
               ${q.sourcePage ? `
                 <div class="explanation-source">
                   <i data-lucide="book-open" style="width:14px;height:14px;"></i>
-                  <span>Verified Citation: Page ${q.sourcePage}</span>
+                  <button type="button" class="btn btn-secondary btn-sm" onclick="quizSourceView.open(quizPlayerView.quiz,quizPlayerView.questions[quizPlayerView.currentIndex])">Open source · Page ${Number(q.sourcePage)}</button>
                 </div>
               ` : ''}
             </div>
@@ -544,7 +605,8 @@ class QuizPlayerView {
             ` : '<div></div>'}
 
             ${isExam ? `
-              <button class="btn btn-outline" onclick="quizPlayerView.toggleFlag(${q.id})">
+              <button class="btn btn-secondary" onclick="quizPlayerView.clearResponse()" ${selectedOption === undefined || this._isSubmitting ? 'disabled' : ''}>Clear Response</button>
+              <button class="btn btn-outline" onclick="quizPlayerView.toggleFlag(${Number(q.id)})">
                 <i data-lucide="flag" style="width:16px;height:16px;"></i>
                 <span>${isFlagged ? 'Unflag' : 'Mark for Review'}</span>
               </button>
@@ -623,6 +685,7 @@ class QuizPlayerView {
     `;
 
     if (window.app) window.app.refreshIcons();
+    if(restoreOption!==null)this.container.querySelector(`[data-quiz-option="${restoreOption}"]`)?.focus({preventScroll:true});
   }
 
   // =========================================================================
@@ -630,6 +693,8 @@ class QuizPlayerView {
   // =========================================================================
   selectOption(optIdx) {
     const q = this.questions[this.currentIndex];
+    if (!q || this._terminal || this._isSubmitting || !Number.isInteger(optIdx) || optIdx < 0 || optIdx >= (q.options || []).length) return;
+    if (this.examDeadline && this.getRemainingSeconds() <= 0) { this._handleTimeUp(); return; }
     const isPractice = this.quiz.quizMode === 'PRACTICE';
 
     if (isPractice) {
@@ -659,6 +724,13 @@ class QuizPlayerView {
     }
   }
 
+  clearResponse() {
+    if (this._terminal || this._isSubmitting || this.quiz?.quizMode !== 'EXAM') return;
+    if (this.examDeadline && this.getRemainingSeconds() <= 0) { this._handleTimeUp(); return; }
+    delete this.userAnswers[this.questions[this.currentIndex].id];
+    this.render(); this._persistProgress();
+  }
+
   toggleFlag(qId) {
     if (this.flaggedQuestions.has(qId)) {
       this.flaggedQuestions.delete(qId);
@@ -673,8 +745,13 @@ class QuizPlayerView {
     const q = this.questions.find(item => item.id === qId);
     if (!q) return;
 
-    q.isBookmarked = !q.isBookmarked;
-    await updateQuestionBookmark(qId, q.isBookmarked);
+    if (this._bookmarkPending) return;
+    this._bookmarkPending = true;
+    const previous = q.isBookmarked;
+    q.isBookmarked = !previous;
+    try { await updateQuestionBookmark(qId, q.isBookmarked); }
+    catch (error) { q.isBookmarked = previous; app.showToast('Bookmark could not be saved. Please retry.', 'error'); return; }
+    finally { this._bookmarkPending = false; }
     app.showToast(q.isBookmarked ? 'Question saved to bookmarks ⭐' : 'Bookmark removed', 'info');
     this.render();
   }
@@ -712,14 +789,18 @@ class QuizPlayerView {
   }
 
   togglePalette(show) {
+    if (show) this._paletteFocus = document.activeElement;
     const drawer = document.getElementById('palette-drawer');
     const backdrop = document.getElementById('palette-backdrop');
     if (drawer) {
       if (show) {
         drawer.classList.add('active');
+        drawer.setAttribute('role','dialog'); drawer.setAttribute('aria-modal','true'); drawer.setAttribute('aria-label','Question palette');
+        drawer.querySelector('button')?.focus();
         if (backdrop) backdrop.classList.add('active');
       } else {
         drawer.classList.remove('active');
+        this._paletteFocus?.focus?.();
         if (backdrop) backdrop.classList.remove('active');
       }
     }
@@ -744,6 +825,7 @@ class QuizPlayerView {
         this.detachKeyboard();
         this.detachLifecycleListeners();
         // Explicit quit means the user does not want this attempt back.
+        this._terminal = true;
         this._clearSavedProgress();
         app.navigate('dashboard');
       }
@@ -767,53 +849,64 @@ class QuizPlayerView {
   }
 
   async submitQuiz() {
-    // Guard against double submission (timer expiry racing a manual submit).
-    if (this._isSubmitting) return;
+    if (this._isSubmitting || this._terminal || !this.quiz) return;
     this._isSubmitting = true;
-
     this.stopExamTimer();
     this.detachKeyboard();
     this.detachLifecycleListeners();
-
+    const quiz = this.quiz;
+    const token = this._attemptToken;
+    const version = this._loadVersion;
+    const ownsAttempt = () => this.quiz?.id === quiz.id && this._attemptToken === token;
+    const stillViewing = () => ownsAttempt() && version === this._loadVersion && (!app.currentView || app.currentView === 'quiz-player');
     const questionsState = this.questions.map(q => {
       const chosen = this.userAnswers[q.id];
-      const answered = !(chosen === undefined || chosen === null || chosen === -1);
-      return { ...q, userSelectedOptionIndex: answered ? chosen : null };
+      return {...q,userSelectedOptionIndex:chosen == null || chosen === -1 ? null : chosen};
     });
-
-    // Score under this quiz's marking scheme.
-    const result = window.computeQuizScore(this.questions, this.userAnswers, {
-      scoringPreset: this.quiz.scoringPreset,
-      marksPerCorrect: this.quiz.marksPerCorrect,
-      negativeMarkPerWrong: this.quiz.negativeMarkPerWrong
-    });
-
-    const resultData = { ...result, durationSeconds: this.getElapsedSeconds() };
-
+    let result, attemptId;
     try {
-      await updateQuizCompletion(this.quiz.id, resultData, questionsState);
-    } catch (err) {
-      console.error('Failed to save quiz result:', err);
+      result = window.computeQuizScore(this.questions, this.userAnswers, {
+        scoringPreset: quiz.scoringPreset,
+        marksPerCorrect: quiz.marksPerCorrect,
+        negativeMarkPerWrong: quiz.negativeMarkPerWrong
+      });
+      attemptId = await updateQuizCompletion(quiz.id, {
+        ...result,durationSeconds:this.getElapsedSeconds(),attemptToken:token,quizMode:quiz.quizMode
+      },questionsState);
+    } catch (error) {
+      console.error('Failed to save quiz result:',error);
+      if (!ownsAttempt()) {
+        app.showToast('The previous quiz result could not be saved. Your current quiz remains active.','error');
+        return;
+      }
       this._isSubmitting = false;
-      app.showToast('Could not save your result. Your answers are still saved — please try submitting again.', 'error');
+      this._submissionPending = true;
+      if (stillViewing()) {
+        if (!this.examDeadline || this.getRemainingSeconds()>0) this.startExamTimer();
+        this.attachKeyboard();
+        this.attachLifecycleListeners();
+      }
+      const saved = this._persistProgress();
+      if (stillViewing()) this.render();
+      app.showToast(saved ? 'Could not save your result. Your answers are saved — please retry submitting.' : 'Could not save your result. Keep this tab open and free browser storage before retrying.','error');
       return;
     }
-
-    // Result is safely stored, so the in-progress copy is no longer needed.
-    this._clearSavedProgress();
-
+    // A previous attempt may finish while another quiz is already open.
+    // It must never clear or terminate the new attempt's progress.
+    const displayResult = stillViewing();
+    if (ownsAttempt()) {
+      this._terminal = true;
+      this._isSubmitting = false;
+      this._clearSavedProgress();
+    }
     app.checkAndUpdateStreak();
-
-    const penaltyNote = result.marksLostToNegative > 0
-      ? ` (−${result.marksLostToNegative} from negative marking)`
-      : '';
-    app.showToast(
-      `Submitted — ${result.marksObtained}/${result.maxMarks} marks${penaltyNote}. Analyzing results...`,
-      'success'
-    );
-
-    this._isSubmitting = false;
-    app.viewQuizResult(this.quiz.id);
+    if (!displayResult) {
+      app.showToast('Quiz result saved. Open History to review that attempt.','success');
+      return;
+    }
+    const penalty = result.marksLostToNegative>0 ? ` (−${result.marksLostToNegative} negative marks)` : '';
+    app.showToast(`Submitted — ${result.marksObtained}/${result.maxMarks} marks${penalty}.`,'success');
+    app.viewQuizResult(quiz.id,true,attemptId);
   }
 }
 

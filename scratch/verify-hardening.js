@@ -185,7 +185,7 @@ function loadSanitizer() {
   console.log('\n=== M6: cancellation and concurrency ===');
   {
     check('beginGeneration exists', /beginGeneration\(label/.test(APP_SRC));
-    check('endGeneration exists', /endGeneration\(\)\s*\{/.test(APP_SRC));
+    check('endGeneration exists', /endGeneration\(jobId\)\s*\{/.test(APP_SRC));
     check('cancelGeneration exists', /cancelGeneration\(\)\s*\{/.test(APP_SRC));
     check('cancel aborts in-flight requests', /cancelGeneration[\s\S]{0,400}aiClient\.abortAll\(\)/.test(APP_SRC));
     check('concurrent generation refused', /if \(this\._isGenerating\)/.test(APP_SRC));
@@ -197,8 +197,8 @@ function loadSanitizer() {
     // Callers must use the lifecycle rather than poking the overlay directly.
     const cq = read('js/views/create-quiz.js');
     check('create-quiz uses beginGeneration', /app\.beginGeneration\(/.test(cq));
-    check('create-quiz uses endGeneration', /app\.endGeneration\(\)/.test(cq));
-    check('create-quiz suppresses the cancel "error" toast', /isGenerationCancelled\(\)/.test(cq));
+    check('create-quiz uses endGeneration', /app\.endGeneration\(jobId\)/.test(cq));
+    check('create-quiz suppresses the cancel "error" toast', /error.name==='AbortError' \|\| signal.aborted/.test(cq));
     check('create-quiz no longer toggles the overlay directly',
       !/overlay\.classList/.test(cq));
     // Check within each method body rather than a fixed character window.

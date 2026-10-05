@@ -30,15 +30,15 @@
  */
 
 // Bump this on release to invalidate every cache.
-const CACHE_VERSION = 'v14';
+const CACHE_VERSION = 'v29';
 const SHELL_CACHE = `hamsa-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `hamsa-runtime-${CACHE_VERSION}`;
 const ALL_CACHES = [SHELL_CACHE, RUNTIME_CACHE];
 
 /**
- * Everything required to boot the UI. Kept deliberately lean so installation is
- * quick — the heavy PDF libraries are cached on first use instead (see
- * LAZY_CACHE_PATTERNS below).
+ * Everything required to boot the UI and read local PDFs. PDF.js and its worker
+ * are precached so the first upload works offline; other vendor bundles follow
+ * LAZY_CACHE_PATTERNS below.
  */
 const SHELL_ASSETS = [
   './',
@@ -65,6 +65,8 @@ const SHELL_ASSETS = [
 
   'css/dashboard.css',
   'css/quiz.css',
+  'css/quiz-improvements.css',
+  'css/flashcard-improvements.css',
   'css/exam-alerts.css',
   'css/answer-writing.css',
 
@@ -96,8 +98,28 @@ const SHELL_ASSETS = [
   'js/study-preferences.js',
   'js/ai-client.js',
   'js/audio-engine.js',
+  'js/quiz-quality.js',
+  'assets/vendor/katex.min.js',
+  'js/study-format.js',
+  'js/flashcard-tools.js',
+  'js/flashcard-store.js',
+  'js/quiz-engine.js',
+  'js/quiz-source.js',
   'js/db.js',
   'js/pdf-extractor.js',
+  'js/pdf-reader.js',
+  'assets/vendor/pdf.min.js',
+  'assets/vendor/pdf.worker.min.js',
+  'js/pdf-extractor.js?v=20261002-pdf2',
+  'js/pdf-reader.js?v=20261002-pdf2',
+  'assets/vendor/pdf.min.js?v=20261002-pdf2',
+  'assets/vendor/pdf.worker.min.js?v=20261002-pdf2',
+  'js/views/create-quiz.js?v=20261002-pdf2',
+  'js/ai-client.js?v=20261003-quiz-direct1',
+  'js/quiz-engine.js?v=20261003-quiz-direct1',
+  'js/pdf-extractor.js?v=20261003-quiz-direct1',
+  'js/gemini-service.js?v=20261002-quiz-speed1',
+  'js/views/create-quiz.js?v=20261005-direct-start2',
   'js/pdf-generator.js',
   'js/gemini-service.js',
   'js/charts.js',
@@ -106,7 +128,7 @@ const SHELL_ASSETS = [
   'js/views/create-quiz.js',
   'js/views/study-notes.js',
   'js/views/flashcards.js',
-  'js/views/quiz-player.js',
+  'js/views/quiz-player.js?v=20261003-quiz-direct1',
   'js/views/quiz-result.js',
   'js/views/library.js',
   'js/views/quiz-history.js',
@@ -123,7 +145,7 @@ const SHELL_ASSETS = [
   'js/ai-teacher-service.js',
   'js/views/ai-teacher.js',
   'js/auth-gate.js',
-  'js/app.js',
+  'js/app.js?v=20261003-quiz-direct1',
 
   // Branding
   'assets/icons/hamsa-logo.svg',
@@ -131,10 +153,9 @@ const SHELL_ASSETS = [
 ];
 
 /**
- * Large, optional assets cached the first time they are actually requested.
- * Precaching these would add ~3.1 MB to install time for features many sessions
- * never touch. `pdf.worker.min.js` is included because PDF.js loads it
- * dynamically — it never appears in a <script> tag.
+ * Other optional vendor assets are cached when first requested. PDF.js and its
+ * worker are already in SHELL_ASSETS so PDF uploads do not depend on a previous
+ * online upload. The same cache-first strategy applies to both.
  */
 const LAZY_CACHE_PATTERNS = [
   /\/assets\/vendor\//,
@@ -160,7 +181,7 @@ self.addEventListener('install', (event) => {
       const results = await Promise.allSettled(
         SHELL_ASSETS.map(async (asset) => {
           const res = await fetch(asset, { cache: 'reload' });
-          if (!res.ok) throw new Error(`${asset} -> HTTP ${res.status}`);
+          if (!isUsableAssetResponse(new URL(asset, self.location.href).href, res)) throw new Error(`${asset} -> HTTP ${res.status} or invalid content type`);
           await cache.put(asset, res);
         })
       );
@@ -236,17 +257,29 @@ self.addEventListener('fetch', (event) => {
  * Cache-first, for immutable versioned assets.
  */
 async function cacheFirst(request) {
-  const cached = await caches.match(request);
-  if (cached) return cached;
+  const url = new URL(request.url);
+  const refresh = url.searchParams.has('pdf-refresh') && /\/assets\/vendor\/pdf(?:\.worker)?\.min\.js$/.test(url.pathname);
+  if (refresh) url.searchParams.delete('pdf-refresh');
+  const cacheKey = refresh ? url.href : request;
+  const found = await caches.match(cacheKey).catch(() => null);
+  const cached = isUsableAssetResponse(cacheKey, found) ? found : null;
+  if (found && !cached) await evictInvalidAsset(cacheKey).catch(() => {});
+  if (cached && !refresh) return cached;
 
   try {
-    const res = await fetch(request);
-    if (res.ok) {
-      const cache = await caches.open(RUNTIME_CACHE);
-      cache.put(request, res.clone());
+    const res = await fetch(request, { cache: refresh || (found && !cached) ? 'reload' : 'default' });
+    if (isUsableAssetResponse(cacheKey, res)) {
+      // Cache failures (e.g. full storage) must not hide a valid network file.
+      try {
+        const cache = await caches.open(RUNTIME_CACHE);
+        // Strip the retry nonce so retries do not grow the cache indefinitely.
+        await cache.put(cacheKey, res.clone());
+      } catch {}
+      return res;
     }
-    return res;
+    return cached || res;
   } catch (err) {
+    if (cached) return cached;
     // Offline and never fetched before — nothing we can do.
     return new Response('', { status: 504, statusText: 'Offline and not cached' });
   }
@@ -258,16 +291,36 @@ async function cacheFirst(request) {
 async function networkFirst(request) {
   try {
     const res = await fetch(request);
-    if (res.ok) {
-      const cache = await caches.open(SHELL_CACHE);
-      cache.put(request, res.clone());
+    if (isUsableAssetResponse(request, res)) {
+      try {
+        const cache = await caches.open(SHELL_CACHE);
+        await cache.put(request, res.clone());
+      } catch {}
     }
     return res;
   } catch (err) {
-    const cached = await caches.match(request);
-    if (cached) return cached;
+    const cached = await caches.match(request).catch(() => null);
+    if (isUsableAssetResponse(request, cached)) return cached;
     return new Response('', { status: 504, statusText: 'Offline and not cached' });
   }
+}
+
+/** Do not install or replay a host's HTML fallback as JavaScript or CSS. */
+function isUsableAssetResponse(request, response) {
+  if (!response?.ok) return false;
+  const pathname = new URL(typeof request === 'string' ? request : request.url, self.location.href).pathname;
+  const type = response.headers.get('Content-Type') || '';
+  if (/\.m?js$/i.test(pathname)) return /^(?:text|application)\/(?:x-)?(?:java|ecma)script\b/i.test(type);
+  if (/\.css$/i.test(pathname)) return /^text\/css\b/i.test(type);
+  return true;
+}
+
+async function evictInvalidAsset(request) {
+  const names = await caches.keys();
+  await Promise.all(names.filter(name => name.startsWith('hamsa-')).map(async name => {
+    const cache = await caches.open(name), response = await cache.match(request);
+    if (response && !isUsableAssetResponse(request, response)) await cache.delete(request);
+  }));
 }
 
 /**

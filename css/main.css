@@ -339,12 +339,13 @@ button, input, select, textarea {
   flex-direction: column;
   gap: 0.75rem;
   pointer-events: none;
+  max-width: calc(100vw - 2rem);
 }
 
 .toast {
   pointer-events: auto;
-  min-width: 280px;
-  max-width: 440px;
+  min-width: min(280px, calc(100vw - 2rem));
+  max-width: min(440px, calc(100vw - 2rem));
   padding: 0.95rem 1.35rem;
   border-radius: var(--radius-lg);
   background: var(--bg-surface-elevated);
@@ -358,6 +359,12 @@ button, input, select, textarea {
   font-size: 0.92rem;
   font-weight: 500;
   animation: toastSlideIn 280ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.toast > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .toast.success { border-left: 4px solid var(--color-success); }

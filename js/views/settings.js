@@ -385,8 +385,8 @@ class SettingsView {
 
             <p style="font-size:0.88rem; color:var(--text-secondary);">
               ${usingProxy
-                ? 'The server connection takes priority. Entering a personal key and clicking Test Connection verifies that key directly with Google; it does not replace the server connection.'
-                : 'Enter your Google Gemini API key to enable cloud question formulation.'}
+                ? 'The server key is used while no personal key is saved. Saving a personal key switches requests to that key in direct mode; removing it restores the server proxy.'
+                : 'A saved personal key is used directly with Google. Remove it to use a configured server proxy. Project quota still applies; changing keys in the same project does not create extra quota.'}
             </p>
 
             <div style="display:flex; gap:0.5rem; flex-direction:column;">
@@ -914,6 +914,7 @@ class SettingsView {
       onConfirm: async () => {
         try {
           const report = await importDatabaseBackup(text, { mode });
+          if (mode === 'REPLACE') window.flashcardsView?.resetSession?.({ clearDrafts: true });
 
           const restoredLines = Object.values(report.tables)
             .filter(t => t.imported > 0)
@@ -959,6 +960,7 @@ class SettingsView {
       onConfirm: async () => {
         try {
           const removed = await clearDatabase();
+          window.flashcardsView?.resetSession?.({ clearDrafts: true });
           const total = Object.values(removed).reduce((a, b) => a + b, 0);
           app.showToast(`All local data reset — ${total} records removed.`, 'info');
         } catch (e) {
@@ -996,14 +998,15 @@ class SettingsView {
             const view = window.aiTeacherView; view._cancelRequests(); view.currentExplanation = null; view.currentRecordId = null; view.followUpHistory = []; view.isBookmarked = false;
           }
           if (moduleId === 'QUIZZES') {
-            try { localStorage.removeItem('hamsa_active_quiz_attempt'); } catch {}
+            try { for (const key of Object.keys(localStorage)) if (key==='hamsa_active_quiz_attempt' || key.startsWith('hamsa_active_quiz_attempt:')) localStorage.removeItem(key); } catch {}
             if (window.quizPlayerView) { window.quizPlayerView.quiz = null; window.quizPlayerView.questions = []; }
           }
           if (moduleId === 'ANSWERS' && window.answerWritingView) {
             const view = window.answerWritingView; view.activeQuestion = null; view.studentAnswerText = ''; view.currentEvaluation = null; view.currentAttemptId = null; view.activeTab = 'new-answer';
           }
           if (['QUIZZES','NOTES','FLASHCARDS'].includes(moduleId) && window.flashcardsView) {
-            window.flashcardsView.currentDeck = null; window.flashcardsView.cards = []; window.flashcardsView.activeTab = 'decks';
+            if (typeof window.flashcardsView.resetSession === 'function') window.flashcardsView.resetSession({ clearDrafts: moduleId === 'FLASHCARDS' });
+            else { window.flashcardsView.currentDeck = null; window.flashcardsView.cards = []; window.flashcardsView.activeTab = 'decks'; }
           }
           const total = Object.values(removed).reduce((sum, count) => sum + count, 0);
           app.showToast(`${labels[moduleId]} reset — ${total} records removed.`, 'success');

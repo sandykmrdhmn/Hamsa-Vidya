@@ -1880,6 +1880,7 @@ class ToolsView {
     }
 
     try {
+      if(window.pdfReader)await window.pdfReader.ensure();
       const arrayBuffer = await file.arrayBuffer();
       const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer });
       const pdfDoc = await loadingTask.promise;

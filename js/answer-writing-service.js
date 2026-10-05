@@ -181,7 +181,7 @@ Respond with ONLY valid JSON with this exact schema:
               maxOutputTokens: 1024,
               responseMimeType: 'application/json'
             }
-          }, { apiKey });
+          }, { apiKey,stage:'answer-question' });
 
         if (res.ok) {
           const data = await res.json();
@@ -409,7 +409,7 @@ Return ONLY a valid, parseable JSON object matching this exact schema:
               maxOutputTokens: 4096,
               responseMimeType: 'application/json'
             }
-          }, { apiKey });
+          }, { apiKey,stage:'answer-evaluation' });
 
         if (res.ok) {
           const data = await res.json();
@@ -1149,7 +1149,7 @@ Focus directly on helping the student master descriptive answer writing, underst
               temperature: 0.6,
               maxOutputTokens: 600
             }
-          }, { apiKey });
+          }, { apiKey,stage:'answer-help' });
 
         if (res.ok) {
           const data = await res.json();
@@ -1246,7 +1246,7 @@ Return ONLY valid JSON:
               maxOutputTokens: 1024,
               responseMimeType: 'application/json'
             }
-          }, { apiKey });
+          }, { apiKey,stage:'answer-practice' });
 
         if (res.ok) {
           const data = await res.json();
@@ -1318,6 +1318,7 @@ Return ONLY valid JSON:
    * PDF Answer Text Extractor with Digital & Scanned OCR fallback
    */
   async extractAnswerFromPdf(file, onProgress = () => {}) {
+    if(window.pdfReader)await window.pdfReader.ensure();
     if (!window.pdfjsLib) {
       throw new Error('PDF processing library is not loaded.');
     }

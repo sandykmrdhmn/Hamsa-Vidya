@@ -173,7 +173,7 @@ function makeQuestions(n, correctIdx = 0) {
   {
     check('uses a dedicated storage key', /ACTIVE_ATTEMPT_STORAGE_KEY/.test(PLAYER_SRC));
     check('stale saves expire', /ACTIVE_ATTEMPT_MAX_AGE_MS/.test(PLAYER_SRC));
-    check('persists on answer select', /selectOption[\s\S]{0,700}_persistProgress\(\)/.test(PLAYER_SRC));
+    check('persists on answer select', /_persistProgress\(\)/.test(PLAYER_SRC.slice(PLAYER_SRC.indexOf('  selectOption('), PLAYER_SRC.indexOf('  clearResponse('))));
     check('persists on beforeunload', /beforeunload/.test(PLAYER_SRC));
     check('offers resume prompt', /_askResume/.test(PLAYER_SRC));
     check('clears saved copy after submit', /_clearSavedProgress\(\)/.test(PLAYER_SRC));

@@ -58,6 +58,11 @@ function makeSandbox(port) {
     },
     window: {}
   };
+  // Simulated pacing keeps these accounting assertions independent of real
+  // minute-long cooldowns; the quota suites verify the rolling window itself.
+  let clock = Date.now();
+  sandbox.Date = class extends Date { static now() { return clock; } };
+  sandbox.QuizQuality = {wait:async(ms,signal)=>{if(signal?.aborted)throw new DOMException('Cancelled','AbortError');clock+=ms;}};
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
@@ -89,7 +94,7 @@ function makeSandbox(port) {
     };
     const payloadEst = client.estimatePayloadTokens(payload);
     check('payload estimate counts text', payloadEst >= 1000, `got ${payloadEst}`);
-    check('payload estimate charges for inline images', payloadEst === 1000 + 258, `got ${payloadEst}`);
+    check('payload estimate reserves Gemini 3 default image tokens', payloadEst === 1000 + 1120, `got ${payloadEst}`);
     check('empty payload is 0', client.estimatePayloadTokens({}) === 0);
     check('malformed payload does not throw',
       (() => { try { client.estimatePayloadTokens(null); return true; } catch { return false; } })());

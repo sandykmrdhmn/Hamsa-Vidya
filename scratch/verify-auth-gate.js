@@ -244,8 +244,8 @@ console.log('\n=== app.js boots the app only after the gate resolves ===');
   const scripts = [...HTML.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
   check('it is parsed before js/app.js, so `window.authGate` exists when app.js reads it',
     scripts.indexOf('js/auth-gate.js') !== -1 &&
-    scripts.indexOf('js/auth-gate.js') < scripts.indexOf('js/app.js'),
-    `auth=${scripts.indexOf('js/auth-gate.js')} app=${scripts.indexOf('js/app.js')}`);
+    scripts.findIndex(src => src.split('?')[0] === 'js/auth-gate.js') < scripts.findIndex(src => src.split('?')[0] === 'js/app.js'),
+    `auth=${scripts.findIndex(src => src.split('?')[0] === 'js/auth-gate.js')} app=${scripts.findIndex(src => src.split('?')[0] === 'js/app.js')}`);
 
   // The boot conditional. Deleting either half of this branch is what would
   // let a hostile localStorage bypass the gate, or lock the app forever.

@@ -430,6 +430,9 @@ class HamsaApp {
       this.navigate('ai-teacher');
     } else if (moduleName === 'quiz') {
       this.currentModule = 'quiz';
+      // Clicking the already-active module must not abandon an attempt or
+      // erase the selected historical result/hash by navigating to setup.
+      if (['quiz-player','quiz-result'].includes(this.currentView)) return;
       const validQuizViews = ['create-quiz', 'library', 'quiz-history'];
       const target = validQuizViews.includes(this.currentView) ? this.currentView : 'create-quiz';
       this.navigate(target);
@@ -599,11 +602,11 @@ class HamsaApp {
       this.navigate('create-quiz', {}, false);
     } else if (view === 'quiz-player') {
       const id = params.get('id');
-      if (id) this.startQuiz(id, false);
+      if (id) this.startQuiz(id, false, params.get('mode'));
       else this.navigate('dashboard', {}, false);
     } else if (view === 'quiz-result') {
       const id = params.get('id');
-      if (id) this.viewQuizResult(id, false);
+      if (id) this.viewQuizResult(id, false, params.get('attempt'));
       else this.navigate('dashboard', {}, false);
     } else if (view === 'library') {
       const tab = params.get('tab') || 'quizzes';
@@ -645,6 +648,7 @@ class HamsaApp {
     if (this.currentView === 'flashcards' && viewName !== 'flashcards' && window.flashcardsView) {
       window.flashcardsView.detachKeyboard();
       window.flashcardsView.stopSpeech();
+      window.flashcardsView.onLeaveView();
     }
     // If leaving tools view, cleanup any active timer
     if (this.currentView === 'tools' && viewName !== 'tools' && window.toolsView) {
@@ -665,6 +669,10 @@ class HamsaApp {
     if (this.currentView === 'ai-teacher' && viewName !== 'ai-teacher' && window.aiTeacherView) {
       window.aiTeacherView.onLeaveView();
     }
+    if (this.currentView === 'library' && viewName !== 'library') window.libraryView?.onLeaveView?.();
+    if (this.currentView === 'quiz-history' && viewName !== 'quiz-history') window.quizHistoryView?.onLeaveView?.();
+    if (this.currentView === 'create-quiz' && viewName !== 'create-quiz') window.createQuizView?.onLeaveView?.();
+    if (this.currentView === 'quiz-result' && viewName !== 'quiz-result') window.quizResultView?.onLeaveView?.();
     // If leaving an active quiz, save progress and release the timer + key handler.
     // Without this the practice-mode interval and the window keydown listener
     // outlived the view, so A/B/C/D keys still answered the abandoned quiz.
@@ -748,7 +756,7 @@ class HamsaApp {
       if (Object.keys(params).length > 0) {
         hashStr += `?${new URLSearchParams(params).toString()}`;
       }
-      window.location.hash = hashStr;
+      if (window.location.hash !== hashStr) window.history.pushState(null, '', hashStr);
     }
 
     // Trigger View Renderers
@@ -788,13 +796,14 @@ class HamsaApp {
   // =========================================================================
   // ACTIONS & FLOW CONTROLS
   // =========================================================================
-  startQuiz(quizId, updateHash = true) {
+  startQuiz(quizId, updateHash = true, mode = null) {
     // startQuiz bypasses navigate(), so release any previous attempt's timer
     // and key handler here too. loadAndStart() re-attaches them cleanly.
     if (this.currentView === 'quiz-player' && window.quizPlayerView) {
       window.quizPlayerView.onLeaveView();
     }
 
+    this.navigate('quiz-player', {}, false);
     this.activeQuizId = Number(quizId);
     this.currentView = 'quiz-player';
     
@@ -803,19 +812,21 @@ class HamsaApp {
     if (el) el.classList.add('active');
 
     if (updateHash) {
-      window.location.hash = `#quiz-player?id=${quizId}`;
+      const hash = `#quiz-player?id=${Number(quizId)}${['EXAM','PRACTICE'].includes(mode) ? '&mode='+mode : ''}`;
+      if (window.location.hash !== hash) window.history.pushState(null, '', hash);
     }
 
-    window.quizPlayerView.loadAndStart(quizId);
+    window.quizPlayerView.loadAndStart(quizId, mode).catch(error => this.showToast(`Could not open quiz: ${error.message}`, 'error'));
   }
 
-  viewQuizResult(quizId, updateHash = true) {
+  viewQuizResult(quizId, updateHash = true, attemptId = null) {
     // Also bypasses navigate() — covers jumping straight to a result via hash
     // while a quiz is still running.
     if (this.currentView === 'quiz-player' && window.quizPlayerView) {
       window.quizPlayerView.onLeaveView();
     }
 
+    this.navigate('quiz-result', {}, false);
     this.activeQuizId = Number(quizId);
     this.currentView = 'quiz-result';
 
@@ -824,10 +835,11 @@ class HamsaApp {
     if (el) el.classList.add('active');
 
     if (updateHash) {
-      window.location.hash = `#quiz-result?id=${quizId}`;
+      const hash = `#quiz-result?id=${Number(quizId)}${attemptId ? '&attempt='+Number(attemptId) : ''}`;
+      if (window.location.hash !== hash) window.history.pushState(null, '', hash);
     }
 
-    window.quizResultView.loadResult(quizId);
+    window.quizResultView.loadResult(quizId, attemptId).catch(error => this.showToast(`Could not open results: ${error.message}`, 'error'));
   }
 
   // =========================================================================
@@ -838,13 +850,15 @@ class HamsaApp {
    * Open the generating overlay and mark a generation as in flight.
    * @returns {boolean} false if another generation is already running.
    */
-  beginGeneration(label = 'Hamsa AI Ingestion in Progress...') {
+  beginGeneration(label = 'Preparing your quiz…') {
     if (this._isGenerating) {
       this.showToast('A generation is already running. Wait for it to finish or cancel it.', 'warning');
       return false;
     }
     this._isGenerating = true;
     this._generationCancelled = false;
+    this._generationId = (this._generationId || 0) + 1;
+    this._generationController = new AbortController();
 
     const overlay = document.getElementById('generating-overlay');
     if (overlay) overlay.classList.add('active');
@@ -874,13 +888,16 @@ class HamsaApp {
   }
 
   /** Close the overlay and clear the in-flight flag. */
-  endGeneration() {
+  endGeneration(jobId) {
+    if (jobId != null && jobId !== this._generationId) return;
     this._isGenerating = false;
     const overlay = document.getElementById('generating-overlay');
     if (overlay) overlay.classList.remove('active');
   }
 
   /** True when the user pressed Cancel during the current generation. */
+  getGenerationContext() { return { id: this._generationId, signal: this._generationController?.signal }; }
+
   isGenerationCancelled() {
     return this._generationCancelled === true;
   }
@@ -892,6 +909,7 @@ class HamsaApp {
    */
   cancelGeneration() {
     this._generationCancelled = true;
+    this._generationController?.abort();
 
     const cancelBtn = document.getElementById('generating-cancel-btn');
     if (cancelBtn) cancelBtn.disabled = true;
@@ -908,7 +926,26 @@ class HamsaApp {
   // =========================================================================
   // UNIVERSAL GENERATION STATUS HANDLER
   // =========================================================================
+  studentQuizProgress(status) {
+    const text=String(status.message||''),badge=String(status.badgeText||'');
+    let message='Preparing your quiz…',badgeText='Getting ready';
+    if(/Opening your quiz/i.test(text)){message='Opening your quiz…';badgeText='Almost ready';}
+    else if(/cooldown|quota|rate.limit/i.test(text+' '+badge)) {message='Please wait a moment. Your quiz will continue shortly…';badgeText='Please wait';}
+    else if(/retry|incomplete/i.test(text+' '+badge)) {message='Preparing your questions. Trying again…';badgeText='Please wait';}
+    else if(/ready|passed independent review/i.test(text)){message='Your questions are ready…';badgeText='Almost ready';}
+    else if(/checking|independently|review/i.test(text+' '+badge)){message='Checking your answers and explanations…';badgeText='Checking answers';}
+    else if(/writing|creating|formulating/i.test(text)){message='Creating questions from your study material…';badgeText='Creating questions';}
+    else if(/ocr|scanned/i.test(text)){message='Reading your scanned pages…';badgeText='Reading pages';}
+    else if(/read|extract|source|page/i.test(text+' '+badge)){message='Reading your study material…';badgeText='Reading pages';}
+    const count=String(status.countText||'').match(/(\d+)\s*\/\s*(\d+).*questions/i);
+    const completed=status.completedQuestions ?? (count?Number(count[1]):null);
+    const total=status.totalQuestions ?? (count?Number(count[2]):null);
+    const countText=completed!==null && total!==null?`${completed} / ${total} questions ready`:'Preparing your quiz';
+    return {...status,message,badgeText,countText};
+  }
+
   handleGenerationProgress(status) {
+    if(status?.workflow==='quiz') status=this.studentQuizProgress(status);
     const title = document.getElementById('generating-title');
     const bCard = document.getElementById('batch-progress-card');
     const bBadge = document.getElementById('batch-status-badge');
@@ -952,7 +989,8 @@ class HamsaApp {
         if (window.audioEngine) window.audioEngine.playBatchPing();
       }
 
-      if (pillsRow && status.totalBatches > 1) {
+      if(pillsRow && status.workflow==='quiz') pillsRow.innerHTML='';
+      else if (pillsRow && status.totalBatches > 1) {
         // Show only the current batch to prevent UI overflow with many batches
         pillsRow.innerHTML = `
           <div class="batch-pill active" style="margin: 0 auto;">
@@ -988,7 +1026,10 @@ class HamsaApp {
     const chosen = drillTopics[Math.floor(Math.random() * drillTopics.length)];
 
     // Refuses if a generation is already running, and resets the overlay state.
-    if (!this.beginGeneration('Generating 5-Minute AI Drill...')) return;
+    if (!this.beginGeneration('Preparing your 5-minute quiz…')) return;
+    const {id:jobId,signal}=this.getGenerationContext();
+    const prefs=window.studyPreferences?.get()||{};
+    const language=prefs.language==='AUTO'||!prefs.language?'ENGLISH':prefs.language;
 
     const updateStep = (id, active = true, completed = false) => {
       const el = document.getElementById(id);
@@ -1000,48 +1041,56 @@ class HamsaApp {
 
     try {
       updateStep('step-reading', true);
-      await new Promise(r => setTimeout(r, 250));
+      await QuizQuality.wait(250,signal);
       updateStep('step-reading', false, true);
       updateStep('step-extracting', true);
-      await new Promise(r => setTimeout(r, 250));
+      await QuizQuality.wait(250,signal);
       updateStep('step-extracting', false, true);
       updateStep('step-formulating', true);
 
-      const generated = await window.geminiService.generateQuiz({
-        sourceContent: `Competitive exam syllabus for ${chosen.topic}`,
+      const generationOptions = {
+        sourceContent: '',
+        sourceType: 'TOPIC',
+        signal, jobId, settings:prefs,
         sourceTitle: chosen.topic,
         subject: chosen.subject,
         difficulty: 'MEDIUM',
         questionCount: 5,
-        quizMode: 'PRACTICE',
-        language: 'ENGLISH',
+        quizMode: 'EXAM',
+        language,
         allowDemoFallback: false,
-        onStatusUpdate: (status) => this.handleGenerationProgress(status)
-      });
+        onStatusUpdate: (status) => {if(!signal.aborted && this._generationId===jobId) this.handleGenerationProgress(status);}
+      };
+      generationOptions.onCheckpoint=state=>this.saveQuickQuizCheckpoint(generationOptions,state,jobId,'NONE',300);
+      const generated=await window.geminiService.generateQuiz(generationOptions);
 
       updateStep('step-formulating', false, true);
       updateStep('step-crafting', true);
-      await new Promise(r => setTimeout(r, 300));
+      await QuizQuality.wait(300,signal);
       updateStep('step-crafting', false, true);
 
+      QuizQuality.abort(signal);
       const quizId = await saveNewQuiz({
         title: `⚡ 5-Min AI Drill (${chosen.subject})`,
         subject: chosen.subject,
         difficulty: 'MEDIUM',
-        quizMode: 'PRACTICE',
-        language: 'ENGLISH',
-        sourceType: 'TEXT_NOTES',
+        quizMode: 'EXAM',
+        language,
+        scoringPreset:'NONE',examDurationSeconds:300,generationModel:generated.model,generationSettings:prefs,
+        sourceType: 'TOPIC',
         sourceTitle: chosen.topic
       }, generated.questions);
 
-      this.endGeneration();
+      if(window.createQuizView?.generationDraft?.jobId===jobId) {window.createQuizView.generationDraft=null;localStorage.removeItem('hamsa_quiz_generation_draft');}
+      QuizQuality.abort(signal);
+      this.endGeneration(jobId);
       if (window.audioEngine) window.audioEngine.playFanfare();
       this.showToast('5-Min AI Drill generated successfully via Gemini AI!', 'success');
       this.startQuiz(quizId);
     } catch (err) {
-      this.endGeneration();
+      this.endGeneration(jobId);
       // A user-initiated cancel already showed its own toast.
-      if (this.isGenerationCancelled() || err.name === 'AbortError') return;
+      if (signal.aborted || err.name === 'AbortError') return;
       console.error('Quick Drill error:', err);
       this.showToast(`AI Generation failed: ${err.message}`, 'error');
     }
@@ -1058,7 +1107,10 @@ class HamsaApp {
 
     const chosenTopic = upscTopics[Math.floor(Math.random() * upscTopics.length)];
 
-    if (!this.beginGeneration('Building UPSC Master Mock Test...')) return;
+    if (!this.beginGeneration('Preparing your practice test…')) return;
+    const {id:jobId,signal}=this.getGenerationContext();
+    const prefs=window.studyPreferences?.get()||{};
+    const language=prefs.language==='AUTO'||!prefs.language?'ENGLISH':prefs.language;
 
     // Reset batch visuals
     const batchCard = document.getElementById('batch-progress-card');
@@ -1078,73 +1130,81 @@ class HamsaApp {
 
     try {
       updateStep('step-reading', true);
-      await new Promise(r => setTimeout(r, 300));
+      await QuizQuality.wait(300,signal);
       updateStep('step-reading', false, true);
       updateStep('step-extracting', true);
-      await new Promise(r => setTimeout(r, 300));
+      await QuizQuality.wait(300,signal);
       updateStep('step-extracting', false, true);
       updateStep('step-formulating', true);
 
-      const generated = await window.geminiService.generateQuiz({
-        sourceContent: `Comprehensive UPSC General Studies Prelims Syllabus on ${chosenTopic}`,
+      const generationOptions = {
+        sourceContent: '',
+        sourceType: 'TOPIC',
+        signal, jobId, settings:prefs,
         sourceTitle: chosenTopic,
         subject: 'General Knowledge',
         difficulty: 'HARD',
         questionCount: 15,
         quizMode: 'EXAM',
-        language: 'ENGLISH',
+        language,
         allowDemoFallback: false,
-        onStatusUpdate: (status) => this.handleGenerationProgress(status)
-      });
+        onStatusUpdate: (status) => {if(!signal.aborted && this._generationId===jobId) this.handleGenerationProgress(status);}
+      };
+      generationOptions.onCheckpoint=state=>this.saveQuickQuizCheckpoint(generationOptions,state,jobId,'UPSC_PRELIMS',1080);
+      const generated=await window.geminiService.generateQuiz(generationOptions);
 
       updateStep('step-formulating', false, true);
       updateStep('step-crafting', true);
-      await new Promise(r => setTimeout(r, 300));
+      await QuizQuality.wait(300,signal);
       updateStep('step-crafting', false, true);
 
+      QuizQuality.abort(signal);
       const quizId = await saveNewQuiz({
         title: '📚 UPSC / State PSC Master Mock Test',
         subject: 'General Knowledge',
         difficulty: 'HARD',
         quizMode: 'EXAM',
-        language: 'ENGLISH',
-        sourceType: 'TEXT_NOTES',
+        language,
+        scoringPreset:'UPSC_PRELIMS',examDurationSeconds:1080,generationModel:generated.model,generationSettings:prefs,
+        sourceType: 'TOPIC',
         sourceTitle: 'UPSC Prelims Master Mock'
       }, generated.questions);
 
-      this.endGeneration();
+      if(window.createQuizView?.generationDraft?.jobId===jobId) {window.createQuizView.generationDraft=null;localStorage.removeItem('hamsa_quiz_generation_draft');}
+      QuizQuality.abort(signal);
+      this.endGeneration(jobId);
       if (window.audioEngine) window.audioEngine.playFanfare();
       this.showToast('UPSC Master Mock Test formulated successfully via Gemini AI!', 'success');
       this.startQuiz(quizId);
     } catch (err) {
-      this.endGeneration();
-      if (this.isGenerationCancelled() || err.name === 'AbortError') return;
+      this.endGeneration(jobId);
+      if (signal.aborted || err.name === 'AbortError') return;
       console.error('UPSC Mock Test error:', err);
       this.showToast(`AI Generation failed: ${err.message}`, 'error');
     }
   }
 
-  // PDF Export Handlers
-  async exportQuizPdf(quizId) {
-    try {
-      this.showToast('Generating official A4 PDF Question Paper...', 'info');
-      const data = await getQuizWithQuestions(quizId);
-      if (!data || !data.questions) {
-        this.showToast('Quiz questions could not be loaded.', 'error');
-        return;
-      }
-      await window.pdfGenerator.generateQuestionPaperPdf(data, data.questions);
-      this.showToast('A4 PDF downloaded successfully! 📄', 'success');
-    } catch (err) {
-      console.error(err);
-      this.showToast(`PDF generation error: ${err.message}`, 'error');
-    }
+  saveQuickQuizCheckpoint(options,state,jobId,scoringPreset,examDurationSeconds) {
+    if(jobId!==this._generationId || this._generationController?.signal.aborted || !window.createQuizView) return;
+    const saved=JSON.parse(JSON.stringify(options));delete saved.signal;
+    saved.scoringPreset=scoringPreset;saved.examDurationSeconds=examDurationSeconds;saved.importSourceQuestions=false;
+    window.createQuizView.generationDraft={options:saved,phase:'GENERATE',state,jobId};
+    window.createQuizView.persistDraft();
   }
 
+  // PDF Export Handlers
+  async exportQuizPdf(quizId,variant='FULL',attemptId=null) {
+    const printWindow=window.open('','_blank');
+    if(!printWindow) {this.showToast('Allow pop-ups for PDF preview.','warning');return;}
+    try {
+      const data=attemptId ? await getQuizAttemptResult(quizId,attemptId) : await getQuizWithQuestions(quizId);
+      if(!data?.questions?.length) throw new Error('Quiz questions could not be loaded.');
+      await window.pdfGenerator.generateQuestionPaperPdf(data,data.questions,{variant,printWindow});
+      this.showToast('Print preview opened. Choose Save as PDF.','success');
+    } catch(error) {printWindow.close();this.showToast(`PDF export failed: ${error.message}`,'error');}
+  }
   async exportCurrentPlayingPdf() {
-    if (this.activeQuizId) {
-      await this.exportQuizPdf(this.activeQuizId);
-    }
+    if(this.activeQuizId) await this.exportQuizPdf(this.activeQuizId,'QUESTIONS');
   }
 
   // =========================================================================
@@ -1164,7 +1224,7 @@ class HamsaApp {
 
     toast.innerHTML = `
       <i data-lucide="${iconName}" style="width:18px;height:18px;flex-shrink:0;"></i>
-      <span>${message}</span>
+      <span>${SecurityUtils.escapeHtml(message)}</span>
     `;
 
     container.appendChild(toast);
@@ -1464,7 +1524,7 @@ class HamsaApp {
           <div class="search-result-item" onclick="app.closeGlobalSearch(); app.setModule('flashcards');">
             <div class="search-result-icon quiz"><i data-lucide="zap" style="width:18px;height:18px;"></i></div>
             <div class="search-result-body">
-              <div class="search-result-title">Practice 3D Flashcards</div>
+              <div class="search-result-title">Practice Flashcards &amp; Active Recall</div>
               <div class="search-result-desc">Review starred questions and memory cards</div>
             </div>
           </div>

@@ -19,6 +19,7 @@ Desktop.ini
 credentials.json
 
 # Logs & runtime
+.hamsa-ai-budget.json*
 *.log
 npm-debug.log*
 yarn-debug.log*
