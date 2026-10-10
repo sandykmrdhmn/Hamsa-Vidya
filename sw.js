@@ -30,7 +30,7 @@
  */
 
 // Bump this on release to invalidate every cache.
-const CACHE_VERSION = 'v58';
+const CACHE_VERSION = 'v59';
 const SHELL_CACHE = `hamsa-shell-${CACHE_VERSION}`;
 const RUNTIME_CACHE = `hamsa-runtime-${CACHE_VERSION}`;
 const ALL_CACHES = [SHELL_CACHE, RUNTIME_CACHE];
