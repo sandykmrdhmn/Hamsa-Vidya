@@ -334,7 +334,7 @@ class AiTeacherView {
   _sourceLabel() {
     const source = this.currentExplanation?.generation?.source;
     if (source === 'BUILTIN_PEDAGOGICAL_ENGINE') return 'Built-in lesson';
-    if (source === 'GEMINI_AI') return 'AI generated • check course sources';
+    if (String(source || '').endsWith('_AI')) return 'AI generated • check course sources';
     return 'Source unavailable • check course sources';
   }
 
@@ -771,7 +771,7 @@ class AiTeacherView {
     }
     try {
       if (window.app) window.app.showToast('Loading and extracting PDF...', 'info');
-      // Use a separate extractor so Teacher uploads cannot replace the Quiz document.
+      // Keep uploaded Teacher material separate from other study documents.
       const extractor = new PdfExtractorService();
       await extractor.loadPdfFile(file);
       const extracted = await extractor.extractTextFromPageRange(1, Math.min(extractor.metadata.pageCount, 5));
@@ -2070,6 +2070,7 @@ class AiTeacherView {
       if (document.fonts?.ready) await document.fonts.ready;
       const filename = (exp.topic || question || 'Hamsa_Lesson').replace(/[^a-zA-Z0-9_\u0900-\u097F\s-]/g, '')
         .replace(/\s+/g, '_').substring(0, 45) || 'Hamsa_Teacher_Lesson';
+      await window.UIUtils?.ensurePdfEngine?.('export');
       if (!window.html2pdf) {
         this._openPrintWindow(container.innerHTML, exp.topic);
         return;

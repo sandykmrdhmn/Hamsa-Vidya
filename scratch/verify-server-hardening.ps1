@@ -33,8 +33,8 @@ foreach ($p in @('/server.js', '/ai-proxy-policy.js', '/.hamsa-ai-budget.json', 
 
 Write-Host ""
 Write-Host "=== App files MUST still be served ==="
-foreach ($p in @('/index.html', '/css/tokens.css', '/css/components.css', '/js/app.js',
-                 '/js/ai-client.js', '/js/db.js', '/js/views/quiz-player.js',
+foreach ($p in @('/index.html', '/css/tokens.css', '/css/components/03-study-controls.css', '/js/app.js',
+                 '/js/ai-client.js', '/js/db.js', '/js/views/study-notes.js',
                  '/js/pdf-reader.js?v=20261002-pdf2', '/js/pdf-extractor.js?v=20261002-pdf2',
                  '/assets/vendor/pdf.min.js?v=20261002-pdf2', '/assets/vendor/pdf.worker.min.js?v=20261002-pdf2',
                  '/assets/vendor/marked.min.js', '/assets/icons/hamsa-logo.svg',
@@ -45,7 +45,7 @@ foreach ($p in @('/index.html', '/css/tokens.css', '/css/components.css', '/js/a
 
 Write-Host ""
 Write-Host "=== Missing assets must not be successful HTML fallbacks ==="
-foreach ($p in @('/assets/vendor/missing-pdf-reader-fixture.js', '/assets/vendor/missing-worker-fixture.js', '/js/missing-pdf-support-fixture.js', '/css/missing-style-fixture.css')) {
+foreach ($p in @('/assets/vendor/missing-pdf-reader-fixture.js', '/assets/vendor/missing-worker-fixture.js', '/js/missing-pdf-support-fixture.js', '/css/missing-style-fixture.css', '/css/components.css', '/css/ai-teacher.css')) {
   $r = Probe "$base$p"
   Check "missing asset $p returns 404" ($r.status -eq 404) "got HTTP $($r.status)"
 }

@@ -35,6 +35,9 @@ coverage/
 tmp/
 temp/
 
-# Scratch backups & anything a contributor experiments with locally
+# Local verification outputs and one-shot experiments
 scratch/_local/
+scratch/_backup/
+scratch/provider-browser-artifacts/
+scratch/.hamsa-openai-budget.json*
 scratch/*.local.js

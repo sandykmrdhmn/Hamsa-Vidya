@@ -135,9 +135,6 @@
     display: none;
   }
 
-  .quiz-nav-card {
-    padding: 1rem;
-  }
 
   .question-card {
     padding: 1.5rem 1.25rem;
@@ -147,19 +144,8 @@
     padding: 1rem;
   }
 
-  .quiz-bottom-bar {
-    flex-direction: column-reverse;
-    gap: 0.75rem;
-  }
 
-  .quiz-left-actions, .quiz-right-actions {
-    width: 100%;
-    justify-content: space-between;
-  }
 
-  .quiz-left-actions .btn, .quiz-right-actions .btn {
-    flex: 1;
-  }
 
   .export-pdf-banner {
     flex-direction: column;
@@ -204,7 +190,7 @@ button, .btn {
    PRINT MEDIA (Native Browser Print Fallback)
    ========================================================================== */
 @media print {
-  .site-header, .mobile-bottom-nav, #toast-container, .quiz-bottom-bar, .modal-overlay, .btn {
+  .site-header, .mobile-bottom-nav, #toast-container, .modal-overlay, .btn {
     display: none !important;
   }
 
@@ -236,7 +222,7 @@ button, .btn {
   /* Disable spotlight tracking on mobile (no mouse hover) */
   .metric-card::before,
   .hero-card::before,
-  .quiz-list-item::before,
+
   .glass-panel::before,
   .spotlight-card::before {
     display: none !important;

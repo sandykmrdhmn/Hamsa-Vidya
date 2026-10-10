@@ -260,8 +260,6 @@
   color: var(--color-primary-light);
 }
 
-.search-result-icon.quiz { background: rgba(99, 102, 241, 0.15); color: #818cf8; }
-.search-result-icon.question { background: rgba(16, 185, 129, 0.15); color: #34d399; }
 .search-result-icon.note { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
 .search-result-icon.action { background: rgba(236, 72, 153, 0.15); color: #f472b6; }
 

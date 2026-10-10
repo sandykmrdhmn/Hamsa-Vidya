@@ -166,8 +166,8 @@ async function main() {
     assert.equal(service.normalizeExplanation({ ...mentorshipLesson(), debateCoach: 'invalid' }), null);
   }));
   await test('Partial mentorship output retries a supported fallback instead of silently dropping the mode', () => isolated(async ({ w, service }) => {
-    w.geminiService = { getApiKey: () => '', getActiveModel: () => 'gemini-3.6-flash', discoverAvailableModels: async () => ['gemini-3.6-flash', 'gemini-3.5-flash'], sortModelsByPreference: models => models };
-    const count = transport(w, async model => ({ ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(model === 'gemini-3.6-flash' ? lesson() : mentorshipLesson()) }] } }] }) }));
+    w.geminiService = { getApiKey: () => '', getActiveModel: () => 'gemini-2.5-flash', discoverAvailableModels: async () => ['gemini-2.5-flash', 'gemini-3.5-flash'], sortModelsByPreference: models => models };
+    const count = transport(w, async model => ({ ok: true, json: async () => ({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: JSON.stringify(model === 'gemini-2.5-flash' ? lesson() : mentorshipLesson()) }] } }] }) }));
     const result = await service.explain({ question: 'Energy', language: 'ENGLISH', advancedModes: { mindmap: true } });
     assert.equal(count(), 2); assert.equal(result.model, 'gemini-3.5-flash');
     assert.ok(result.data.mindMap); assert.equal(result.data.socraticTutor, undefined);
@@ -483,13 +483,13 @@ async function main() {
     assert.ok(options.imageFile); assert.ok(options.question.includes('attached image'));
   }));
   await test('Scanned PDFs fail clearly without replacing another tab document', () => isolated(async ({ view, w }) => {
-    const quizExtractor = { currentFile: 'quiz.pdf' }; w.pdfExtractor = quizExtractor;
+    const otherExtractor = { currentFile: 'other-study.pdf' }; w.pdfExtractor = otherExtractor;
     w.PdfExtractorService = class {
       async loadPdfFile() { this.metadata = { pageCount: 20 }; }
       async extractTextFromPageRange() { return { text: '--- [PAGE 1 START] ---', extractedPages: [{ text: '' }] }; }
     };
     await view.handlePdfUpload({ target: { files: [{ name: 'scan.pdf', type: 'application/pdf', size: 100 }] } });
-    assert.equal(w.pdfExtractor, quizExtractor); assert.equal(view.attachedPdf, null);
+    assert.equal(w.pdfExtractor, otherExtractor); assert.equal(view.attachedPdf, null);
   }));
   await test('PDF attachment cannot return after Clear', () => isolated(async ({ view, w }) => {
     const pending = deferred(); w.pdfExtractor = {};

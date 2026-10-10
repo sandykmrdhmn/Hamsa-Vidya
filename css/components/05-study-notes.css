@@ -524,17 +524,7 @@ select option,
   gap: 0.65rem;
 }
 
-.btn-action-quiz {
-  background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
-  color: #fff !important;
-  font-weight: 700 !important;
-  box-shadow: 0 4px 16px rgba(99, 102, 241, 0.35);
-}
 
-.btn-action-quiz:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.5);
-}
 
 @media (max-width: 768px) {
   .study-vault-hero {
@@ -2038,106 +2028,4 @@ button.btn-link {
 
 [data-theme="LIGHT"] .summary-section-subbox-title {
   color: #3730A3;
-}
-
-/* ==========================================================================
-   TOP QUIZ GENERATION REQUEST CARD (Study Notes Reader Top Box)
-   ========================================================================== */
-.top-quiz-request-card {
-  background: var(--gradient-card), var(--bg-card);
-  border: 1.5px solid rgba(99, 102, 241, 0.35);
-  border-radius: var(--radius-2xl);
-  padding: 1.35rem 1.75rem;
-  margin-bottom: 2rem;
-  box-shadow: 0 8px 30px -8px rgba(99, 102, 241, 0.2);
-  position: relative;
-  overflow: hidden;
-  animation: fadeIn 0.3s ease;
-}
-
-.top-quiz-request-card::before {
-  content: '';
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 3.5px;
-  background: var(--gradient-brand);
-}
-
-.top-quiz-request-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 1.5rem;
-  flex-wrap: wrap;
-}
-
-.top-quiz-icon-badge {
-  width: 44px;
-  height: 44px;
-  border-radius: var(--radius-lg);
-  background: var(--gradient-brand);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 14px rgba(99, 102, 241, 0.4);
-  flex-shrink: 0;
-}
-
-.top-quiz-quick-actions {
-  display: flex;
-  align-items: center;
-  gap: 1rem;
-  flex-wrap: wrap;
-}
-
-.top-quiz-chips-group {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  flex-wrap: wrap;
-}
-
-.select-chip.select-chip-sm {
-  padding: 0.35rem 0.75rem;
-  font-size: 0.82rem;
-  min-height: 38px;
-}
-
-.btn-generate-top {
-  font-weight: 750;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.38);
-  padding: 0.65rem 1.4rem;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.btn-generate-top:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(99, 102, 241, 0.5);
-}
-
-/* ==========================================================================
-   TOP-ALIGNED MODAL (Positions quiz request at the top of the viewport)
-   ========================================================================== */
-.modal-overlay.modal-top-align {
-  align-items: flex-start !important;
-  padding-top: 3.5rem !important;
-}
-
-.modal-content.modal-top-content {
-  animation: slideDownFromTop 0.28s cubic-bezier(0.16, 1, 0.3, 1) !important;
-}
-
-@keyframes slideDownFromTop {
-  from {
-    opacity: 0;
-    transform: translateY(-36px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }

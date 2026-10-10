@@ -4,11 +4,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>HAMSA VIDYA (हंस विद्या) — AI Wisdom & Quiz Companion</title>
+  <title>HAMSA VIDYA (हंस विद्या) — AI Study Companion</title>
   <meta name="description"
-    content="AI-powered MCQ question generator and exam study companion. Ingest PDFs with precise page range boundaries or notes, practice with instant explanations, and export print-ready A4 question papers.">
+    content="AI study companion with PDF quizzes, study notes, flashcards, AI lessons, answer writing and exam alerts.">
   <meta name="keywords"
-    content="AI quiz generator, MCQ maker, PDF to quiz, UPSC preparation, study companion, flashcards, spaced repetition, Indian exams">
+    content="AI study notes, UPSC preparation, study companion, flashcards, spaced repetition, Indian exams">
   <meta name="author" content="Hamsa Vidya">
   <meta name="theme-color" content="#4F46E5">
   <link rel="icon" type="image/svg+xml" href="assets/icons/hamsa-logo.svg">
@@ -25,18 +25,18 @@
        there is no canonical domain to point at. -->
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Hamsa Vidya">
-  <meta property="og:title" content="HAMSA VIDYA — AI Quiz Generator & Study Companion">
+  <meta property="og:title" content="HAMSA VIDYA — AI Study Companion">
   <meta property="og:description"
-    content="Generate MCQ quizzes from PDFs & notes using Google Gemini AI. Practice, review & export A4 question papers. 100% free, offline-capable.">
+    content="Study PDFs and notes with Google Gemini AI, flashcards, lessons and answer writing.">
   <meta property="og:image" content="assets/icons/hamsa-logo-3d.png">
   <meta property="og:image:alt" content="Hamsa Vidya celestial swan logo">
   <meta property="og:locale" content="en_IN">
 
   <!-- Twitter Card -->
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="HAMSA VIDYA — AI Quiz Generator & Study Companion">
+  <meta name="twitter:title" content="HAMSA VIDYA — AI Study Companion">
   <meta name="twitter:description"
-    content="Generate MCQ quizzes from PDFs using AI. Free, offline-capable study tool for UPSC & competitive exams.">
+    content="AI study notes, lessons and flashcards for UPSC and competitive exams.">
 
   <!-- Schema.org Structured Data -->
   <script type="application/ld+json">
@@ -44,7 +44,7 @@
     "@context": "https://schema.org",
     "@type": "EducationalApplication",
     "name": "HAMSA VIDYA (हंस विद्या)",
-    "description": "AI-powered MCQ quiz generator and study companion. Ingest PDFs, generate quizzes, practice with explanations, and export A4 question papers.",
+    "description": "AI study companion for PDF study notes, flashcards, lessons and answer writing.",
     "applicationCategory": "EducationalApplication",
     "operatingSystem": "Web Browser",
     "offers": { "@type": "Offer", "price": "0", "priceCurrency": "INR" },
@@ -69,7 +69,7 @@
   <!-- Shared components (split from components.css) -->
   <link rel="stylesheet" href="css/components/01-base-and-header.css">
   <link rel="stylesheet" href="css/components/02-dashboard.css">
-  <link rel="stylesheet" href="css/components/03-create-quiz.css">
+  <link rel="stylesheet" href="css/components/03-study-controls.css">
   <link rel="stylesheet" href="css/components/04-motion.css">
   <link rel="stylesheet" href="css/components/05-study-notes.css">
   <link rel="stylesheet" href="css/study-notes.css">
@@ -79,12 +79,11 @@
   <link rel="stylesheet" href="css/components/09-reading-themes.css">
   <link rel="stylesheet" href="css/components/10-tools.css">
 
-  <!-- Dashboard command centre. A separate top-level file rather than an
-       11th components/ part, because components/ is byte-verified against
-       the original components.css by scratch/verify-css-split.js. -->
+  <!-- Dashboard styles follow the shared component cascade. -->
   <link rel="stylesheet" href="css/dashboard.css">
-
   <link rel="stylesheet" href="css/quiz.css">
+
+  <link rel="stylesheet" href="css/preferences.css">
   <link rel="stylesheet" href="css/exam-alerts.css">
   <link rel="stylesheet" href="css/answer-writing.css">
 
@@ -124,23 +123,18 @@
   <!-- Loaded last so focus styles win over component rules -->
   <link rel="stylesheet" href="css/a11y.css">
   <link rel="stylesheet" href="css/settings.css">
-  <link rel="stylesheet" href="css/quiz-improvements.css">
   <link rel="stylesheet" href="css/flashcard-improvements.css">
 
   <!-- Offline-Ready Vendor Libraries -->
   <script src="assets/vendor/dexie.min.js"></script>
   <script src="assets/vendor/lucide.min.js"></script>
-  <script src="assets/vendor/pdf.min.js?v=20261002-pdf2"></script>
-  <script src="js/pdf-reader.js?v=20261002-pdf2"></script>
-  <script src="assets/vendor/pdf-lib.min.js"></script>
+  <script src="js/pdf-reader.js?v=20261006-study1"></script>
   <script src="assets/vendor/jspdf.umd.min.js"></script>
-  <script src="assets/vendor/jspdf.plugin.autotable.min.js"></script>
-  <script src="assets/vendor/html2pdf.bundle.min.js"></script>
   <script src="assets/vendor/marked.min.js"></script>
 </head>
 
 <body>
-  <!-- First tab stop: lets keyboard users bypass the 9-item primary nav -->
+  <!-- First tab stop: lets keyboard users bypass the primary nav -->
   <a href="#main-content" class="skip-to-content">Skip to main content</a>
 
   <!-- ======================================================================
@@ -182,7 +176,7 @@
       </div>
 
       <p class="dash-mast-tagline">
-        Your personal AI Gurukul — quizzes, notes and answer writing that learn with you.
+        Your personal AI Gurukul — notes, flashcards and answer writing that learn with you.
       </p>
     </div>
 
@@ -220,7 +214,7 @@
       </button>
 
       <p class="auth-footnote">
-        Your quizzes, notes and progress stay on this device.
+        Your notes, flashcards and progress stay on this device.
         No account required to start.
       </p>
 
@@ -257,7 +251,7 @@
 
     <!-- Top Navigation Header -->
     <header class="site-header">
-      <!-- Two-tier header. Nine module tabs plus search, streak, two toggles and
+      <!-- Two-tier header. Eight module tabs plus search, streak, two toggles and
            the profile pill cannot share one row inside the page column — the
            tabs after "Settings" used to run off the edge. Row 1 carries the
            brand and the utilities; row 2 is the module tab rail. -->
@@ -277,7 +271,7 @@
               <span class="brand-sparkle-dot" aria-hidden="true"></span>
               <span class="brand-devanagari">(हंस विद्या)</span>
             </div>
-            <span class="brand-tagline">AI Wisdom & Quiz Companion • Sharpen Your Intellect</span>
+            <span class="brand-tagline">AI Study Companion • Sharpen Your Intellect</span>
           </div>
         </div>
 
@@ -327,18 +321,20 @@
             </button>
           </li>
           <li>
+            <button class="nav-link primary-module-btn" data-module="quiz" onclick="app.setModule('quiz')"
+              title="Create and practise quizzes from selected PDF pages">
+              <i data-lucide="list-checks" style="width:17px;height:17px;"></i>
+              <span>QUIZ</span>
+            </button>
+          </li>
+          <li>
             <button class="nav-link primary-module-btn" data-module="ai-teacher" onclick="app.setModule('ai-teacher')"
               title="AI Teacher — Understand anything, step by step">
               <i data-lucide="graduation-cap" style="width:17px;height:17px;"></i>
               <span>AI Teacher</span>
             </button>
           </li>
-          <li>
-            <button class="nav-link primary-module-btn" data-module="quiz" onclick="app.setModule('quiz')">
-              <i data-lucide="help-circle" style="width:17px;height:17px;"></i>
-              <span>Quiz</span>
-            </button>
-          </li>
+
           <li>
             <button class="nav-link primary-module-btn" data-module="study-notes" onclick="app.setModule('study-hub')"
               title="Personal Study Notes Vault & AI Tools">
@@ -386,31 +382,7 @@
       </div>
     </header>
 
-    <!-- Module Sub-Navigation Bar (Active in Quiz Module) -->
-    <nav id="module-subnav-quiz" class="module-subnav-bar">
-      <div class="subnav-container">
-        <div class="subnav-indicator-label">
-          <span class="subnav-module-title">
-            <i data-lucide="sparkles" style="width:14px;height:14px;color:var(--color-primary-light);"></i>
-            <span>Quiz Module</span>
-          </span>
-        </div>
-        <div class="subnav-items">
-          <button class="subnav-pill active" data-subview="create-quiz" onclick="app.navigate('create-quiz')">
-            <i data-lucide="plus-circle"></i>
-            <span>Create Quiz</span>
-          </button>
-          <button class="subnav-pill" data-subview="library" onclick="app.navigate('library')">
-            <i data-lucide="library"></i>
-            <span>Library</span>
-          </button>
-          <button class="subnav-pill" data-subview="quiz-history" onclick="app.navigate('quiz-history')">
-            <i data-lucide="history"></i>
-            <span>History</span>
-          </button>
-        </div>
-      </div>
-    </nav>
+
 
     <!-- Main Content Views Container -->
     <main class="main-content" id="main-content" tabindex="-1">
@@ -419,9 +391,9 @@
 
       <!-- Feature 1: Dashboard View -->
       <section id="view-dashboard" class="view-section active"></section>
+      <section id="view-quiz" class="view-section"></section>
 
-      <!-- Feature 2: Create Quiz View (PDF & Text Ingestion) -->
-      <section id="view-create-quiz" class="view-section"></section>
+
 
       <!-- Feature 3: Study Notes & Knowledge Vault -->
       <section id="view-study-notes" class="view-section"></section>
@@ -432,17 +404,14 @@
       <!-- Feature 3.8: Answer Writing & AI Evaluation Studio -->
       <section id="view-answer-writing" class="view-section"></section>
 
-      <!-- Feature 4: Active Quiz Playback Interface -->
-      <section id="view-quiz-player" class="view-section"></section>
 
-      <!-- Feature 5: Quiz Results & Detailed Review -->
-      <section id="view-quiz-result" class="view-section"></section>
 
-      <!-- Feature 7: Library & Bookmarks -->
+
+
+      <!-- Feature 7: Saved Study Library -->
       <section id="view-library" class="view-section"></section>
 
-      <!-- Feature 7.5: Quiz History -->
-      <section id="view-quiz-history" class="view-section"></section>
+
 
       <!-- Feature 7.8: Tools Studio (Fully Functional PDF & Image Utilities) -->
       <section id="view-tools" class="view-section"></section>
@@ -460,14 +429,15 @@
         <i data-lucide="layout-dashboard"></i>
         <span>Home</span>
       </button>
+      <button class="mobile-nav-item" data-view="quiz" onclick="app.navigate('quiz')">
+        <i data-lucide="list-checks"></i>
+        <span>QUIZ</span>
+      </button>
       <button class="mobile-nav-item" data-view="ai-teacher" onclick="app.navigate('ai-teacher')">
         <i data-lucide="graduation-cap"></i>
         <span>Teacher</span>
       </button>
-      <button class="mobile-nav-item" data-view="create-quiz" onclick="app.navigate('create-quiz')">
-        <i data-lucide="sparkles"></i>
-        <span>Create</span>
-      </button>
+
       <button class="mobile-nav-item" data-view="flashcards" onclick="app.navigate('flashcards')">
         <i data-lucide="zap"></i>
         <span>Cards</span>
@@ -514,7 +484,7 @@
 
     <!-- Animated Multi-Step Generating Modal (Universal) -->
     <div id="generating-overlay" class="generating-overlay">
-      <div class="generating-box">
+      <div class="generating-box" role="dialog" aria-modal="true" aria-labelledby="generating-title" tabindex="-1">
         <!-- Holographic Laser Scanner Beam -->
         <div class="scanner-laser-beam"></div>
 
@@ -537,18 +507,19 @@
           </div>
         </div>
 
-        <h3 id="generating-title" style="font-size:1.25rem;">Preparing your quiz…</h3>
+        <h3 id="generating-title" aria-live="polite" style="font-size:1.25rem;">Preparing your study material…</h3>
 
         <!-- Live Batch Tracking Card -->
         <div id="batch-progress-card" class="batch-progress-card" style="display:none;">
           <div class="batch-progress-header">
             <span id="batch-status-badge" class="badge badge-primary">Getting ready</span>
-            <span id="batch-questions-count" class="batch-questions-count">Preparing your quiz</span>
+            <span id="batch-questions-count" class="batch-questions-count">Preparing your study material</span>
           </div>
-          <div class="batch-progress-bar">
+          <div class="batch-progress-bar" role="progressbar" aria-label="Study generation progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div id="batch-progress-fill" class="batch-progress-fill" style="width: 0%;"></div>
           </div>
           <div id="batch-pills-container" class="batch-pills-row"></div>
+          <p id="generation-detail" class="generation-detail"></p>
         </div>
 
         <div class="step-progress-list">
@@ -558,15 +529,22 @@
           </div>
           <div class="step-progress-item" id="step-extracting">
             <i data-lucide="circle-dot"></i>
-            <span>Finding the key topics…</span>
+            <span>Extracting selected pages…</span>
           </div>
+
+
           <div class="step-progress-item" id="step-formulating">
             <i data-lucide="circle-dot"></i>
-            <span>Creating your questions…</span>
+            <span>Preparing your study material…</span>
           </div>
           <div class="step-progress-item" id="step-crafting">
             <i data-lucide="circle-dot"></i>
-            <span>Checking answers and explanations…</span>
+            <span>Completing your study material…</span>
+          </div>
+
+          <div class="step-progress-item" id="step-finalizing">
+            <i data-lucide="circle-dot"></i>
+            <span>Saving your study material…</span>
           </div>
         </div>
 
@@ -586,7 +564,7 @@
         <div class="search-palette-header">
           <div class="search-input-wrap">
             <i data-lucide="search" class="search-palette-icon"></i>
-            <input type="text" id="global-search-input" placeholder="Search quizzes, questions, study notes, topics..."
+            <input type="text" id="global-search-input" placeholder="Search study notes, topics and chapters..."
               autocomplete="off" spellcheck="false" oninput="app.handleSearchInput(event)"
               onkeydown="app.handleSearchKeydown(event)">
             <button id="search-clear-btn" class="search-clear-btn" onclick="app.clearGlobalSearch()"
@@ -603,16 +581,8 @@
             <span>All Results</span>
             <span class="search-tab-count" id="count-all">0</span>
           </button>
-          <button class="search-tab-pill" data-filter="QUIZZES" onclick="app.setSearchCategoryFilter('QUIZZES')">
-            <i data-lucide="help-circle" style="width:13px;height:13px;"></i>
-            <span>Quizzes</span>
-            <span class="search-tab-count" id="count-quizzes">0</span>
-          </button>
-          <button class="search-tab-pill" data-filter="QUESTIONS" onclick="app.setSearchCategoryFilter('QUESTIONS')">
-            <i data-lucide="check-square" style="width:13px;height:13px;"></i>
-            <span>Questions</span>
-            <span class="search-tab-count" id="count-questions">0</span>
-          </button>
+
+
           <button class="search-tab-pill" data-filter="NOTES" onclick="app.setSearchCategoryFilter('NOTES')">
             <i data-lucide="book-open" style="width:13px;height:13px;"></i>
             <span>Study Notes</span>
@@ -625,7 +595,7 @@
           <div class="search-empty-state">
             <i data-lucide="compass" style="width:36px;height:36px;color:var(--color-primary-light);opacity:0.7;"></i>
             <p style="font-weight:600;margin-top:0.5rem;color:var(--text-main);">Type to search across everything</p>
-            <span style="font-size:0.85rem;color:var(--text-muted);">Quizzes, questions, options, digital textbook notes
+            <span style="font-size:0.85rem;color:var(--text-muted);">Saved study notes, digital textbooks
               & chapters</span>
           </div>
         </div>
@@ -895,57 +865,52 @@
         </a>
       </div>
       <p class="hv-footer-copy">
-        <strong>Hamsa Vidya</strong> — AI Wisdom &amp; Quiz Companion.
+        <strong>Hamsa Vidya</strong> — AI Study Companion.
         Your progress stays on this device.
       </p>
     </footer>
   </div>
 
   <!-- Application Modules -->
-  <script src="js/sanitizer.js"></script>
-  <script src="js/ui-utils.js"></script>
-  <script src="js/study-preferences.js"></script>
-  <script src="js/ai-client.js?v=20261003-quiz-direct1"></script>
-  <script src="js/audio-engine.js"></script>
-  <script src="js/quiz-quality.js"></script>
+  <script src="js/sanitizer.js?v=20261006-study1"></script>
+  <script src="js/ui-utils.js?v=20261006-study1"></script>
+  <script src="js/study-preferences.js?v=20261006-study1"></script>
+  <script src="js/ai-client.js?v=20261009-quiz5"></script>
+  <script src="js/audio-engine.js?v=20261006-study1"></script>
   <script src="assets/vendor/katex.min.js"></script>
-  <script src="js/study-format.js"></script>
-  <script src="js/flashcard-tools.js"></script>
-  <script src="js/quiz-engine.js?v=20261003-quiz-direct1"></script>
-  <script src="js/quiz-source.js"></script>
-  <script src="js/db.js"></script>
-  <script src="js/flashcard-store.js"></script>
-  <script src="js/pdf-extractor.js?v=20261003-quiz-direct1"></script>
-  <script src="js/pdf-generator.js"></script>
-  <script src="js/gemini-service.js?v=20261002-quiz-speed1"></script>
-  <script src="js/charts.js"></script>
-  <script src="js/gurukul-wisdom.js"></script>
-  <script src="js/views/dashboard.js"></script>
-  <script src="js/views/create-quiz.js?v=20261005-direct-start2"></script>
-  <script src="js/views/study-notes.js"></script>
-  <script src="js/views/flashcards.js"></script>
-  <script src="js/views/quiz-player.js?v=20261003-quiz-direct1"></script>
-  <script src="js/views/quiz-result.js"></script>
-  <script src="js/views/library.js"></script>
-  <script src="js/views/quiz-history.js"></script>
-  <script src="js/views/tools.js"></script>
-  <script src="js/views/settings.js"></script>
-  <script src="js/exam-profile.js"></script>
-  <script src="js/eligibility-engine.js"></script>
-  <script src="js/exam-service.js"></script>
-  <script src="js/notification-summary-service.js"></script>
-  <script src="js/views/exam-alerts.js"></script>
-  <script src="js/answer-writing-service.js"></script>
-  <script src="js/views/answer-writing.js"></script>
-  <script src="js/ai-advisor.js"></script>
-  <script src="js/ai-teacher-service.js"></script>
-  <script src="js/views/ai-teacher.js"></script>
+  <script src="js/study-format.js?v=20261006-study1"></script>
+  <script src="js/flashcard-tools.js?v=20261006-study1"></script>
+  <script src="js/db.js?v=20261009-quiz6"></script>
+  <script src="js/flashcard-store.js?v=20261006-study1"></script>
+  <script src="js/pdf-extractor.js?v=20261006-study1"></script>
+  <script src="js/pdf-generator.js?v=20261006-study1"></script>
+  <script src="js/gemini-service.js?v=20261006-study1"></script>
+  <script src="js/quiz-tools.js?v=20261009-quiz6"></script>
+  <script src="js/quiz-service.js?v=20261009-quiz6"></script>
+  <script src="js/gurukul-wisdom.js?v=20261006-study1"></script>
+  <script src="js/views/dashboard.js?v=20261006-study1"></script>
+  <script src="js/views/quiz.js?v=20261010-feedback1"></script>
+  <script src="js/views/study-notes.js?v=20261006-study1"></script>
+  <script src="js/views/flashcards.js?v=20261006-study1"></script>
+  <script src="js/views/library.js?v=20261006-study1"></script>
+  <script src="js/views/tools.js?v=20261006-study1"></script>
+  <script src="js/views/settings.js?v=20261007-quiz1"></script>
+  <script src="js/exam-profile.js?v=20261006-study1"></script>
+  <script src="js/eligibility-engine.js?v=20261006-study1"></script>
+  <script src="js/exam-service.js?v=20261006-study1"></script>
+  <script src="js/notification-summary-service.js?v=20261006-study1"></script>
+  <script src="js/views/exam-alerts.js?v=20261006-study1"></script>
+  <script src="js/answer-writing-service.js?v=20261006-study1"></script>
+  <script src="js/views/answer-writing.js?v=20261006-study1"></script>
+  <script src="js/ai-advisor.js?v=20261006-study1"></script>
+  <script src="js/ai-teacher-service.js?v=20261006-study1"></script>
+  <script src="js/views/ai-teacher.js?v=20261006-study1"></script>
 
   <!-- Auth gate MUST be parsed before app.js — the last line of app.js checks
        `window.authGate` to decide whether to run `init()` immediately or wait
        behind the login screen. -->
-  <script src="js/auth-gate.js"></script>
-  <script src="js/app.js?v=20261003-quiz-direct1"></script>
+  <script src="js/auth-gate.js?v=20261006-study1"></script>
+  <script src="js/app.js?v=20261007-quiz1"></script>
 </body>
 
 </html>

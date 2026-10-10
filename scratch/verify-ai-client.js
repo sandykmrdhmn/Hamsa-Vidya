@@ -26,7 +26,7 @@ function startFakeServer(configured) {
     let body = '';
     req.on('data', c => body += c);
     req.on('end', () => {
-      seen.push({ url: req.url, method: req.method, body });
+      seen.push({ url: req.url, method: req.method, body, headers: req.headers });
       if (req.url === '/api/gemini/status') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         return res.end(JSON.stringify({ configured }));
@@ -46,6 +46,7 @@ function makeSandbox(port, storedKey) {
   if (storedKey) store.set('hamsa_gemini_api_key', storedKey);
 
   const outbound = [];
+  const requests = [];
 
   const sandbox = {
     console,
@@ -59,6 +60,7 @@ function makeSandbox(port, storedKey) {
     },
     fetch: (url, init) => {
       outbound.push(String(url));
+      requests.push({ url: String(url), init });
       // Resolve app-relative proxy paths against the local test server.
       const abs = String(url).startsWith('/') ? `http://127.0.0.1:${port}${url}` : String(url);
       return fetch(abs, init);
@@ -70,7 +72,7 @@ function makeSandbox(port, storedKey) {
 
   vm.createContext(sandbox);
   new vm.Script(SRC, { filename: 'ai-client.js' }).runInContext(sandbox);
-  return { sandbox, outbound };
+  return { sandbox, outbound, requests };
 }
 
 (async () => {
@@ -78,7 +80,7 @@ function makeSandbox(port, storedKey) {
   console.log('\n=== PROXY mode (server has a key) ===');
   {
     const { server, port, seen } = await startFakeServer(true);
-    const { sandbox, outbound } = makeSandbox(port, '');
+    const { sandbox, outbound, requests } = makeSandbox(port, '');
     const client = sandbox.window.aiClient;
 
     await client.probeServerKey();
@@ -102,6 +104,13 @@ function makeSandbox(port, storedKey) {
 
     const listRes = await client.fetchListModels();
     check('listModels used proxy', outbound.includes('/api/gemini/models') && listRes.ok);
+    sandbox.localStorage.setItem('hamsa_gemini_api_key', 'SHOULD-NOT-BE-SENT');
+    await client.fetchGenerateContent('gemini-2.5-flash', { contents: [] }, {forceProxy:true});
+    await client.fetchListModels({forceProxy:true});
+    check('proxy never receives a saved personal key in headers or body',
+      requests.filter(r => r.url.startsWith('/api/gemini/')).every(r =>
+        !r.init?.headers?.['x-goog-api-key'] && !JSON.stringify(r.init || {}).includes('SHOULD-NOT-BE-SENT')) &&
+      seen.every(r => !r.headers['x-goog-api-key'] && !r.body.includes('SHOULD-NOT-BE-SENT')));
 
     server.close();
   }
@@ -109,8 +118,8 @@ function makeSandbox(port, storedKey) {
   // --------------------------------------------------------------- DIRECT mode
   console.log('\n=== DIRECT mode (no server key, personal key present) ===');
   {
-    const { server, port } = await startFakeServer(false);
-    const { sandbox, outbound } = makeSandbox(port, 'my-personal-key');
+    const { server, port, seen } = await startFakeServer(false);
+    const { sandbox, outbound, requests } = makeSandbox(port, 'my-personal-key');
     const client = sandbox.window.aiClient;
 
     await client.probeServerKey();
@@ -125,7 +134,16 @@ function makeSandbox(port, storedKey) {
 
     const genCall = outbound.find(u => u.includes('gemini-2.0-flash'));
     check('direct URL includes generateContent', genCall && genCall.includes(':generateContent'), `got ${genCall}`);
-    check('direct URL carries the personal key', genCall && genCall.includes('key=my-personal-key'), `got ${genCall}`);
+    check('direct URL contains no credentials', genCall && !genCall.includes('key=') && !genCall.includes('my-personal-key'));
+    check('direct generation authenticates through the API key header',
+      requests.find(r => r.url === genCall)?.init?.headers?.['x-goog-api-key'] === 'my-personal-key' &&
+      seen.find(r => r.url.includes('gemini-2.0-flash'))?.headers['x-goog-api-key'] === 'my-personal-key');
+    await client.fetchListModels();
+    const listCall=requests.find(r => r.url.endsWith('/v1beta/models'));
+    check('direct model discovery uses header authentication without URL credentials',
+      listCall?.init?.headers?.['x-goog-api-key'] === 'my-personal-key' &&
+      outbound.every(u => !u.includes('my-personal-key') && !u.includes('key=')));
+    check('request diagnostics never contain the personal key', !JSON.stringify(client.getRequestDiagnostics()).includes('my-personal-key'));
 
     server.close();
   }

@@ -2,7 +2,7 @@
  * Verify Phase 3 (data honesty):
  *   H6 — scraper no longer fabricates data; estimated fields are flagged
  *   H7 — eligibility engine won't say NOT_ELIGIBLE based on inferred numbers
- *   H5 — analytics/history come from the attempts log, so retakes accumulate
+ *   H5 — active study analytics omit archived module records
  */
 
 const fs = require('fs');
@@ -36,7 +36,7 @@ function makeTable(autoId = true) {
     orderBy() { return this; }, reverse() { return this; },
     where() { this._w = true; return this; },
     equals(v) { this._eq = v; return this; },
-    filter() { return this; }, or() { return this; }
+    filter(predicate) { return { toArray: async () => this.rows.filter(predicate).map(row => ({ ...row })), count: async () => this.rows.filter(predicate).length }; }, or() { return this; }
   };
 }
 
@@ -46,21 +46,11 @@ function loadDb() {
   db.version = () => chain;
   for (const t of TABLES) db[t] = makeTable(t !== 'exams');
 
-  // attempts.where('quizId').equals(n).toArray() needs to actually filter.
-  db.attempts.where = function () {
-    return {
-      equals: (v) => ({
-        toArray: async () => db.attempts.rows.filter(r => r.quizId === v).map(r => ({ ...r })),
-        delete: async () => { db.attempts.rows = db.attempts.rows.filter(r => r.quizId !== v); }
-      })
-    };
-  };
-
-  db.transaction = async (_m, _t, fn) => fn();
+  db.transaction = async (...args) => args.at(-1)();
 
   const store = new Map();
   const sandbox = {
-    console, setTimeout, clearTimeout, setInterval, clearInterval, Date,
+    console, setTimeout, clearTimeout, setInterval, clearInterval, Date, crypto: require('crypto').webcrypto,
     Dexie: function () { return db; },
     localStorage: {
       getItem: k => (store.has(k) ? store.get(k) : null),
@@ -76,7 +66,7 @@ function loadDb() {
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(DB_SRC, { filename: 'db.js' }).runInContext(sandbox);
-  for (const file of ['quiz-quality.js','flashcard-tools.js','flashcard-store.js']) new vm.Script(fs.readFileSync(path.join(ROOT,'js',file),'utf8'),{filename:file}).runInContext(sandbox);
+  for (const file of ['flashcard-tools.js','flashcard-store.js']) new vm.Script(fs.readFileSync(path.join(ROOT,'js',file),'utf8'),{filename:file}).runInContext(sandbox);
   new vm.Script(ELIG_SRC, { filename: 'eligibility-engine.js' }).runInContext(sandbox);
   return { sandbox, db };
 }
@@ -463,83 +453,40 @@ function loadDb() {
       /_renderProfileGapStrip/.test(eaSrc) && /blocks \$\{f\.blockedCount\}/.test(eaSrc));
   }
 
-  // =========================================================== H5: attempts
-  console.log('\n=== H5: retakes accumulate instead of overwriting ===');
+  console.log('\n=== Active study activity excludes archived records ===');
   {
     const { sandbox, db } = loadDb();
-
-    db.quizzes.rows = [
-      { id: 1, title: 'Polity Quiz', subject: 'Polity', totalQuestions: 10, completedAt: '2026-09-03T10:00:00Z', correct: 8, incorrect: 2, skipped: 0, percentage: 80, durationSeconds: 300 },
-      { id: 2, title: 'History Quiz', subject: 'History', totalQuestions: 10, completedAt: '2026-09-02T10:00:00Z', correct: 5, incorrect: 5, skipped: 0, percentage: 50, durationSeconds: 400 }
-    ];
-    // Quiz 1 attempted three times, improving each time. The quiz row only holds
-    // the last one (80%), but all three are in the attempts log.
-    db.attempts.rows = [
-      { id: 1, quizId: 1, attemptedAt: '2026-09-01T10:00:00Z', correct: 4, incorrect: 6, skipped: 0, percentage: 40, durationSeconds: 500 },
-      { id: 2, quizId: 1, attemptedAt: '2026-09-02T10:00:00Z', correct: 6, incorrect: 4, skipped: 0, percentage: 60, durationSeconds: 400 },
-      { id: 3, quizId: 1, attemptedAt: '2026-09-03T10:00:00Z', correct: 8, incorrect: 2, skipped: 0, percentage: 80, durationSeconds: 300 },
-      { id: 4, quizId: 2, attemptedAt: '2026-09-02T10:00:00Z', correct: 5, incorrect: 5, skipped: 0, percentage: 50, durationSeconds: 400 }
-    ];
-
+    const now = new Date().toISOString();
+    db.quizzes.rows = [{ id: 1, title: 'Archived quiz', correct: 8, percentage: 80 }];
+    db.questions.rows = [{ id: 1, quizId: 1, questionText: 'Archived question' }];
+    db.attempts.rows = [{ id: 1, quizId: 1, attemptedAt: now }];
+    db.notes.rows = [{ id: 1, title: 'Matter', content: 'Matter occupies space.', createdAt: now }];
+    db.customDecks.rows = [{ id: 1, title: 'Science' }];
+    db.customCards.rows = [{ id: 1, deckId: 1, front: 'Define mass', back: 'A measure of matter.' }];
+    db.cardReviews.rows = [{ id: 1, cardKey: 'q:1', lastReviewedAt: now }, { id: 2, cardKey: 'custom:1', lastReviewedAt: now }];
+    db.answers.rows = [{ id: 1, question: 'Explain matter', createdAt: now }];
+    db.aiTeacherExplanations.rows = [{ id: 1, question: 'Explain mass', createdAt: now }];
+    const archived = JSON.stringify([db.quizzes.rows, db.questions.rows, db.attempts.rows]);
+    for (const key of ['quizzes', 'questions', 'attempts']) db[key].toArray = async () => { throw new Error('Active UI read archived table ' + key); };
     const stats = await sandbox.getDashboardStats();
-    check('counts every attempt, not every quiz', stats.totalQuizzesTaken === 4, `got ${stats.totalQuizzesTaken}`);
-    check('questions completed sums all attempts', stats.questionsCompleted === 40, `got ${stats.questionsCompleted}`);
-    check('correct answers sums all attempts', stats.correctAnswers === 23, `got ${stats.correctAnswers}`);
-    check('average score across attempts', stats.averageScore === 58, `got ${stats.averageScore}`);
-    check('best score preserved from any attempt', stats.bestScore === 80, `got ${stats.bestScore}`);
-
-    const analytics = await sandbox.getAnalyticsData();
-    check('trend has one point per attempt', analytics.trend.length === 4, `got ${analytics.trend.length}`);
-    check('trend is chronological', analytics.trend[0].percentage === 40 && analytics.trend[3].percentage === 80,
-      analytics.trend.map(t => t.percentage).join(','));
-    check('repeat attempts labelled', analytics.trend.some(t => /attempt 2/.test(t.title)),
-      analytics.trend.map(t => t.title).join(' | '));
-    check('donut totals across attempts', analytics.donut.correct === 23 && analytics.donut.incorrect === 17,
-      JSON.stringify(analytics.donut));
-    const polity = analytics.subjects.find(s => s.subject === 'Polity');
-    check('subject mastery aggregates attempts', polity && polity.questionsAttempted === 30,
-      JSON.stringify(polity));
-
-    const history = await sandbox.getAttemptHistory();
-    check('history has one row per attempt', history.length === 4, `got ${history.length}`);
-    check('history newest first', history[0].percentage === 80 || history[0].percentage === 50);
-    check('attempt numbers assigned', history.some(h => h.attemptNumber === 1 && h.totalAttempts === 3));
-    check('rows carry quiz metadata', history.every(h => !!h.title));
-    check('rows expose quiz id for actions', history.every(h => h.id === h.quizId));
-
-    const summary = await sandbox.getQuizAttemptSummary(1);
-    check('summary counts 3 attempts', summary.totalAttempts === 3, `got ${summary.totalAttempts}`);
-    check('summary latest is the newest', summary.latest.percentage === 80);
-    check('summary best found', summary.best.percentage === 80);
-    check('summary improvement computed', summary.improvementFromPrevious === 20,
-      `got ${summary.improvementFromPrevious}`);
-    check('summary flags personal best', summary.isPersonalBest === true);
-  }
-
-  console.log('\n=== H5: legacy data without an attempts log still counts ===');
-  {
-    const { sandbox, db } = loadDb();
-    db.quizzes.rows = [
-      { id: 1, title: 'Old Quiz', subject: 'Polity', totalQuestions: 10, completedAt: '2025-01-01T10:00:00Z', correct: 7, incorrect: 3, skipped: 0, percentage: 70, durationSeconds: 300 }
-    ];
-    db.attempts.rows = []; // pre-dates the attempts log
-
-    const stats = await sandbox.getDashboardStats();
-    check('legacy quiz still counted', stats.totalQuizzesTaken === 1, `got ${stats.totalQuizzesTaken}`);
-    check('legacy score preserved', stats.bestScore === 70);
-
-    const analytics = await sandbox.getAnalyticsData();
-    check('legacy quiz appears in trend', analytics.trend.length === 1);
-
-    const history = await sandbox.getAttemptHistory();
-    check('legacy quiz appears in history', history.length === 1 && history[0].title === 'Old Quiz');
-  }
-
-  // ==================================================== M1: duplicate removed
-  console.log('\n=== M1: duplicate function definition ===');
-  {
-    const defs = (DB_SRC.match(/async function getCompletedQuizHistory/g) || []).length;
-    check('getCompletedQuizHistory defined exactly once', defs === 1, `found ${defs}`);
+    check('active counters reflect notes, cards, written answers and lessons', stats.totalNotesCount === 1 && stats.totalCustomCards === 1 && stats.answerCount === 1 && stats.teacherCount === 1);
+    check('retired review records do not inflate counters', stats.totalCardReviews === 1);
+    check('quiz accuracy counters are absent', !('totalQuizzesTaken' in stats) && !('overallAccuracy' in stats));
+    const heatmap = await sandbox.getActivityHeatmap(1);
+    check('heatmap counts the four active study actions', heatmap.total === 4, 'got ' + heatmap.total);
+    const momentum = await sandbox.getStudyMomentum();
+    check('momentum uses note/review/answer activity', momentum.notesThisWeek === 1 && momentum.reviewsThisWeek === 1 && momentum.answersThisWeek === 1);
+    check('missing prior-week baseline stays unknown', momentum.notesDelta === null && momentum.reviewsDelta === null && momentum.answersDelta === null);
+    check('removed live quiz APIs are undefined', ['saveNewQuiz', 'getQuizWithQuestions', 'getAttemptHistory', 'getAnalyticsData', 'computeQuizScore'].every(key => typeof sandbox[key] === 'undefined'));
+    check('archived browser records were not changed', JSON.stringify([db.quizzes.rows, db.questions.rows, db.attempts.rows]) === archived);
+    const library = await sandbox.getFlashcardLibrary();
+    check('flashcards only contain notes and custom cards', library.cards.length > 0 && library.cards.every(card => ['NOTE', 'CUSTOM'].includes(card.sourceDeckType)) && !('quizzes' in library));
+    check('retired card keys cannot be opened', await sandbox.getFlashcardByKey('q:1') === null);
+    await sandbox.cleanupFlashcardReviews();
+    check('cleanup preserves archived review data', db.cardReviews.rows.some(row => row.cardKey === 'q:1'));
+    const search = await sandbox.searchGlobalContent('Matter');
+    check('global search returns notes only', search.notes.length === 1 && !('quizzes' in search) && !('questions' in search));
+    check('symbol-sensitive card answers work without quiz code', sandbox.FlashcardTools.answerMatches('mass', 'MASS') && !sandbox.FlashcardTools.answerMatches('CO', 'Co'));
   }
 
   console.log(`\nRESULT: ${pass} passed, ${fail} failed`);

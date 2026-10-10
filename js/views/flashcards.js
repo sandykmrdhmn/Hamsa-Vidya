@@ -125,7 +125,7 @@ class FlashcardsView {
       title: 'Remember it',
       titleAccent: 'one card at a time.',
       hindi: 'स्मृति अभ्यास — समझें, याद करें, दोहराएँ',
-      tagline: 'Revise your quizzes, notes and custom cards.',
+      tagline: 'Revise your study notes and custom cards.',
       stats: [
         { value: dueCount, label: 'Due now' },
         { value: l.cards.length, label: 'Unique cards' },
@@ -139,16 +139,15 @@ class FlashcardsView {
           onclick: 'flashcardsView.openCreateDeckModal()',
         },
         {
-          label: 'Create Quiz',
-          icon: 'sparkles',
-          onclick: "app.navigate('create-quiz')",
+          label: 'Study Notes',
+          icon: 'book-open',
+          onclick: "app.navigate('study-notes')",
           variant: 'ghost',
         },
       ],
     });
     const term = this.searchQuery.toLocaleLowerCase().trim();
     let decks = [
-      ...l.quizzes.map((d) => ({ ...d, type: 'QUIZ' })),
       ...l.notes.map((d) => ({ ...d, type: 'NOTE' })),
       ...l.customDecks.map((d) => ({ ...d, type: 'CUSTOM' })),
     ];
@@ -193,7 +192,7 @@ class FlashcardsView {
     const saved = this.savedSession();
     this.container.innerHTML = `<div class="page-column">${heroHtml}
       ${saved ? `<div class="glass-panel fc-resume"><div><strong>Continue saved session</strong><p>${e(saved.deck?.title)} · ${saved.ratings?.length || 0} unique cards reviewed</p></div><button class="btn btn-primary" data-action="resume">Resume</button><button class="btn btn-secondary" data-action="discard">Discard session</button></div>` : ''}
-      <div class="fc-smart-grid"><button class="glass-panel fc-smart" data-action="due"><strong>Due now · ${dueCount}</strong><span>${dueCount ? 'Review scheduled cards' : 'No scheduled reviews due right now'}</span></button><button class="glass-panel fc-smart" data-action="new"><strong>Learn new cards · ${l.newCards.length}</strong><span>Use your daily new-card allowance</span></button><button class="glass-panel fc-smart" data-action="bookmarks"><strong>Bookmarked questions · ${l.cards.filter((c) => c.isBookmarked).length}</strong><span>Target saved quiz questions</span></button><button class="glass-panel fc-smart" data-action="all"><strong>All library questions</strong><span>Shuffle valid quiz cards</span></button></div>
+      <div class="fc-smart-grid"><button class="glass-panel fc-smart" data-action="due"><strong>Due now · ${dueCount}</strong><span>${dueCount ? 'Review scheduled cards' : 'No scheduled reviews due right now'}</span></button><button class="glass-panel fc-smart" data-action="new"><strong>Learn new cards · ${l.newCards.length}</strong><span>Use your daily new-card allowance</span></button><button class="glass-panel fc-smart" data-action="all"><strong>All saved cards</strong><span>Shuffle notes and custom cards</span></button></div>
       <details class="glass-panel fc-preferences"><summary>Study preferences & learning status</summary><div class="fc-row"><label>New cards/day<input type="number" min="1" max="1000" data-pref="newLimit" value="${this.newLimit}"></label><label>Review cards/session<input type="number" min="1" max="1000" data-pref="reviewLimit" value="${this.reviewLimit}"></label><label>Preferred recall<select data-pref="mode"><option value="FLIP" ${this.mode === 'FLIP' ? 'selected' : ''}>Flip & recall</option><option value="TYPE" ${this.mode === 'TYPE' ? 'selected' : ''}>Type your answer</option></select></label><label><input type="checkbox" data-pref="swipeRatings" ${this.swipeRatings ? 'checked' : ''}> Swipe ratings</label><span>${l.learning.length} learning cards · ${l.reviewedToday} reviewed today</span></div><p>Swipe left: Again; right: Good, after revealing. Code, tables and formula scrolling never rate. Again schedules 10 minutes and repeats the card later in this session, up to three ratings. Daily limits guide smart decks; manual decks remain available.</p></details>
       <div class="deck-vault-filter-bar fc-toolbar"><input id="deck-search-input" aria-label="Search decks" placeholder="Search decks…" value="${e(this.searchQuery)}"><select id="fc-sort" aria-label="Sort decks">${[
         ['DUE', 'Most due first'],
@@ -211,7 +210,6 @@ class FlashcardsView {
         ['ALL', 'All'],
         ['DUE', 'Due'],
         ['CUSTOM', 'Custom'],
-        ['QUIZ', 'Quizzes'],
         ['NOTE', 'Notes'],
       ]
         .map(
@@ -226,7 +224,7 @@ class FlashcardsView {
             (d) =>
               `<article class="glass-panel fc-deck"><span class="badge badge-primary">${e(d.subject || 'General Study')} · ${d.type}</span><h3>${e(d.title)}</h3><p>${e(d.description || '')}</p><span>${d.cardCount} usable cards · ${d.dueCount} due</span>${
                 d.excludedCount
-                  ? `<details class="fc-excluded"><summary>${d.excludedCount} questions need attention</summary><ul>${Object.entries(
+                  ? `<details class="fc-excluded"><summary>${d.excludedCount} cards need attention</summary><ul>${Object.entries(
                       d.excludedReasons,
                     )
                       .map(
@@ -234,9 +232,9 @@ class FlashcardsView {
                       )
                       .join(
                         '',
-                      )}</ul><p>Review these questions in Library before using their answers for recall.</p></details>`
+                      )}</ul><p>Review these cards before using their answers for recall.</p></details>`
                   : ''
-              }<div class="fc-row"><button class="btn btn-primary btn-sm" data-action="study-deck" data-id="${Number(d.id)}" data-type="${d.type}" ${d.cardCount ? '' : 'disabled title="No usable cards yet"'}>Study</button>${d.type === 'QUIZ' && d.excludedCount ? '<button class="btn btn-secondary btn-sm" data-action="library">Review in Library</button>' : ''}${d.type === 'CUSTOM' ? `<button class="btn btn-secondary btn-sm" data-action="manage" data-id="${Number(d.id)}">Manage</button><button class="btn btn-secondary btn-sm" data-action="edit-deck" data-id="${Number(d.id)}">Edit</button><button class="btn btn-secondary btn-sm" data-action="delete-deck" data-id="${Number(d.id)}">Delete</button>` : ''}</div></article>`,
+              }<div class="fc-row"><button class="btn btn-primary btn-sm" data-action="study-deck" data-id="${Number(d.id)}" data-type="${d.type}" ${d.cardCount ? '' : 'disabled title="No usable cards yet"'}>Study</button>${d.type === 'CUSTOM' ? `<button class="btn btn-secondary btn-sm" data-action="manage" data-id="${Number(d.id)}">Manage</button><button class="btn btn-secondary btn-sm" data-action="edit-deck" data-id="${Number(d.id)}">Edit</button><button class="btn btn-secondary btn-sm" data-action="delete-deck" data-id="${Number(d.id)}">Delete</button>` : ''}</div></article>`,
           )
           .join('') ||
         '<p class="fc-notice">No matching decks. Create a deck or change filters.</p>'
@@ -432,8 +430,7 @@ class FlashcardsView {
         await this.loadDeck(b.dataset.type, Number(b.dataset.id));
       else if (a === 'due') await this.loadDueDeck();
       else if (a === 'new') await this.smartDeck('NEW');
-      else if (a === 'bookmarks') await this.loadBookmarksDeck();
-      else if (a === 'all') await this.loadAllQuizzesDeck();
+      else if (a === 'all') await this.smartDeck('ALL');
       else if (a === 'manage') await this.openManager(Number(b.dataset.id));
       else if (a === 'edit-deck') await this.openEditDeck(Number(b.dataset.id));
       else if (a === 'delete-deck')
@@ -473,19 +470,19 @@ class FlashcardsView {
     this.renderDecksList();
   }
   setFilter(filter) {
-    this.selectedFilter = { QUIZZES: 'QUIZ', NOTES: 'NOTE' }[filter] || filter;
+    this.selectedFilter = { NOTES: 'NOTE' }[filter] || (['ALL','DUE','NOTE','CUSTOM'].includes(filter) ? filter : 'ALL');
     this.page = 0;
     this.renderDecksList();
   }
   async loadDeck(type, id) {
-    if (this.busy()) return;
+    if (this.busy() || !['NOTE','CUSTOM'].includes(type)) return;
     const epoch = this._reviewEpoch;
     const version = ++this._version,
       l = await getFlashcardLibrary();
     if (version !== this._version || this.busy() || epoch !== this._reviewEpoch)
       return;
     const source = (
-      type === 'QUIZ' ? l.quizzes : type === 'NOTE' ? l.notes : l.customDecks
+      type === 'NOTE' ? l.notes : l.customDecks
     ).find((d) => d.id === id);
     if (!source) return this.toast('Deck no longer exists.', 'warning');
     this.currentDeck = {
@@ -498,9 +495,6 @@ class FlashcardsView {
       (c) => c.sourceDeckType === type && c.sourceDeckId === id,
     );
     this.startStudySession();
-  }
-  loadQuizDeck(id) {
-    return this.loadDeck('QUIZ', Number(id));
   }
   loadCustomDeck(id) {
     return this.loadDeck('CUSTOM', Number(id));
@@ -543,14 +537,9 @@ class FlashcardsView {
       ).length;
       cards = l.newCards.slice(0, Math.max(0, this.newLimit - learned));
       title = 'Learn new cards';
-    } else if (type === 'BOOKMARKS') {
-      cards = l.cards.filter((c) => c.isBookmarked);
-      title = 'Bookmarked questions';
     } else {
-      cards = this.fisherYatesShuffle(
-        l.cards.filter((c) => c.sourceDeckType === 'QUIZ'),
-      );
-      title = 'All quiz questions';
+      cards = this.fisherYatesShuffle(l.cards);
+      title = 'All saved cards';
     }
     this.currentDeck = { id: type, title, type };
     this.cards = cards;
@@ -558,12 +547,6 @@ class FlashcardsView {
   }
   loadDueDeck() {
     return this.smartDeck('DUE');
-  }
-  loadBookmarksDeck() {
-    return this.smartDeck('BOOKMARKS');
-  }
-  loadAllQuizzesDeck() {
-    return this.smartDeck('ALL_QUIZZES');
   }
   startStudySession({ preserveMaster = false } = {}) {
     if (this._saving) return;
@@ -682,15 +665,13 @@ class FlashcardsView {
           ? 'AI reviewed; verify with source'
           : c.sourceDeckType === 'NOTE'
             ? 'Study note'
-            : c.sourceDeckType === 'QUIZ'
-              ? 'AI answer; check your source'
-              : 'Saved card';
+            : 'Saved card';
   }
   sourceNote(c) {
     const e = (v) => this.escape(v),
       refs = FlashcardTools.references(c.sourceReferences);
     return c.evidenceQuote || c.sourceTitle || refs.length
-      ? `<details class="fc-source"><summary>Source / references</summary>${c.sourceTitle ? `<p>${e(c.sourceTitle)}${c.sourcePage ? ` · PDF page ${Number(c.sourcePage)}` : ''}</p>` : ''}${c.evidenceQuote ? `<blockquote>${e(c.evidenceQuote)}</blockquote>` : ''}${refs.map((r, i) => `<button type="button" class="btn btn-secondary btn-sm" data-action="source" data-ref="${i}">${e(r.fileName || 'Source')}${r.page ? ` · Page ${Number(r.page)}` : ''}</button>`).join('')}${!refs.length && ['NOTE', 'QUIZ'].includes(c.sourceDeckType) ? '<button type="button" class="btn btn-secondary btn-sm" data-action="source" data-ref="-1">Open source context</button>' : ''}<p>Recall ratings reflect confidence, not independently verified knowledge.</p></details>`
+      ? `<details class="fc-source"><summary>Source / references</summary>${c.sourceTitle ? `<p>${e(c.sourceTitle)}${c.sourcePage ? ` · PDF page ${Number(c.sourcePage)}` : ''}</p>` : ''}${c.evidenceQuote ? `<blockquote>${e(c.evidenceQuote)}</blockquote>` : ''}${refs.map((r, i) => `<button type="button" class="btn btn-secondary btn-sm" data-action="source" data-ref="${i}">${e(r.fileName || 'Source')}${r.page ? ` · Page ${Number(r.page)}` : ''}</button>`).join('')}${!refs.length && c.sourceDeckType === 'NOTE' ? '<button type="button" class="btn btn-secondary btn-sm" data-action="source" data-ref="-1">Open source context</button>' : ''}<p>Recall ratings reflect confidence, not independently verified knowledge.</p></details>`
       : '';
   }
   toggleFlip(reveal = null) {
@@ -727,9 +708,7 @@ class FlashcardsView {
     const source =
       card.sourceDeckType === 'NOTE'
         ? await getNoteById(card.sourceDeckId)
-        : card.sourceDeckType === 'QUIZ'
-          ? await db.quizzes.get(Number(card.sourceDeckId))
-          : null;
+        : null;
     if (
       version !== this._version ||
       !this.isVisible() ||
@@ -993,6 +972,7 @@ class FlashcardsView {
       const s = JSON.parse(localStorage.getItem(this.storageKey) || 'null');
       return s?.version === 1 &&
         s.deck &&
+        ['NOTE','CUSTOM','DUE','NEW','ALL'].includes(s.deck.type) &&
         Array.isArray(s.keys) &&
         s.keys.length &&
         s.keys.length <= 60000 &&

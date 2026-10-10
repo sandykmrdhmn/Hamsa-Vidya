@@ -1,6 +1,6 @@
 /* ==========================================================================
    components.css — part 02-dashboard.css
-   Hero, shloka banner, AI advisor, metrics, charts, recent quizzes
+   Hero, shloka banner, AI advisor, metrics, charts, study progress
 
    Extracted from the original 9218-line components.css
    (source lines 564-2422).
@@ -150,7 +150,7 @@
 }
 
 /* ==========================================================================
-   TOP SANSKRIT SHLOKA BANNER (DIRECTLY UNDER DASHBOARD / QUIZ TABS)
+   TOP SANSKRIT SHLOKA BANNER (DIRECTLY UNDER DASHBOARD)
    ========================================================================== */
 .dashboard-top-shloka-banner {
   width: 100%;
@@ -1759,111 +1759,4 @@
 .metric-caption {
   font-size: 0.78rem;
   color: var(--text-muted);
-}
-
-/* ==========================================================================
-   ANALYTICS CHARTS SECTION
-   ========================================================================== */
-.charts-grid {
-  display: grid;
-  grid-template-columns: 1fr 1.5fr;
-  gap: 1.5rem;
-  margin-bottom: 2.25rem;
-}
-
-@media (max-width: 960px) {
-  .charts-grid { grid-template-columns: 1fr; }
-}
-
-.chart-card {
-  background: var(--glass-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-xl);
-  padding: 1.5rem;
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.chart-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.chart-title {
-  font-size: 1.1rem;
-  font-weight: 700;
-}
-
-.chart-container {
-  width: 100%;
-  min-height: 220px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  position: relative;
-}
-
-/* ==========================================================================
-   RECENT QUIZZES LIST
-   ========================================================================== */
-.recent-quizzes-section {
-  margin-bottom: 2.5rem;
-}
-
-.quiz-cards-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.9rem;
-}
-
-.quiz-list-item {
-  background: var(--bg-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
-  padding: 1.15rem 1.35rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  transition: all var(--transition-fast);
-}
-
-.quiz-list-item:hover {
-  border-color: var(--color-primary-glow);
-  transform: translateY(-1.5px);
-  box-shadow: var(--shadow-sm);
-}
-
-.quiz-info {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  min-width: 0;
-}
-
-.quiz-item-title {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: var(--text-main);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.quiz-meta-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  font-size: 0.82rem;
-  color: var(--text-muted);
-}
-
-.quiz-item-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  flex-shrink: 0;
 }

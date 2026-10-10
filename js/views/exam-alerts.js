@@ -968,7 +968,7 @@ class ExamAlertsView {
         <button class="ea-modal-close" onclick="window.examAlertsView.closeSummaryModal()" aria-label="Close"><i data-lucide="x" style="width:20px;height:20px;"></i></button>
       </div>
       <div class="ea-summary-exam-title">${this._escape(exam.shortName || exam.examName)}</div>
-      <div class="ea-summary-provider badge ${result.provider === 'GEMINI_AI' ? 'badge-primary' : 'badge-muted'}">${result.provider === 'GEMINI_AI' ? '✨ Powered by Gemini AI' : '📋 Structured Summary'}</div>
+      <div class="ea-summary-provider badge ${String(result.provider || '').endsWith('_AI') ? 'badge-primary' : 'badge-muted'}">${result.provider === 'GEMINI_AI' ? '✨ Powered by Gemini AI' : '📋 Structured Summary'}</div>
       <ol class="ea-summary-points">
         ${result.summary.map(point => `<li>${this._escape(point)}</li>`).join('')}
       </ol>

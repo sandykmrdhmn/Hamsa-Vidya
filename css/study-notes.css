@@ -68,12 +68,8 @@
 #view-study-notes .study-page-range label { font-size:.75rem; }
 #view-study-notes .study-page-range input { width:85px; padding:.25rem .4rem; }
 #view-study-notes .study-error { padding:1rem; border:1px solid var(--color-danger,#ef4444); border-radius:12px; margin-bottom:1rem; }
-#view-study-notes .study-chapter-picker { display:flex; flex-direction:column; gap:.6rem; max-height:35vh; overflow:auto; margin:1rem 0; }
-#view-study-notes .study-chapter-picker label { display:flex; gap:.5rem; align-items:start; }
-#view-study-notes .study-quiz-dialog .modal-content { width:min(92vw,680px); max-height:90vh; overflow:auto; padding:1.5rem; }
 #view-study-notes .glossary-interactive-term { font:inherit; color:inherit; background:transparent; border:0; border-bottom:1px dotted var(--color-primary); padding:0; cursor:pointer; }
 #view-study-notes .glossary-popover-box { max-width:calc(100vw - 16px); }
-#view-study-notes .top-quiz-request-card { display:none; }
 #view-study-notes .study-sidebar-close { display:none; }
 #view-study-notes .textbook-reader-canvas { min-width:0; }
 #view-study-notes [hidden] { display:none !important; }

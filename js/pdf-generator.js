@@ -6,27 +6,6 @@
 
 class PdfGeneratorService {
   /**
-   * Generates an authentic A4 HTML Document string for the Question Paper & Answer Key
-   */
-  buildDocumentHtml(quiz,questions,{variant='FULL'}={}) {
-    const e=SecurityUtils.escapeHtml,letters='ABCD';
-    const scoring=typeof resolveScoringConfig==='function'?resolveScoringConfig(quiz):{marksPerCorrect:1,negativeMarkPerWrong:0};
-    const negative=scoring.scoringPreset==='UPSC_PRELIMS' && Math.abs(scoring.negativeMarkPerWrong-2/3)<1e-10 ? '2/3 (≈0.67)' : scoring.negativeMarkPerWrong;
-    const seconds=Number.isFinite(Number(quiz.examDurationSeconds))&&Number(quiz.examDurationSeconds)>0?Math.round(Number(quiz.examDurationSeconds)):Math.max(5,Math.round(questions.length*1.5))*60;
-    const time=quiz.quizMode==='EXAM'?`${Math.floor(seconds/60)}m ${seconds%60}s`:'Untimed practice';
-    const student=window.examProfileManager?.getStudentName()||'Scholar';
-    const questionRows=questions.map((q,i)=>`<section class="print-question"><h3>Q${i+1}. ${e(q.questionText)}</h3>${q.options.map((opt,j)=>`<p><b>(${letters[j]})</b> ${e(opt)}</p>`).join('')}</section>`).join('');
-    const answers=questions.map((q,i)=>`<section class="print-question"><h3>Q${i+1} · (${letters[q.correctAnswerIndex]||'?'}) ${e(q.options[q.correctAnswerIndex]||'Key unavailable')}</h3><p>${e(q.explanation)}</p>${(q.optionExplanations||[]).map((reason,j)=>reason?`<p><b>${letters[j]}:</b> ${e(reason)}</p>`:'').join('')}${q.memoryCue?`<p><b>Memory cue:</b> ${e(q.memoryCue)}</p>`:''}${q.evidenceQuote?`<blockquote>${e(q.evidenceQuote)}${q.sourcePage?` · Page ${Number(q.sourcePage)}`:''}</blockquote>`:''}<small>${q.answerOrigin==='SOURCE_KEY'?'Imported source key':q.answerOrigin==='STUDENT_EDITED'?'Student edited':q.aiReviewed?'AI reviewed answer':'AI answer; review against your textbook'}</small></section>`).join('');
-    return `<style>#hamsa-printable-paper{font-family:'Noto Sans Devanagari',sans-serif;color:#172033;background:#fff;max-width:800px;margin:auto;padding:20px;font-size:12px;line-height:1.6;overflow-wrap:anywhere}#hamsa-printable-paper h1{font-size:20px}#hamsa-printable-paper h2{font-size:16px;border-bottom:1px solid #bbb}#hamsa-printable-paper h3{font-size:13px;margin:0 0 8px}#hamsa-printable-paper p{white-space:pre-wrap;margin:5px 0}.print-question{margin:0 0 16px;padding-bottom:10px;border-bottom:1px solid #ddd;break-inside:avoid}.print-key{break-before:page}#hamsa-printable-paper blockquote{margin:8px 0;padding-left:10px;border-left:2px solid #bbb}@media print{#hamsa-printable-paper{padding:0;max-width:none}.print-question{break-inside:auto}}</style>
-    <main id="hamsa-printable-paper"><small>HAMSA VIDYA · ${e(student)} · ${e(new Date().toLocaleDateString())}</small><h1>${e(quiz.title||'Practice Quiz')}</h1><p>${e(quiz.subject)} · ${e(quiz.language)} · ${e(quiz.quizMode||'PRACTICE')}</p><p>${questions.length} questions · ${time} · Maximum marks: ${Number((questions.length*scoring.marksPerCorrect).toFixed(2))}</p><p>Correct: +${scoring.marksPerCorrect}; wrong: −${negative}; skipped: 0. Select one option per question.</p>
-    ${QuizQuality.skippedPdfNote(quiz.skippedPdfPages)?`<p class="print-source-note">${e(QuizQuality.skippedPdfNote(quiz.skippedPdfPages))}</p>`:''}
-    ${variant!=='ANSWER_KEY'?`<h2>Question paper</h2>${questionRows}`:''}${variant!=='QUESTIONS'?`<div class="${variant==='FULL'?'print-key':''}"><h2>Answer key & explanations</h2>${answers}</div>`:''}<small>Use with your textbook. AI review does not guarantee factual correctness.</small></main>`;
-  }
-  async generateQuestionPaperPdf(quiz,questions,options={}) {
-    return this.openPrintWindow(this.buildDocumentHtml(quiz,questions,options),options.printWindow||null);
-  }
-
-  /**
    * Opens clean Print Window with full vector text for native 'Save as PDF'
    */
   openPrintWindow(htmlContent,reservedWindow=null) {
@@ -109,80 +88,6 @@ class PdfGeneratorService {
     const fontURL=new URL('assets/fonts/NotoSansDevanagari.ttf',document.baseURI).href;
     return `<style>@font-face{font-family:'Noto Sans Devanagari';src:url('${fontURL}') format('truetype');font-weight:100 900;font-style:normal;font-display:block}.study-print{font-family:'Noto Sans Devanagari',Inter,sans-serif;color:#172033;line-height:1.55;font-size:12px}.study-print h1{font-size:23px}.study-print h2{font-size:17px;border-bottom:1px solid #cbd5e1;padding-bottom:5px}.study-print h3{font-size:13px}.study-print-section{margin:18px 0}.study-print-prose{white-space:pre-wrap}.study-print-markdown{white-space:normal}.study-print-markdown p{margin:7px 0}.study-print-source{font-size:10px;color:#526077}.study-print-box{border:1px solid #cbd5e1;border-radius:6px;padding:10px;margin:10px 0;break-inside:avoid}.study-print-formula{white-space:pre-wrap;font-family:monospace;font-size:13px}.study-print table{width:100%;border-collapse:collapse;margin:12px 0}.study-print td,.study-print th{padding:6px;border:1px solid #cbd5e1;text-align:left}.study-print dt{font-weight:700;margin-top:6px}.study-print dd{margin:2px 0 6px}.study-print svg{width:100%;height:auto;max-height:300px}.study-print figure{break-inside:avoid;margin:12px 0}.study-print p,.study-print li{overflow-wrap:anywhere}.study-print-header{border-bottom:2px solid #7c3aed;padding-bottom:10px}.study-print footer{margin-top:20px;color:#526077;font-size:10px}</style>
       <article class="study-print"><header class="study-print-header"><p>HAMSA VIDYA · ${escape(label)}</p><h1>${escape(note.title)}</h1><p>${escape(note.subject)} · ${new Date().toLocaleDateString()}${note.metadata?.generationSource==='LOCAL_FORMATTER'?' · Source organised locally':''}</p>${note.focusInstruction?`<p>Focused extraction: ${escape(note.focusInstruction)}</p>`:''}</header>${body}<footer>Hamsa Vidya · Source references identify the material used for each section.</footer></article>`;
-  }
-
-  exportPrintableQuizPdf(quiz, questions,printWindow=null) {
-    const escape = value => SecurityUtils.escapeHtml(String(value ?? ''));
-    const letters = ['(A)', '(B)', '(C)', '(D)'];
-    const todayStr = new Date().toLocaleDateString();
-
-    const questionsHtml = questions.map((q, idx) => `
-      <div style="page-break-inside: avoid; margin-bottom: 18px; padding: 12px 16px; background: #fafafa; border: 1px solid #e5e7eb; border-radius: 8px;">
-        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-          <span style="font-weight: 700; font-size: 13.5px; color: #0f172a;">Q${idx + 1}. ${escape(q.questionText)}</span>
-          <span style="font-size: 11px; color: #64748b; border: 1px dashed #cbd5e1; padding: 2px 8px; border-radius: 4px;">Candidate Answer: [ &nbsp;&nbsp;&nbsp; ]</span>
-        </div>
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; font-size: 12.5px; padding-left: 8px;">
-          ${(q.options || []).map((opt, optIdx) => `
-            <div style="display: flex; gap: 6px;">
-              <span style="font-weight: 700; color: #4f46e5;">${letters[optIdx]}</span>
-              <span>${escape(opt)}</span>
-            </div>
-          `).join('')}
-        </div>
-      </div>
-    `).join('');
-
-    const html = `
-      <div style="font-family: 'Noto Sans Devanagari', 'Inter', sans-serif; max-width: 820px; margin: 0 auto; padding: 24px; color: #0f172a;">
-        <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #4f46e5; padding-bottom: 8px; margin-bottom: 16px; font-size: 11px; color: #64748b;">
-          <span style="font-weight: 700; color: #4f46e5;">HAMSA VIDYA • Practice Examination Paper</span>
-          <span>Date: ${todayStr}</span>
-        </div>
-        <div style="background: #4f46e5; color: white; padding: 16px 20px; border-radius: 8px; margin-bottom: 20px;">
-          <h1 style="font-size: 18px; font-weight: 800; margin: 0 0 6px 0;">${escape(quiz.title || 'Practice Quiz')}</h1>
-          <div style="font-size: 12px; color: #e0e7ff;">Total Questions: ${questions.length} • Marking: +1 / -0.33 • Duration: ${Math.round(questions.length * 1.5)} Mins</div>
-        </div>
-        ${questionsHtml}
-      </div>
-    `;
-
-    this.openPrintWindow(html,printWindow);
-  }
-
-  /**
-   * Generates a Printable Answer Key PDF with rationale
-   */
-  exportQuizAnswerKeyPdf(quiz, questions) {
-    const escape = value => SecurityUtils.escapeHtml(String(value ?? ''));
-    const letters = ['(A)', '(B)', '(C)', '(D)'];
-    const todayStr = new Date().toLocaleDateString();
-
-    const rows = questions.map((q, idx) => {
-      const correctLetter = letters[q.correctAnswerIndex] || '(A)';
-      const optText = q.options ? q.options[q.correctAnswerIndex] : '';
-      return `
-        <div style="page-break-inside: avoid; border-bottom: 1px solid #e2e8f0; padding: 10px 0;">
-          <div style="font-weight: 700; font-size: 13px; color: #1e293b; margin-bottom: 4px;">
-            Q${idx + 1}. Correct Answer: <span style="color: #10b981;">Option ${correctLetter}</span> (${escape(optText)})
-          </div>
-          <div style="font-size: 12px; color: #475569; line-height: 1.55;">${escape(q.explanation || 'No explanation.')}</div>
-        </div>
-      `;
-    }).join('');
-
-    const html = `
-      <div style="font-family: 'Noto Sans Devanagari', 'Inter', sans-serif; max-width: 820px; margin: 0 auto; padding: 24px; color: #0f172a;">
-        <div style="display: flex; justify-content: space-between; border-bottom: 2px solid #10b981; padding-bottom: 8px; margin-bottom: 16px; font-size: 11px; color: #64748b;">
-          <span style="font-weight: 700; color: #10b981;">HAMSA VIDYA • Official Answer Key & Explanations</span>
-          <span>Date: ${todayStr}</span>
-        </div>
-        <h1 style="font-size: 18px; font-weight: 800; color: #065f46; margin-bottom: 16px;">${escape(quiz.title)} — Verified Answer Key</h1>
-        ${rows}
-      </div>
-    `;
-
-    this.openPrintWindow(html);
   }
 
   /**
@@ -559,6 +464,7 @@ ${studentAnswer || 'No answer text recorded.'}
       .replace(/-+/g, '-');
 
     try {
+      await window.UIUtils?.ensurePdfEngine?.('export');
       if (window.html2pdf) {
         const opt = {
           margin: [8, 8, 8, 8],

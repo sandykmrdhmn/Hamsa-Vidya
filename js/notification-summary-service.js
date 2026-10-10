@@ -1,12 +1,12 @@
 /**
  * HAMSA VIDYA (हंस विद्या) — Notification Summary Service
  * Abstracts PDF extraction + AI summarization behind a provider interface.
- * Mock provider for demo; Gemini provider for production use.
+ * Local structured summaries and the common selected AI provider.
  */
 
 class NotificationSummaryService {
   constructor() {
-    this._cache = new Map(); // examId → { summary, timestamp }
+    this._cache = new Map(); // provider/model/exam context → { result, timestamp }
     this._cacheMaxAge = 30 * 60 * 1000; // 30 minutes
   }
 
@@ -19,32 +19,35 @@ class NotificationSummaryService {
   async summarizeNotification(exam) {
     if (!exam) return this._error('No exam data provided.');
 
-    // Check cache
-    const cached = this._cache.get(exam.id);
+    const provider=window.aiClient?.getProvider?.() || 'gemini';
+    const model=window.geminiService?.getActiveModel?.() || '';
+    const available=!!window.geminiService?.isAiAvailable();
+    const cacheKey=JSON.stringify([provider,model,available,exam.id,this._buildExamContext(exam),exam.notificationPdfUrl]);
+    const cached = this._cache.get(cacheKey);
     if (cached && (Date.now() - cached.timestamp) < this._cacheMaxAge) {
       return cached.result;
     }
 
     // Determine provider
-    const hasGeminiKey = window.geminiService?.isAiAvailable();
     const hasPdfUrl = exam.notificationPdfUrl;
 
     let result;
-    if (hasGeminiKey && hasPdfUrl) {
-      result = await this._geminiSummarize(exam);
+    if (available && hasPdfUrl) {
+      result = await this._geminiSummarize(exam,provider,model);
     } else {
       result = this._mockSummarize(exam);
     }
 
     // Cache result
-    this._cache.set(exam.id, { result, timestamp: Date.now() });
+    this._cache.set(cacheKey, { result, timestamp: Date.now() });
+    if(this._cache.size>100)this._cache.delete(this._cache.keys().next().value);
     return result;
   }
 
   /**
-   * AI-powered summarization using existing Gemini service.
+   * AI-powered summarization using the existing common AI transport.
    */
-  async _geminiSummarize(exam) {
+  async _geminiSummarize(exam,provider=window.aiClient?.getProvider?.() || 'gemini',model=window.geminiService?.getActiveModel?.()) {
     try {
       // Build context from structured exam data for AI prompt
       const examContext = this._buildExamContext(exam);
@@ -71,7 +74,6 @@ IMPORTANT RULES:
 Return ONLY the 5 numbered bullet points, nothing else.`;
 
       const apiKey = window.geminiService.getApiKey();
-      const model = window.geminiService.getActiveModel();
 
       const response = await window.aiClient.fetchGenerateContent(model, {
           contents: [{ parts: [{ text: prompt }] }],
@@ -80,14 +82,16 @@ Return ONLY the 5 numbered bullet points, nothing else.`;
             maxOutputTokens: 600,
             topP: 0.8
           }
-        }, { apiKey,stage:'notification-summary' });
+        }, { provider,apiKey,stage:'notification-summary' });
 
       if (!response.ok) {
-        throw new Error(`API returned ${response.status}`);
+        throw window.aiClient.createError ? await window.aiClient.createError(response,provider) : new Error(`API returned ${response.status}`);
       }
 
       const data = await response.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      const candidate=data?.candidates?.[0];
+      if(data.promptFeedback?.blockReason || (candidate?.finishReason && candidate.finishReason!=='STOP'))throw new Error('AI notification summary was incomplete.');
+      const text = (candidate?.content?.parts||[]).filter(part=>!part.thought).map(part=>part.text||'').join('');
 
       if (!text) {
         throw new Error('Empty response from AI');
@@ -105,12 +109,13 @@ Return ONLY the 5 numbered bullet points, nothing else.`;
       return {
         success: true,
         summary: points.slice(0, 5),
-        disclaimer: 'AI-generated summary using Google Gemini. Always verify important details in the official notification.',
-        provider: 'GEMINI_AI'
+        disclaimer: `AI-generated summary using ${window.aiClient?.getProviderLabel?.(provider) || 'Google Gemini'}. Always verify important details in the official notification.`,
+        provider: 'GEMINI_AI',
+        model
       };
 
     } catch (err) {
-      console.warn('Gemini summarization failed, falling back to mock:', err.message);
+      console.warn('AI summarization failed, using structured exam data:', err.message);
       return this._mockSummarize(exam);
     }
   }
@@ -206,7 +211,7 @@ Return ONLY the 5 numbered bullet points, nothing else.`;
     return {
       success: true,
       summary,
-      disclaimer: 'Summary generated from structured exam data (demo mode). For AI-powered summaries, configure your Gemini API key in Settings. Always verify details in the official notification.',
+      disclaimer: 'Summary generated from structured exam data (demo mode). For AI-powered summaries, configure your selected AI provider in Settings. Always verify details in the official notification.',
       provider: 'MOCK'
     };
   }

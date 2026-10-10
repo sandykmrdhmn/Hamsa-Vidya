@@ -1,9 +1,6 @@
 /**
- * Verify the CSS split (M4) did not change a single byte of effective CSS.
- *
- * Concatenates the parts in the order index.html links them and compares the
- * result against the pre-split backups. This is the check that makes the split
- * trustworthy: identical bytes in identical order means an identical cascade.
+ * Verify the maintained CSS parts match the linked cascade, stay nonempty,
+ * and preserve the current AI Teacher hero's styling and accessibility.
  */
 
 const fs = require('fs');
@@ -41,34 +38,15 @@ function stripPartHeader(text, partName) {
 
 console.log('\n=== M4: split integrity ===');
 
-/**
- * `frozen` means the parts have not been edited since the split, so the
- * concatenation must still equal the pre-split backup byte for byte. That check
- * is what made the migration trustworthy.
- *
- * Once a group is intentionally edited the comparison stops being meaningful —
- * it would either fail forever or have to be silenced by regenerating the
- * baseline, which makes it tautological. Those groups get structural checks
- * instead, plus targeted assertions about the change that was made.
- */
 const GROUPS = [
-  {
-    backup: 'scratch/_backup/components.css',
-    dir: 'css/components',
-    frozen: true
-  },
-  {
-    backup: 'scratch/_backup/ai-teacher.css',
-    dir: 'css/ai-teacher',
-    frozen: false,
-    divergenceReason: 'hero banner was redesigned (logo removed, stats + deliverables added)'
-  }
+  { name: 'shared components', dir: 'css/components' },
+  { name: 'AI Teacher', dir: 'css/ai-teacher' }
 ];
 
 const linked = linkedStylesheets();
 
 for (const g of GROUPS) {
-  const name = path.basename(g.backup);
+  const name = g.name;
   const parts = linked.filter(href => href.startsWith(g.dir + '/'));
 
   check(`${name}: parts are linked in index.html`, parts.length > 0, 'none linked');
@@ -93,30 +71,6 @@ for (const g of GROUPS) {
   });
   check(`${name}: no part is empty`, empty.length === 0, empty.join(', '));
 
-  if (g.frozen) {
-    const original = read(g.backup);
-    const rebuilt = parts
-      .map(href => stripPartHeader(read(href), path.basename(href)))
-      .join('\n');
-
-    check(`${name}: concatenated parts match the original exactly`,
-      rebuilt === original,
-      `original ${original.length} chars vs rebuilt ${rebuilt.length} chars`);
-
-    if (rebuilt !== original) {
-      // Point at the first divergence to make debugging quick.
-      for (let i = 0; i < Math.max(rebuilt.length, original.length); i++) {
-        if (rebuilt[i] !== original[i]) {
-          console.log(`        first difference at char ${i}`);
-          console.log(`        original: ${JSON.stringify(original.slice(i - 40, i + 40))}`);
-          console.log(`        rebuilt : ${JSON.stringify(rebuilt.slice(i - 40, i + 40))}`);
-          break;
-        }
-      }
-    }
-  } else {
-    console.log(`        (byte-identity not asserted — ${g.divergenceReason})`);
-  }
 }
 
 console.log('\n=== AI Teacher hero redesign ===');
@@ -168,14 +122,10 @@ console.log('\n=== AI Teacher hero redesign ===');
     printCss.includes('.teacher-hero,') && !printCss.includes('.teacher-hero-header'));
 }
 
-console.log('\n=== M4: originals are neutralised, not left as stale duplicates ===');
+console.log('\n=== M4: retired stylesheet stubs are removed ===');
 {
   for (const f of ['css/components.css', 'css/ai-teacher.css']) {
-    const src = read(f);
-    check(`${path.basename(f)} contains no rules`,
-      !/\{[^}]*:[^}]*\}/.test(src.replace(/\/\*[\s\S]*?\*\//g, '')),
-      'still has declarations');
-    check(`${path.basename(f)} explains where the rules moved`, /split into/.test(src));
+    check(`${path.basename(f)} is removed`, !fs.existsSync(path.join(ROOT, f)));
     check(`${path.basename(f)} is no longer linked`,
       !linked.includes(f), 'still linked in index.html');
   }

@@ -2,7 +2,7 @@
  * HAMSA VIDYA (हंस विद्या) — AI-POWERED DIGITAL TEXTBOOK MODULE
  * Production-ready Digital Textbook & Study Workspace with multi-file PDF & Image OCR,
  * structured color-coded reading experience, Table of Contents, Smart Glossary with Hindi meanings,
- * interactive examples & analogies, grounded Ask AI tutor, Quiz configuration & multi-format PDF export.
+ * interactive examples & analogies, grounded Ask AI tutor, active recall & multi-format PDF export.
  */
 class StudyNotesView {
   /**
@@ -48,7 +48,7 @@ class StudyNotesView {
 
   async _persistReadingProgress() {
     const note=this.activeNote;if(!note)return;
-    const data={recallAnswers:this._clone(this.microQuizAnswers||{})};
+    const data={recallAnswers:this._clone(this.recallAnswers||{})};
     if(note.readingPosition)data.readingPosition=this._clone(note.readingPosition);
     await updateNote(note.id,data);
   }
@@ -73,7 +73,7 @@ class StudyNotesView {
     if(baseline)history.push({...this._clone(baseline),savedAt:new Date().toISOString()});
     const snapshot={title:note.title,sections:this._clone(note.sections),glossaryTerms:this._clone(note.glossaryTerms||[]),editHistory:history.slice(-20),
       summary:window.geminiService.generateFallbackComprehensiveSummary({title:note.title,subject:note.subject,sections:note.sections}),
-      metadata:{...(note.metadata||{}),studentEdited:true},recallAnswers:this._clone(this.microQuizAnswers||{})};
+      metadata:{...(note.metadata||{}),studentEdited:true},recallAnswers:this._clone(this.recallAnswers||{})};
     const task=this._savePromise.catch(()=>{}).then(()=>updateNote(id,snapshot));this._savePromise=task;
     try {
       await task;
@@ -91,7 +91,7 @@ class StudyNotesView {
     try {
       await this.flushAutoSave();const note=this.activeNote,history=[...(note?.editHistory||[])];const previous=history.pop();if(!previous)return;
       const data={title:previous.title,sections:previous.sections,summary:previous.summary,glossaryTerms:previous.glossaryTerms||[],editHistory:history,recallAnswers:{}};
-      await updateNote(note.id,data);Object.assign(note,data);this._cachedSectionQuizzes={};this.microQuizAnswers={};await this.render();
+      await updateNote(note.id,data);Object.assign(note,data);this._cachedSectionRecall={};this.recallAnswers={};await this.render();
       window.app?.showToast('Previous saved version restored.','success');
     }catch(error){window.app?.showToast(`Undo failed: ${error.message}`,'error');}
   }
@@ -109,7 +109,7 @@ class StudyNotesView {
   _noteStatusHTML(note) {
     const local=note.metadata?.generationSource==='LOCAL_FORMATTER'||note.metadata?.generatedByAI===false;
     const coverage=note.coverage;
-    return `<div class="study-note-status"><span>${local?'Source organised locally · AI teaching not generated':note.metadata?.generationSource==='GEMINI_AI'?'AI textbook':'Saved study note'}${coverage?` · ${coverage.processedBatches}/${coverage.totalBatches} source batches processed`:''}</span>${note.metadata?.studentEdited?'<span>Edited by you · refresh teaching aids where the explanation changed</span>':''}</div>
+    return `<div class="study-note-status"><span>${local?'Source organised locally · AI teaching not generated':String(note.metadata?.generationSource || '').endsWith('_AI')?'AI textbook':'Saved study note'}${coverage?` · ${coverage.processedBatches}/${coverage.totalBatches} source batches processed`:''}</span>${note.metadata?.studentEdited?'<span>Edited by you · refresh teaching aids where the explanation changed</span>':''}</div>
       <div class="study-reader-tools"><button class="btn btn-secondary btn-sm" onclick="studyNotesView.toggleMobileSidebar()">Contents & highlights</button><label class="study-note-search"><span>Find in this note</span><input id="study-find-input" type="search" value="${this.escapeHtml(this.searchInNoteQuery)}" oninput="studyNotesView.findInNote(this.value)" placeholder="Concept, formula, definition…"></label><span id="study-find-status" role="status"></span><button class="btn btn-secondary btn-sm" ${note.editHistory?.length?'':'disabled'} onclick="studyNotesView.undoLastEdit()">Undo last saved edit</button></div>`;
   }
 
@@ -146,31 +146,17 @@ class StudyNotesView {
     return this._sourceURLs.get(key);
   }
 
-  _quizDialogHTML() {
-    const note=this._quizNote||this.activeNote;if(!note)return '';
-    const option=(name,label,values)=>`<label>${label}<select class="vault-filter-select" onchange="studyNotesView.quizConfig.${name}=${name==='questionCount'?'Number(this.value)':'this.value'}">${values.map(value=>`<option value="${value}" ${this.quizConfig[name]===value?'selected':''}>${value}</option>`).join('')}</select></label>`;
-    return `<div class="modal-overlay active study-quiz-dialog" role="dialog" aria-modal="true" aria-label="Practice settings"><div class="modal-content"><h2>Practice from ${this.escapeHtml(note.title)}</h2><p>Questions use the selected sections and your note's language.</p><div class="study-settings">${option('questionCount','Questions',[5,10,15,20,25,30])}${option('difficulty','Difficulty',['EASY','MEDIUM','HARD','MIXED'])}${option('questionType','Question style',['MCQ','TRUE_FALSE','MIXED'])}</div><div class="study-chapter-picker">${(note.sections||[]).map(section=>`<label><input type="checkbox" ${this.selectedQuizSections==null||this.selectedQuizSections.includes(section.id)?'checked':''} onchange="studyNotesView.selectQuizSection('${this.escapeHtml(this.escapeJs(section.id))}',this.checked)">${this.escapeHtml(section.heading)}</label>`).join('')}</div><p class="study-muted">Short quizzes rotate across sections; question count determines how many sections can be sampled.</p><div class="study-revision-actions"><button class="btn btn-secondary" onclick="studyNotesView.closeQuizModal()">Cancel</button><button class="btn btn-primary" onclick="studyNotesView.launchGeneratedQuizForNote(${Number(note.id)})">Generate & Start</button></div></div></div>`;
-  }
-
-  _practiceSections(note) {return (note.sections||[]).filter(section=>this.selectedQuizSections==null||this.selectedQuizSections.includes(section.id));}
-
-  selectQuizSection(id,selected) {
-    const note=this.isQuizModalOpen?(this._quizNote||this.activeNote):this.activeNote;
-    this.selectedQuizSections ||= (note?.sections||[]).map(section=>section.id);
-    this.selectedQuizSections=this.selectedQuizSections.filter(sectionId=>sectionId!==id);if(selected)this.selectedQuizSections.push(id);
-  }
-
-  keepRecallDraft(id,draft) {this.microQuizAnswers[id]={...(this.microQuizAnswers[id]||{}),draft};}
+  keepRecallDraft(id,draft) {this.recallAnswers[id]={...(this.recallAnswers[id]||{}),draft};}
 
   async checkRecall(id,useAI) {
     if(this._recallPending)return;
     const section=this.activeNote?.sections?.find(section=>section.id===id),input=document.getElementById(`recall-${id}`);if(!section||!input?.value.trim())return;
-    const note=this.activeNote,version=this._viewVersion,recall=this.getOrGenerateSectionQuiz(section,0,note),draft=input.value;
+    const note=this.activeNote,version=this._viewVersion,recall=this.getSectionRecall(section,0,note),draft=input.value;
     const controller=this._controller();this._recallPending=true;
     try {
       const feedback=useAI?await window.geminiService.askAiAboutNote({noteTopic:note.title,sections:[section],settings:note.settings,signal:controller.signal,userQuestion:`Assess my explanation against EACH of these expected points: ${JSON.stringify(recall.expectedPoints)}. Say what is right, correct specific misunderstandings, suggest one concrete revision and ask one focused follow-up. Do not claim mastery. Question: ${recall.question}. My explanation: ${draft}`}):`Compare your explanation with these source-supported points:\n\n${recall.expectedPoints.map(point=>`- ${point}`).join('\n')}`;
       if(version!==this._viewVersion||controller.signal.aborted)return;
-      this.microQuizAnswers[id]={draft,feedback,method:useAI?'AI_FEEDBACK':'SELF_CHECK',reviewedAt:new Date().toISOString()};note.recallAnswers=this._clone(this.microQuizAnswers);
+      this.recallAnswers[id]={draft,feedback,method:useAI?'AI_FEEDBACK':'SELF_CHECK',reviewedAt:new Date().toISOString()};note.recallAnswers=this._clone(this.recallAnswers);
       await updateNote(note.id,{recallAnswers:note.recallAnswers});await this.render();
     }catch(error){if(error.name!=='AbortError'&&version===this._viewVersion)window.app?.showToast(`Feedback failed; your draft is kept. ${error.message}`,'error');}
     finally{this._controllers.delete(controller);if(version===this._viewVersion)this._recallPending=false;}
@@ -214,7 +200,7 @@ class StudyNotesView {
             const page=await doc.getPage(pageNumber),content=await page.getTextContent();let lastY=null;
             let text=content.items.map(item=>{const newline=lastY!=null&&Math.abs(item.transform[5]-lastY)>5;lastY=item.transform[5];return `${newline?'\n':' '}${item.str}`;}).join('').trim();let method='TEXT';
             if(text.replace(/\s/g,'').length<30 || /[\u0000\ufffd]/u.test(text)) {
-              if(!window.geminiService.isAiAvailable())throw new Error(`${item.name}, page ${pageNumber}, needs OCR. Configure Gemini or upload readable text.`);
+              if(!window.geminiService.isAiAvailable())throw new Error(`${item.name}, page ${pageNumber}, needs OCR. Configure your selected AI provider or upload readable text.`);
               const viewport=page.getViewport({scale:Math.min(1.5,1800/page.getViewport({scale:1}).width)}),canvas=document.createElement('canvas');canvas.width=viewport.width;canvas.height=viewport.height;
               const rendering=page.render({canvasContext:canvas.getContext('2d'),viewport,background:'#ffffff'});await rendering.promise;this._checkRun(controller);
               text=await window.geminiService.extractTextFromImage({base64Data:canvas.toDataURL('image/png'),mimeType:'image/png',signal:controller.signal});method='OCR';canvas.width=canvas.height=0;
@@ -284,12 +270,6 @@ class StudyNotesView {
     this.isAskAiOpen = false;
     this.askAiMessages = [];
     this.isSummaryModalOpen = false;
-    this.isQuizModalOpen = false;
-    this.quizConfig = {
-      questionCount: 10,
-      difficulty: 'MEDIUM',
-      questionType: 'MCQ'
-    };
 
     // Reading Ergonomics & Appearance States
     this.readingTheme = localStorage.getItem('hamsa_textbook_theme') || 'DEFAULT';
@@ -299,7 +279,7 @@ class StudyNotesView {
     this.sidebarActiveTab = 'TOC'; // 'TOC' | 'CHEATSHEET' | 'ANNOTATIONS'
     this.isSpeaking = false;
     this.speechUtterance = null;
-    this.microQuizAnswers = {};
+    this.recallAnswers = {};
     this.noteSettings = { language: 'AUTO', level: 'AUTO', exam: '' };
     this.revisionMode = 'QUICK';
     this._viewVersion = 0;
@@ -308,7 +288,6 @@ class StudyNotesView {
     this._savePromise = Promise.resolve();
     this._dirty = false;
     this._sourceURLs = new Map();
-    this.selectedQuizSections = null;
     this._savingSequence=null;this._savingNoteId=null;
     this._retryState = null;
     this._creationError = null;
@@ -338,10 +317,8 @@ class StudyNotesView {
       if (this.currentViewMode === 'READER' && this.activeNoteId) await this.renderReaderView();
       else if (this.currentViewMode === 'CREATE') this.renderCreateView();
       else { this.currentViewMode = 'DASHBOARD'; this.renderDashboardView(); }
-      if (this.currentViewMode === 'DASHBOARD' && this.isQuizModalOpen) this.container.insertAdjacentHTML('beforeend', this._quizDialogHTML());
       this.container.querySelectorAll('input[data-notes-search]').forEach(input => { input.value = this.searchQuery; });
       window.app?.refreshIcons();
-      if(this.isQuizModalOpen) this.container.querySelector('.study-quiz-dialog select')?.focus();
       if (this.currentViewMode === 'READER') {if(this.searchInNoteQuery)this.findInNote(this.searchInNoteQuery);window.scrollTo({ top: scroll, behavior: 'instant' });}
     } catch (error) { console.error(error); window.app?.showToast(`Notes could not be displayed: ${error.message}`, 'error'); }
   }
@@ -391,7 +368,7 @@ class StudyNotesView {
       title: 'Your chapters,',
       titleAccent: 'rebuilt as textbooks.',
       hindi: 'अध्ययन कोश — पुस्तक से डिजिटल पाठ्यपुस्तक तक',
-      tagline: 'Import a PDF chapter or photos of handwritten notes. Gemini restructures them into a colour-coded textbook with a glossary, worked examples and quizzes generated from the same source.',
+      tagline: 'Import a PDF chapter or photos of handwritten notes. Gemini restructures them into a colour-coded textbook with a glossary, worked examples and active recall from the same source.',
       stats: [
         { value: this.notes.length, label: 'Textbooks' },
         { value: starredCount, label: 'Starred' },
@@ -407,7 +384,7 @@ class StudyNotesView {
         { icon: 'book-a', label: 'Smart glossary', hint: 'Term definitions extracted automatically' },
         { icon: 'highlighter', label: 'Highlights & bookmarks', hint: 'Mark passages to revisit' },
         { icon: 'volume-2', label: 'Read aloud', hint: 'Text-to-speech in English and Hindi' },
-        { icon: 'sparkles', label: 'Instant quiz', hint: 'Generate MCQs from the chapter you just read' }
+        { icon: 'layers', label: 'Flashcards', hint: 'Revise concepts from the chapter you just read' }
       ]
     });
 
@@ -500,7 +477,6 @@ class StudyNotesView {
     const totalSecs = note.sections?.length || 1;
     const isFav = note.isFavorite;
     const hasSummary = Boolean(note.summary);
-    const hasQuiz = Array.isArray(note.quizzes) && note.quizzes.length > 0;
 
     const preview = note.sections && note.sections[0]
       ? (note.sections[0].content || '').slice(0, 240) + '...'
@@ -562,11 +538,6 @@ class StudyNotesView {
                 ✨ Summary Ready
               </span>
             ` : ''}
-            ${hasQuiz ? `
-              <span style="background:rgba(99,102,241,0.15); color:var(--color-primary-light); font-weight:700; padding:2px 8px; border-radius:6px;">
-                🧠 Quiz Ready
-              </span>
-            ` : ''}
           </div>
 
           <!-- Excerpt -->
@@ -578,13 +549,9 @@ class StudyNotesView {
         <!-- Footer Actions -->
         <div class="vault-card-actions">
           <div class="vault-action-primary-row">
-            <button class="btn btn-action-quiz btn-sm" onclick="studyNotesView.openNote(${note.id})">
+            <button class="btn btn-primary btn-sm" onclick="studyNotesView.openNote(${note.id})">
               <i data-lucide="book-open" style="width:15px;height:15px;"></i>
               <span>Open Textbook</span>
-            </button>
-            <button class="btn btn-secondary btn-sm" onclick="studyNotesView.openQuizModalForNote(${note.id})">
-              <i data-lucide="zap" style="width:15px;height:15px;"></i>
-              <span>AI Quiz</span>
             </button>
           </div>
 
@@ -727,7 +694,7 @@ class StudyNotesView {
                   </div>
                   <div class="import-drop-title">📷 Photos of Notes (JPG / PNG)</div>
                   <div class="import-drop-desc">
-                    Upload photos of notebook or book pages. Gemini Vision OCR transcribes notes.
+                    Upload photos of notebook or book pages. AI vision transcribes notes.
                   </div>
                 </div>
               </div>
@@ -869,9 +836,6 @@ class StudyNotesView {
     if (version !== this._viewVersion || this.currentViewMode !== 'READER') return;
     this.activeNote = note;
 
-    if (!this.quizConfig) {
-      this.quizConfig = { questionCount: 10, difficulty: 'MEDIUM', questionType: 'MCQ' };
-    }
 
     const sections = note.sections || [];
     const words = note.metadata?.wordCount || (note.content ? note.content.split(/\s+/).length : 500);
@@ -912,7 +876,7 @@ class StudyNotesView {
           </div>
         </div>
 
-        <details class="study-toolbar-details" ${window.innerWidth>600?'open':''}><summary>Reading tools · Edit, Quiz, Ask AI & Export</summary>
+        <details class="study-toolbar-details" ${window.innerWidth>600?'open':''}><summary>Reading tools · Edit, Ask AI & Export</summary>
         <div class="study-toolbar-actions" style="display:flex; align-items:center; gap:0.6rem;">
           <!-- Auto-save Status Indicator -->
           <span id="auto-save-status-badge" style="font-size:0.8rem; color:var(--text-muted); font-weight:600; margin-right:0.5rem;">
@@ -946,11 +910,6 @@ class StudyNotesView {
             <i data-lucide="edit-3" style="width:17px;height:17px;"></i>
           </button>
 
-          <!-- 🧠 Generate Quiz Button -->
-          <button class="btn btn-primary btn-sm" onclick="studyNotesView.openQuizModal()" title="Generate Practice Quiz">
-            <i data-lucide="zap" style="width:14px;height:14px;"></i>
-            <span>Quiz</span>
-          </button>
 
           <!-- 💬 Ask AI Button -->
           <button class="btn btn-secondary btn-sm" onclick="studyNotesView.toggleAskAiDrawer()" title="Ask AI about this note">
@@ -968,10 +927,6 @@ class StudyNotesView {
               <button class="vault-menu-action-item" onclick="studyNotesView.exportStudyNotesPdf(${note.id})">
                 <i data-lucide="book" style="width:15px;height:15px;"></i>
                 <span>Study Notes PDF</span>
-              </button>
-              <button class="vault-menu-action-item" onclick="studyNotesView.exportPrintableQuizPrompt(${note.id})">
-                <i data-lucide="file-question" style="width:15px;height:15px;"></i>
-                <span>Printable Quiz PDF</span>
               </button>
               <button class="vault-menu-action-item" onclick="studyNotesView.exportSummarySheetPdf(${note.id})">
                 <i data-lucide="file-text" style="width:15px;height:15px;"></i>
@@ -1031,55 +986,6 @@ class StudyNotesView {
 
         <!-- B. Textbook Pages Reading Canvas -->
         <main class="textbook-reader-canvas" id="textbook-reading-canvas-body">
-          <!-- Top Quiz Generation Request Card (At the Very Top of the Page!) -->
-          <div class="top-quiz-request-card" id="top-quiz-request-box">
-            <div class="top-quiz-request-header">
-              <div style="display:flex; align-items:center; gap:0.85rem; min-width:240px;">
-                <div class="top-quiz-icon-badge">
-                  <i data-lucide="zap" style="width:22px;height:22px;color:#ffffff;"></i>
-                </div>
-                <div>
-                  <div style="display:flex; align-items:center; gap:0.5rem;">
-                    <span class="badge badge-primary" style="font-size:0.75rem; font-weight:700;">AI Practice Drill</span>
-                    <span style="font-size:0.8rem; color:var(--text-muted); font-weight:600;">Formulate Questions directly from this Chapter</span>
-                  </div>
-                  <h3 style="font-size:1.12rem; font-weight:800; color:var(--text-main); margin:0.25rem 0 0 0;">
-                    Generate Practice Quiz from "${this.escapeHtml(note.title)}"
-                  </h3>
-                </div>
-              </div>
-
-              <!-- Quick Parameters & Action Button (Right at the Top!) -->
-              <div class="top-quiz-quick-actions">
-                <div class="top-quiz-chips-group">
-                  <span style="font-size:0.8rem; font-weight:700; color:var(--text-secondary);">Qs:</span>
-                  ${[5, 10, 15, 20, 25].map(cnt => `
-                    <button class="select-chip select-chip-sm ${this.quizConfig.questionCount === cnt ? 'active' : ''}"
-                      style="min-width:38px; justify-content:center; padding:0.35rem 0.65rem;"
-                      onclick="studyNotesView.setQuizCount(${cnt})">
-                      <span>${cnt}</span>
-                    </button>
-                  `).join('')}
-                </div>
-
-                <div style="display:flex; align-items:center; gap:0.6rem;">
-                  <select class="vault-filter-select"
-                    style="min-height:40px; padding:0.35rem 2rem 0.35rem 0.85rem; font-size:0.82rem; min-width:125px;"
-                    onchange="studyNotesView.quizConfig.difficulty = this.value">
-                    <option value="EASY" ${this.quizConfig.difficulty === 'EASY' ? 'selected' : ''}>🌱 Easy</option>
-                    <option value="MEDIUM" ${this.quizConfig.difficulty === 'MEDIUM' ? 'selected' : ''}>⚖️ Medium</option>
-                    <option value="HARD" ${this.quizConfig.difficulty === 'HARD' ? 'selected' : ''}>🔥 Hard</option>
-                    <option value="MIXED" ${this.quizConfig.difficulty === 'MIXED' ? 'selected' : ''}>🎯 Mixed</option>
-                  </select>
-
-                  <button class="btn btn-primary btn-generate-top" onclick="studyNotesView.launchGeneratedQuizForNote(${note.id})" title="Formulate AI Quiz Now">
-                    <i data-lucide="zap" style="width:16px;height:16px;"></i>
-                    <span>Generate & Start Quiz</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
 
           <article class="textbook-book-page ${this.isEditMode ? 'editable-mode' : ''}">
             <!-- Chapter Header -->
@@ -1132,10 +1038,6 @@ class StudyNotesView {
                 <button class="btn btn-secondary" onclick="studyNotesView.setReaderTab('SUMMARY')">
                   <i data-lucide="sparkles"></i>
                   <span>Revision Summary</span>
-                </button>
-                <button class="btn btn-primary" onclick="studyNotesView.openQuizModal()">
-                  <i data-lucide="zap"></i>
-                  <span>Practice Quiz (MCQs)</span>
                 </button>
               </div>
             </div>
@@ -1316,7 +1218,6 @@ class StudyNotesView {
         </div>
       ` : ''}
 
-      ${this.isQuizModalOpen ? this._quizDialogHTML() : ''}
 
       <!-- Interactive Smart Glossary Popover -->
       ${this.activeGlossaryTerm && this.activeGlossaryPos ? `
@@ -1382,7 +1283,7 @@ class StudyNotesView {
     const quick = this.revisionMode === 'QUICK', exam = this.revisionMode === 'EXAM';
     const breakdowns = summary.sectionBreakdowns || [];
     return `<div class="study-revision notebook-revision">
-      <div class="study-revision-header"><div><h1>${escape(note.title)}</h1><p>${summary.generationSource === 'GEMINI_AI' ? 'AI revision · all sections processed' : 'Revision extracted from your notes · AI synthesis not generated'}</p></div>
+      <div class="study-revision-header"><div><h1>${escape(note.title)}</h1><p>${String(summary.generationSource || '').endsWith('_AI') ? 'AI revision · all sections processed' : 'Revision extracted from your notes · AI synthesis not generated'}</p></div>
       <div class="study-revision-actions"><button class="btn btn-secondary btn-sm" onclick="studyNotesView.generateFreshSummary(${Number(note.id)})">Refresh with AI</button><button class="btn btn-secondary btn-sm" onclick="studyNotesView.exportSummarySheetPdf(${Number(note.id)})">Export this revision</button></div></div>
       <div class="study-revision-tabs" role="group" aria-label="Revision length">${[['QUICK','Quick Revision'],['DETAILED','Detailed Revision'],['EXAM','Exam Sheet']].map(([key,label]) => `<button class="btn btn-sm ${this.revisionMode === key ? 'btn-primary' : 'btn-secondary'}" aria-pressed="${this.revisionMode === key}" onclick="studyNotesView.setRevisionMode('${key}')">${label}</button>`).join('')}</div>
       ${quick ? `<div class="study-revision-intro study-prose">${prose(summary.coreConcept)}</div><ol>${(summary.takeaways || []).slice(0, 8).map(point => `<li>${escape(point)}</li>`).join('')}</ol><p class="study-muted">Quick revision shows selected highlights. Open Detailed Revision for every section.</p>` : ''}
@@ -1424,7 +1325,6 @@ class StudyNotesView {
   renderSectionContent(sec, index, note) {
     const escape = value => this.escapeHtml(value || '');
     const id = escape(sec.id), argument = escape(this.escapeJs(sec.id));
-    const selected = this.selectedQuizSections == null || this.selectedQuizSections.includes(sec.id);
     const extra = (title, content) => `<details class="study-extra"><summary>${title}</summary>${content}</details>`;
     const refs = this._sourceRefsHTML(sec.sourceRefs || []);
     let body = this.injectGlossarySpans(sec.content || '', note.glossaryTerms || []);
@@ -1443,8 +1343,7 @@ class StudyNotesView {
       ${sec.diagram?.svgContent ? `<figure class="study-diagram"><figcaption>${escape(sec.diagram.title)}</figcaption>${window.SecurityUtils.sanitizeSvg(sec.diagram.svgContent)}<p>${escape(sec.diagram.caption)}</p></figure>` : ''}
       ${(sec.examples || []).length ? extra('Worked examples & analogies', sec.examples.map(example => `<article class="study-example"><h3>${escape(example.title)}</h3><span class="study-muted">${example.origin === 'TEACHING_EXAMPLE' ? 'Additional teaching example' : 'Example from this note'}</span><p>${escape(example.content)}</p>${example.stepByStep?.length ? `<ol>${example.stepByStep.map(step => `<li>${escape(step)}</li>`).join('')}</ol>` : ''}${example.realWorldAnalogy ? `<p>${escape(example.realWorldAnalogy)}</p>` : ''}</article>`).join('')) : ''}
       ${(sec.importantFacts || []).length ? extra('Facts & exam pointers', `<ul>${sec.importantFacts.map(point => `<li>${escape(point)}</li>`).join('')}</ul>`) : ''}
-      ${this.renderSectionMicroQuiz(sec,index,note)}
-      <label class="study-practice-choice"><input type="checkbox" ${selected ? 'checked' : ''} onchange="studyNotesView.selectQuizSection('${argument}',this.checked)"> Include this section in practice</label>
+      ${this.renderSectionRecall(sec,index,note)}
       ${this.renderSectionMasteryFooter(sec,index,note)}
     </section>`;
   }
@@ -1514,8 +1413,7 @@ class StudyNotesView {
       if(!event.target.closest('#reading-appearance-menu,button[onclick*="toggleAppearanceMenu"]')){const menu=document.getElementById('reading-appearance-menu');if(menu)menu.style.display='none';this.isAppearanceMenuOpen=false;}
     });
     document.addEventListener('keydown',event=>{
-      if(event.key==='Escape'){this.closeAskAiDrawer();document.querySelector('.textbook-toc-sidebar')?.classList.remove('study-sidebar-open');if(this.isQuizModalOpen)this.closeQuizModal();this.closeGlossaryPopover();}
-      const dialog=document.querySelector('.study-quiz-dialog');if(event.key==='Tab'&&dialog){const controls=[...dialog.querySelectorAll('button,input,select')].filter(el=>!el.disabled),first=controls[0],last=controls.at(-1);if(event.shiftKey&&document.activeElement===first){event.preventDefault();last.focus();}else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first.focus();}}
+      if(event.key==='Escape'){this.closeAskAiDrawer();document.querySelector('.textbook-toc-sidebar')?.classList.remove('study-sidebar-open');this.closeGlossaryPopover();}
     });
   }
 
@@ -1877,11 +1775,11 @@ class StudyNotesView {
   }
 
   // =========================================================================
-  // INLINE SECTION MICRO-QUIZ (RAPID ACTIVE RECALL)
+  // INLINE SECTION ACTIVE RECALL
   // =========================================================================
-  renderSectionMicroQuiz(sec, index, note) {
-    const recall = this.getOrGenerateSectionQuiz(sec,index,note);
-    const saved = this.microQuizAnswers[sec.id]; const arg=this.escapeHtml(this.escapeJs(sec.id));
+  renderSectionRecall(sec, index, note) {
+    const recall = this.getSectionRecall(sec,index,note);
+    const saved = this.recallAnswers[sec.id]; const arg=this.escapeHtml(this.escapeJs(sec.id));
     return `<details class="study-extra study-recall"><summary>Check your understanding</summary><p>${this.escapeHtml(recall.question)}</p>
       <textarea id="recall-${this.escapeHtml(sec.id)}" aria-label="Your explanation" placeholder="Explain in your own words…" oninput="studyNotesView.keepRecallDraft('${arg}',this.value)">${this.escapeHtml(saved?.draft || '')}</textarea>
       <div class="study-recall-actions"><button class="btn btn-secondary btn-sm" onclick="studyNotesView.checkRecall('${arg}',false)">Compare with key points</button><button class="btn btn-primary btn-sm" onclick="studyNotesView.checkRecall('${arg}',true)">Get AI feedback</button></div>
@@ -1889,32 +1787,12 @@ class StudyNotesView {
     </details>`;
   }
 
-  getOrGenerateSectionQuiz(sec, index, note) {
+  getSectionRecall(sec, index, note) {
     const key = `${note.id}:${sec.id}:${sec.content}:${JSON.stringify(sec.recall || null)}`;
-    this._cachedSectionQuizzes ||= {};
-    return this._cachedSectionQuizzes[key] ||= sec.recall || { question: `Explain the central idea of “${sec.heading}” and why it matters.`, expectedPoints: sec.keyPoints?.length ? sec.keyPoints : [String(sec.content || '').split(/(?<=[.!?।])\s+/)[0]].filter(Boolean) };
+    this._cachedSectionRecall ||= {};
+    return this._cachedSectionRecall[key] ||= sec.recall || { question: `Explain the central idea of “${sec.heading}” and why it matters.`, expectedPoints: sec.keyPoints?.length ? sec.keyPoints : [String(sec.content || '').split(/(?<=[.!?।])\s+/)[0]].filter(Boolean) };
   }
 
-  answerMicroQuiz(secId, selectedIdx, correctIdx, explanation) {
-    const isCorrect = selectedIdx === correctIdx;
-    this.microQuizAnswers[secId] = { selectedIdx, correctIdx, explanation, isCorrect };
-
-    if (isCorrect) {
-      if (window.audioEngine) window.audioEngine.playFanfare();
-    } else {
-      if (window.audioEngine) window.audioEngine.playClick();
-    }
-
-    const card = document.getElementById(`micro-quiz-${secId}`);
-    if (card) {
-      const sec = this.activeNote?.sections?.find(s => s.id === secId);
-      const sIdx = this.activeNote?.sections?.findIndex(s => s.id === secId) || 0;
-      if (sec) {
-        card.outerHTML = this.renderSectionMicroQuiz(sec, sIdx, this.activeNote);
-        if (window.app) window.app.refreshIcons();
-      }
-    }
-  }
 
   // =========================================================================
   // MULTI-TAB SIDEBAR WORKSPACE (TOC, CHEAT SHEET, HIGHLIGHTS)
@@ -2212,7 +2090,7 @@ class StudyNotesView {
       const summary=await window.geminiService.summarizeStudyNote({title:note.title,subject:note.subject,sections:note.sections,settings:note.settings,signal:controller.signal,onProgress:status=>app.handleGenerationProgress(status)});
       this._checkRun(controller);await updateNote(note.id,{summary});
       if(version===this._viewVersion&&Number(this.activeNoteId)===Number(note.id)){this.activeNote.summary=summary;this.readerActiveTab='SUMMARY';await this.render();}
-      app.showToast(summary.generationSource==='GEMINI_AI'?'Revision updated for all sections.':'Revision extracted locally from source text.','success');
+      app.showToast(String(summary.generationSource || '').endsWith('_AI')?'Revision updated for all sections.':'Revision extracted locally from source text.','success');
       app.endGeneration(jobId);
     } catch(error) {
       app.endGeneration(jobId);if(app.isGenerationCancelled()||error.name==='AbortError')return;
@@ -2220,49 +2098,6 @@ class StudyNotesView {
     } finally{this._controllers.delete(controller);}
   }
 
-  openQuizModal() {
-    this._quizNote=this.activeNote;
-    this.isQuizModalOpen = true;
-    this.render();
-    if (window.audioEngine) window.audioEngine.playClick();
-  }
-
-  async openQuizModalForNote(noteId) {
-    if(this._dirty) await this.flushAutoSave();
-    this._quizNote = await getNoteById(Number(noteId));
-    if(!this._quizNote) return;
-    this.isQuizModalOpen=true; this.selectedQuizSections=null;
-    await this.render();
-  }
-
-  closeQuizModal() {
-    this.isQuizModalOpen = false;
-    this._quizNote=null;
-    this.render();
-  }
-
-  setQuizCount(cnt) {
-    this.quizConfig.questionCount = cnt;
-    this.render();
-    if (window.audioEngine) window.audioEngine.playClick();
-  }
-
-  async launchGeneratedQuizForNote(noteId) {
-    if(!app.beginGeneration('Preparing source-based practice…'))return;
-    const jobId=window.app?.getGenerationContext?.().id;
-    const controller=this._controller();
-    try {
-      await this.flushAutoSave();const note=await getNoteById(Number(noteId));if(!note)throw new Error('Note not found.');
-      const sections=this._practiceSections(note);if(!sections.length)throw new Error('Select at least one section.');
-      this.closeQuizModal();
-      const generated=await window.geminiService.generateStudyQuiz({sections,sourceTitle:note.title,subject:note.subject,questionCount:this.quizConfig.questionCount,questionType:this.quizConfig.questionType,difficulty:this.quizConfig.difficulty,language:note.settings?.language||'AUTO',settings:note.settings,offset:(note.quizzes?.length||0)*this.quizConfig.questionCount,signal:controller.signal,onStatusUpdate:status=>app.handleGenerationProgress(status)});
-      this._checkRun(controller);
-      const quizId=await saveNewQuiz({title:`${note.title} · Practice`,subject:note.subject,difficulty:this.quizConfig.difficulty,quizMode:'PRACTICE',language:note.settings?.language||'AUTO',sourceType:'TEXT_NOTES',sourceTitle:note.title},generated.questions);
-      await updateNote(note.id,{quizzes:[...(note.quizzes||[]),quizId]});
-      app.endGeneration(jobId);app.startQuiz(quizId);
-    }catch(error){app.endGeneration(jobId);if(app.isGenerationCancelled()||error.name==='AbortError')return;app.showToast(`Practice failed: ${error.message}`,'error');}
-    finally{this._controllers.delete(controller);}
-  }
 
   toggleExportMenu() {
     const menu = document.getElementById('export-dropdown-menu');
@@ -2292,21 +2127,6 @@ class StudyNotesView {
 
   exportSummarySheetPdf(noteId) {return this._exportSavedNote(noteId,true);}
 
-  async exportPrintableQuizPrompt(noteId) {
-    const printWindow=window.open('','_blank');
-    if(!printWindow){window.app?.showToast('Allow pop-ups for this site to export the quiz.','warning');return;}
-    if(!app.beginGeneration('Preparing your printable practice paper…')){printWindow.close();return;}
-    const jobId=window.app?.getGenerationContext?.().id;
-    printWindow.document.body.textContent='Preparing source-based practice questions…';
-    const controller=this._controller(),config={...this.quizConfig};
-    try {
-      await this.flushAutoSave();const note=await getNoteById(Number(noteId));if(!note)throw new Error('Note not found.');
-      const generated=await window.geminiService.generateStudyQuiz({sections:this._practiceSections(note),sourceTitle:note.title,subject:note.subject,questionCount:config.questionCount,questionType:config.questionType,difficulty:config.difficulty,language:note.settings?.language||'AUTO',settings:note.settings,signal:controller.signal,onStatusUpdate:status=>app.handleGenerationProgress(status)});
-      this._checkRun(controller);
-      window.pdfGenerator.exportPrintableQuizPdf({title:`${note.title} · Practice Paper`},generated.questions,printWindow);
-    }catch(error){printWindow.close();if(error.name!=='AbortError')app.showToast(`Printable quiz failed: ${error.message}`,'error');}
-    finally{this._controllers.delete(controller);app.endGeneration(jobId);}
-  }
 
   async toggleEditMode() {
     if(this.isEditMode) {
@@ -2327,13 +2147,13 @@ class StudyNotesView {
       sec.content = newText;sec.supportingContentStale=true;
       for(const key of ['keyPoints','definitions','formulas','examples','tables','importantFacts'])sec[key]=[];
       sec.flowchart=null;sec.diagram=null;sec.recall=null;
-      this._cachedSectionQuizzes={};delete this.microQuizAnswers[secId];
+      this._cachedSectionRecall={};delete this.recallAnswers[secId];
       this.triggerAutoSave();
     }
   }
 
   async refreshSectionTeaching(id) {
-    if(!window.geminiService.isAiAvailable()){window.app?.showToast('Configure Gemini in Settings to rebuild teaching aids.','warning');return;}
+    if(!window.geminiService.isAiAvailable()){window.app?.showToast('Configure your selected AI provider in Settings to rebuild teaching aids.','warning');return;}
     try{await this.flushAutoSave();}catch(error){window.app?.showToast(error.message,'error');return;}
     const note=this.activeNote,section=note?.sections?.find(section=>section.id===id);if(!section)return;
     if(!window.app?.beginGeneration('Rebuilding teaching aids from your explanation…'))return;
@@ -2463,10 +2283,10 @@ class StudyNotesView {
     const note=await getNoteById(id);if(version!==this._viewVersion||!note)return;
     this.currentViewMode='READER';this.activeNoteId=id;this.activeNote=note;
     this.noteSettings={language:'AUTO',level:'AUTO',exam:'',...(note.settings||{})};
-    this.readerActiveTab='TEXTBOOK';this.isFocusMode=false;this.isEditMode=false;this.isAskAiOpen=false;this.isQuizModalOpen=false;
+    this.readerActiveTab='TEXTBOOK';this.isFocusMode=false;this.isEditMode=false;this.isAskAiOpen=false;
     const readingSectionId=note.readingPosition?.sectionId||note.sections?.[0]?.id;this.activeTOCSectionId=readingSectionId;
-    this.askAiMessages=Array.isArray(note.chatHistory)?note.chatHistory:[];this.microQuizAnswers=note.recallAnswers||{};
-    this._cachedSectionQuizzes={};this.selectedQuizSections=null;this._editBaseline=null;this._savePromise=Promise.resolve();this.autoSaveStatus='Saved ✓';
+    this.askAiMessages=Array.isArray(note.chatHistory)?note.chatHistory:[];this.recallAnswers=note.recallAnswers||{};
+    this._cachedSectionRecall={};this._editBaseline=null;this._savePromise=Promise.resolve();this.autoSaveStatus='Saved ✓';
     try{history.replaceState(null,'',`#study-notes?id=${id}`);}catch{}
     await this.render();
     this.activeTOCSectionId=readingSectionId;const target=document.getElementById(readingSectionId);if(target)target.scrollIntoView?.({block:'start',behavior:'instant'});this._scrollHandler?.();
@@ -2474,7 +2294,7 @@ class StudyNotesView {
 
   async backToDashboard() {
     try{await this.flushAutoSave();await this._persistReadingProgress();}catch(error){window.app?.showToast(error.message,'error');return;}
-    this._endNoteSession();this.currentViewMode='DASHBOARD';this.activeNoteId=null;this.activeNote=null;this.isAskAiOpen=false;this.isQuizModalOpen=false;
+    this._endNoteSession();this.currentViewMode='DASHBOARD';this.activeNoteId=null;this.activeNote=null;this.isAskAiOpen=false;
     document.body.classList.remove('in-textbook-focus-mode');await this.render();
   }
 
@@ -2536,7 +2356,7 @@ class StudyNotesView {
    * Deliberately does NOT call this.render(): renderCreateView() replaces the
    * whole container's innerHTML, which would destroy the textarea and the caret
    * on the first keystroke. Same rule as the manual-paste box above and the
-   * page-range inputs in create-quiz.js.
+   * scoped study-note input controls.
    */
   onFocusInput(rawVal) {
     this.focusInstruction = String(rawVal || '').slice(0, StudyNotesView.MAX_FOCUS_CHARS);
@@ -2588,7 +2408,7 @@ class StudyNotesView {
     `;
   }
 
-  /** Text for the badge beside the label. Mirrors create-quiz's updateScopeBadge(). */
+  /** Text for the badge beside the focus instruction label. */
   describeFocusState() {
     const len = this.focusInstruction.trim().length;
     if (len === 0) return 'Full notes — everything in the file';

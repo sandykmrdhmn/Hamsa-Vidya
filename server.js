@@ -3,12 +3,14 @@
  * Zero dependencies, built with standard Node.js http and fs modules.
  */
 
+try { if (typeof process.loadEnvFile === 'function') process.loadEnvFile('.env'); } catch {}
+
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const {Buffer} = require('buffer');
 const liveExamsScraper = require('./live-exams-scraper');
-const {ProxyBudget,positiveLimit,estimateInput,validatePayload} = require('./ai-proxy-policy');
+const {ProxyBudget,positiveLimit,estimateInput,validatePayload,isProviderDailyQuota} = require('./ai-proxy-policy');
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = __dirname;
@@ -25,7 +27,7 @@ const GEMINI_RATE_LIMIT = {
 };
 const MAX_PROXY_BODY_BYTES = 2 * 1024 * 1024; // 2 MB — large PDF prompts still fit
 const GEMINI_UPSTREAM_TIMEOUT_MS = 120000;
-const GEMINI_MODEL = 'gemini-3.6-flash';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const proxyBudget = new ProxyBudget({
   rpm:positiveLimit(process.env.GEMINI_PROJECT_RPM,5),
   tpm:positiveLimit(process.env.GEMINI_PROJECT_TPM,12000),
@@ -139,19 +141,18 @@ const DENIED_PREFIXES = [
 
 /** @returns {boolean} true when the request must be refused. */
 function isForbiddenPath(urlPath, ext) {
-  const lower = urlPath.toLowerCase();
+  const lower = path.posix.normalize(urlPath.replace(/\\/g, '/')).toLowerCase();
 
   if (DENIED_FILES.has(lower)) return true;
   if (DENIED_PREFIXES.some(p => lower.startsWith(p))) return true;
 
   // Dotfiles (.env, .gitignore) and editor/backup leftovers.
-  const base = lower.split('/').pop() || '';
-  if (base.startsWith('.')) return true;
+  if (lower.split('/').some(segment => segment.startsWith('.'))) return true;
   if (lower.endsWith('.bak') || lower.endsWith('.log') || lower.endsWith('.ps1')) return true;
 
   // Anything we don't explicitly recognise (.md, .env, .yml ...) stays private
   // rather than being shipped as application/octet-stream.
-  if (!SERVABLE_EXTENSIONS.has(ext)) return true;
+  if (ext && !SERVABLE_EXTENSIONS.has(ext)) return true;
 
   return false;
 }
@@ -174,6 +175,11 @@ function sendJson(res, status, payload, extraHeaders = {}) {
 
 const server = http.createServer((req, res) => {
   applySecurityHeaders(res);
+
+  // Only the application's supported API namespaces are exposed.
+  if (req.url.startsWith('/api/') && !/^\/api\/(?:gemini|live-exams)(?:[/?]|$)/.test(req.url)) {
+    return sendJson(res, 404, {error:'API endpoint not found.'});
+  }
 
   // =========================================================================
   // API: Exam listing — one source, five columns (see live-exams-scraper.js)
@@ -263,7 +269,7 @@ const server = http.createServer((req, res) => {
 
     if (!serverApiKey) {
       return sendJson(res, 503, {
-        error: 'GEMINI_API_KEY is not configured on the server. Set the environment variable, or add a personal key in Settings to use direct mode.'
+        error: {code:'AI_NOT_CONFIGURED',retryable:false,message:'GEMINI_API_KEY is not configured on the server. Set the environment variable, or add a personal key in Settings to use direct mode.'}
       });
     }
 
@@ -282,8 +288,8 @@ const server = http.createServer((req, res) => {
     };
 
     if (req.method === 'GET' && apiPath === '/models') {
-      const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${serverApiKey}`;
-      fetch(targetUrl, { signal: AbortSignal.timeout(GEMINI_UPSTREAM_TIMEOUT_MS) })
+      const targetUrl = 'https://generativelanguage.googleapis.com/v1beta/models';
+      fetch(targetUrl, { headers: {'x-goog-api-key':serverApiKey}, signal: AbortSignal.timeout(GEMINI_UPSTREAM_TIMEOUT_MS) })
         .then(r => r.text().then(body => {
           res.writeHead(r.status, {
             'Content-Type': 'application/json; charset=utf-8',
@@ -300,7 +306,7 @@ const server = http.createServer((req, res) => {
     }
 
     if (req.method === 'POST') {
-      // Extract model from path: /api/gemini/gemini-3.6-flash -> gemini-3.6-flash
+      // Extract model from path: /api/gemini/gemini-2.5-flash -> gemini-2.5-flash
       let rawModel;
       try { rawModel = decodeURIComponent(apiPath.replace(/^\//, '')) || GEMINI_MODEL; }
       catch { return sendJson(res,400,{error:'Invalid model path encoding.'},forwardHeaders); }
@@ -310,7 +316,7 @@ const server = http.createServer((req, res) => {
       if (!/^[A-Za-z0-9._-]{1,64}$/.test(rawModel)) {
         return sendJson(res, 400, { error: `Invalid model identifier: ${rawModel}` }, forwardHeaders);
       }
-      if (rawModel !== GEMINI_MODEL) return sendJson(res,400,{error:'This shared proxy only enables Gemini 3.6 Flash.'},forwardHeaders);
+      if (!/^gemini-[A-Za-z0-9._-]+$/.test(rawModel)) return sendJson(res,400,{error:'Only Gemini model IDs are supported.'},forwardHeaders);
 
       const chunks = [];
       let bytes = 0;
@@ -343,11 +349,29 @@ const server = http.createServer((req, res) => {
         }
         const invalid = validatePayload(payload);
         if (invalid) return sendJson(res,400,{error:invalid},forwardHeaders);
-        const safePayload = {...payload,generationConfig:{...payload.generationConfig,maxOutputTokens:payload.generationConfig?.maxOutputTokens || 8192,thinkingConfig:{...payload.generationConfig?.thinkingConfig,thinkingLevel:payload.generationConfig?.thinkingConfig?.thinkingLevel || 'low'}}};
+        const generationConfig={...payload.generationConfig,maxOutputTokens:payload.generationConfig?.maxOutputTokens || 8192};
+        const thinking=generationConfig.thinkingConfig || {};
+        if (/^gemini-2\.5(?:[.-]|$)/.test(rawModel)) {
+          let thinkingBudget=Number.isInteger(thinking.thinkingBudget)?Math.max(0,Math.min(1024,thinking.thinkingBudget)):0;
+          // Pro cannot disable thinking; Flash-Lite's positive minimum is 512.
+          if (/^gemini-2\.5-pro(?:[.-]|$)/.test(rawModel)) thinkingBudget=Math.max(128,thinkingBudget);
+          else if (/^gemini-2\.5-flash-lite(?:[.-]|$)/.test(rawModel) && thinkingBudget>0) thinkingBudget=Math.max(512,thinkingBudget);
+          generationConfig.thinkingConfig={thinkingBudget,includeThoughts:false};
+        } else if (/^gemini-3(?:[.-]|$)/.test(rawModel)) {
+          const levels=/^gemini-3(?:\.\d+)?-pro(?:[.-]|$)/.test(rawModel) ? ['low','high']
+            : /^gemini-3\.(?:7|8)-flash(?:[.-]|$)/.test(rawModel) ? ['low','medium','high']
+            : /^gemini-3\.1-flash-lite-image(?:[.-]|$)/.test(rawModel) ? ['minimal','high']
+            : ['minimal','low','medium','high'];
+          const fallbackLevel=levels.includes('low')?'low':'minimal';
+          generationConfig.thinkingConfig={thinkingLevel:levels.includes(thinking.thinkingLevel)?thinking.thinkingLevel:fallbackLevel};
+          for (const parameter of ['temperature','topP','topK','candidateCount']) delete generationConfig[parameter];
+        } else delete generationConfig.thinkingConfig;
+        const safePayload = {...payload,generationConfig};
         const budgetError = proxyBudget.reserve(estimateInput(safePayload),safePayload.generationConfig.maxOutputTokens);
         if (budgetError) return sendJson(res,budgetError.status,{error:{code:budgetError.code,message:budgetError.message,retryable:budgetError.retryable}}, {...forwardHeaders,...(budgetError.retryAfter ? {'Retry-After':String(budgetError.retryAfter)} : {})});
 
-        const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${rawModel}:generateContent?key=${serverApiKey}`;
+        const targetUrl = `https://generativelanguage.googleapis.com/v1beta/models/${rawModel}:generateContent`;
+        const requestDay = proxyBudget.daily.day;
         const upstreamController = new AbortController();
         let upstreamTimedOut = false;
         const upstreamTimer = setTimeout(() => { upstreamTimedOut = true; upstreamController.abort(); }, GEMINI_UPSTREAM_TIMEOUT_MS);
@@ -355,11 +379,12 @@ const server = http.createServer((req, res) => {
         res.on('close', cancelUpstream);
         fetch(targetUrl, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key':serverApiKey },
           body: JSON.stringify(safePayload),
           signal: upstreamController.signal
         })
           .then(r => r.text().then(responseBody => {
+            if (isProviderDailyQuota(r.status,responseBody)) proxyBudget.markProviderDailyExhausted(requestDay);
             if (res.destroyed) return;
             res.writeHead(r.status, {
               'Content-Type': 'application/json; charset=utf-8',
@@ -413,13 +438,13 @@ const server = http.createServer((req, res) => {
   // Refuse private files before touching the filesystem. Extensionless paths
   // (SPA deep links like /dashboard) fall through to the index.html handler.
   const requestedExt = path.extname(safeUrl).toLowerCase();
-  if (requestedExt && isForbiddenPath(safeUrl.replace(/\\/g, '/'), requestedExt)) {
+  if (isForbiddenPath(safeUrl.replace(/\\/g, '/'), requestedExt)) {
     res.writeHead(404, { 'Content-Type': 'text/plain', 'Cache-Control': 'no-store' });
     return res.end('404 Not Found');
   }
 
   fs.stat(filePath, (err, stats) => {
-    if (err || !stats.isFile()) {
+    if (!requestedExt || err || !stats.isFile()) {
       // Missing assets must not become successful HTML responses: browsers and
       // service workers otherwise cache the document as a script/worker.
       if (requestedExt && requestedExt !== '.html') {

@@ -195,7 +195,7 @@ const TARGET_EXAMS_CATALOG = [
 
 class AIAdvisorEngine {
   constructor() {
-    this.cacheKey = 'hamsa_ai_advisor_cache';
+    this.cacheKey = 'hamsa_ai_advisor_cache_v3';
     this.targetExamKey = 'hamsa_target_exam_id';
     this.targetExamDataKey = 'hamsa_target_exam_data';
     this.timeTracker = new StudyTimeTracker();
@@ -261,7 +261,7 @@ class AIAdvisorEngine {
       stages: 'CBT / Written Examination ➔ Skill Test ➔ Document Verification',
       syllabusHighlights: (liveMatch.educationTags && liveMatch.educationTags.length) ? liveMatch.educationTags.join(', ') : 'General Knowledge, Quantitative Aptitude & Core Technical Subjects',
       requiredQualifications: liveMatch.eligibility?.qualifications || ['GRADUATION'],
-      preparationRoadmap: 'Topic-wise mock MCQs + regular 5-minute timed drills on Hamsa Vidya'
+      preparationRoadmap: 'Structured topic notes + regular flashcard review and written-answer practice'
     };
   }
 
@@ -530,8 +530,7 @@ class AIAdvisorEngine {
    */
   async generateLiveAdvice(showToast = true) {
     const profile = window.examProfileManager ? (window.examProfileManager.loadProfile() || window.examProfileManager.getProfile()) : null;
-    const stats = typeof getDashboardStats === 'function' ? await getDashboardStats() : { totalQuizzesTaken: 0, overallAccuracy: 0, dueCardsToday: 0, dayStreak: 1, totalNotesCount: 0 };
-    const analytics = typeof getAnalyticsData === 'function' ? await getAnalyticsData() : { subjects: [] };
+    const stats = typeof getDashboardStats === 'function' ? await getDashboardStats() : { dueCardsToday: 0, dayStreak: 1, totalNotesCount: 0, totalCardReviews: 0, answerCount: 0, teacherCount: 0 };
     const allExams = window.examService ? await window.examService.getAllExams().catch(() => []) : [];
 
     const studentName = (window.examProfileManager && window.examProfileManager.getStudentFirstName()) || 'Scholar';
@@ -615,16 +614,6 @@ class AIAdvisorEngine {
 
     // 5. Audit Underutilized Platform Features ("क्या लाभ नहीं ले रहे")
     const unutilizedBenefits = [];
-    if (stats.totalQuizzesTaken === 0) {
-      unutilizedBenefits.push({
-        title: 'AI प्रश्नोत्तरी अभ्यास (AI Quiz Generation)',
-        issue: 'आपने आज तक अपने सिलेबस या PDF नोट्स से AI MCQs उत्पन्न नहीं किए हैं।',
-        solution: 'अपनी पाठ्यपुस्तक या किसी भी टॉपिक की PDF अपलोड करके 10 उच्च-स्तरीय MCQs तुरंत तैयार करें।',
-        actionText: 'Generate AI Quiz',
-        actionCmd: `app.navigate('create-quiz')`
-      });
-    }
-
     if (stats.dueCardsToday > 0 || (stats.totalCustomCards || 0) === 0) {
       unutilizedBenefits.push({
         title: 'फ्लैशकार्ड्स व स्मृति संरक्षण (Active Recall SRS)',
@@ -639,11 +628,11 @@ class AIAdvisorEngine {
 
     if (isLowTime) {
       unutilizedBenefits.push({
-        title: '5-मिनट त्वरित AI ड्रिल (Speed & Agility Drill)',
+        title: 'AI Teacher के साथ त्वरित अध्ययन (Concept Review)',
         issue: `आज आपने केवल ${todayMinutes} मिनट अध्ययन किया है। त्वरित रिवीजन मिस हो रहा है।`,
-        solution: 'परीक्षा-हॉल जैसे टाइमर दबाव में 5 तीव्र प्रश्नों को हल करके अपनी स्पीड बढ़ाएं।',
-        actionText: 'Start 5-Min Drill',
-        actionCmd: `app.launchQuickDrill()`
+        solution: 'किसी कठिन अवधारणा को AI Teacher के साथ समझें और अपने नोट्स में उसका सारांश लिखें।',
+        actionText: 'Ask AI Teacher',
+        actionCmd: `app.navigate('ai-teacher')`
       });
     }
 
@@ -657,30 +646,21 @@ class AIAdvisorEngine {
       });
     }
 
-    // 6. Identify Weak & Strong Subjects
-    let weakestSubject = null;
-    if (analytics.subjects && analytics.subjects.length > 0) {
-      const sorted = [...analytics.subjects].sort((a, b) => a.accuracy - b.accuracy);
-      weakestSubject = sorted[0];
-    }
-
-    // 7. Calculate Comprehensive Preparedness Index (0 - 100)
-    let readinessScore = 40;
-    if (stats.totalQuizzesTaken > 0) {
-      const quizFactor = Math.min(stats.totalQuizzesTaken * 3.5, 25);
-      const accFactor = (stats.overallAccuracy || 50) * 0.35;
-      const timeFactor = Math.min((todayMinutes / recommendedMinutes) * 20, 20);
-      const streakFactor = Math.min((stats.dayStreak || 1) * 3, 15);
-      readinessScore = Math.min(Math.round(readinessScore + quizFactor + accFactor + timeFactor + streakFactor - 35), 98);
-    }
+    // Study readiness reflects recorded learning activity and time invested.
+    const studyActions = (stats.totalNotesCount || 0) + (stats.totalCardReviews || 0) +
+      (stats.answerCount || 0) + (stats.teacherCount || 0);
+    const activityFactor = Math.min(studyActions * 2, 35);
+    const timeFactor = Math.min((todayMinutes / recommendedMinutes) * 30, 30);
+    const streakFactor = Math.min((stats.dayStreak || 1) * 3, 25);
+    const readinessScore = Math.min(Math.round(10 + activityFactor + timeFactor + streakFactor), 98);
 
     // 8. Synthesize Deep Strategic Advisory Narrative
     let narrative = '';
     if (targetExam) {
       if (isLowTime) {
-        narrative = `${studentName}, आपने आज हम्श विद्या पर केवल ${todayMinutes} मिनट का समय दिया है, जबकि ${targetExam.shortName} के लिए दैनिक कम से कम ${recommendedMinutes} मिनट का केंद्रित अभ्यास आवश्यक है (समय की कमी: -${timeDeficit} मिनट)। परीक्षा में ${targetDaysLeft !== null ? `${targetDaysLeft} दिन शेष हैं` : 'सीमित समय है'}। तुरंत नीचे दिए गए कमजोर विषयों के AI ड्रिल और फ्लैशकार्ड्स को पूरा करें।`;
+        narrative = `${studentName}, आपने आज हम्श विद्या पर केवल ${todayMinutes} मिनट का समय दिया है, जबकि ${targetExam.shortName} के लिए दैनिक कम से कम ${recommendedMinutes} मिनट का केंद्रित अभ्यास आवश्यक है (समय की कमी: -${timeDeficit} मिनट)। परीक्षा में ${targetDaysLeft !== null ? `${targetDaysLeft} दिन शेष हैं` : 'सीमित समय है'}। तुरंत नीचे दिए गए नोट्स का अध्ययन और फ्लैशकार्ड समीक्षा को पूरा करें।`;
       } else {
-        narrative = `${studentName}, उत्कृष्ट अनुशासन! आपने आज ${todayMinutes} मिनट का समर्पित अध्ययन पूरा किया है। ${targetExam.shortName} में ${targetDaysLeft !== null ? `${targetDaysLeft} दिन शेष हैं` : 'सीमित समय है'}। आपका वर्तमान तैयारी सूचकांक ${readinessScore}% है। आज ${weakestSubject ? `${weakestSubject.name} के प्रश्नों पर` : 'अपने कोर मॉक टेस्ट पर'} ध्यान केंद्रित करें।`;
+        narrative = `${studentName}, उत्कृष्ट अनुशासन! आपने आज ${todayMinutes} मिनट का समर्पित अध्ययन पूरा किया है। ${targetExam.shortName} में ${targetDaysLeft !== null ? `${targetDaysLeft} दिन शेष हैं` : 'सीमित समय है'}। आपका वर्तमान तैयारी सूचकांक ${readinessScore}% है। आज अपने नोट्स, लिखित उत्तर और कठिन अवधारणाओं पर ध्यान केंद्रित करें।`;
       }
     } else {
       if (isLowTime) {
@@ -704,7 +684,6 @@ class AIAdvisorEngine {
       targetDateLabel,
       targetEligibility,
       unutilizedBenefits,
-      weakestSubject,
       readinessScore,
       narrative,
       availableExams: TARGET_EXAMS_CATALOG,
@@ -803,9 +782,9 @@ class AIAdvisorEngine {
               <div class="countdown-target-date">
                 ${targetDateLabel || 'Notification Active'}
               </div>
-              <button class="btn btn-primary btn-sm spotlight-cta-btn" onclick="app.navigate('create-quiz')">
+              <button class="btn btn-primary btn-sm spotlight-cta-btn" onclick="app.navigate('study-notes')">
                 <i data-lucide="sparkles" style="width:14px;height:14px;"></i>
-                <span>Practice ${SecurityUtils.escapeHtml(targetExam.shortName)} MCQs</span>
+                <span>Study ${SecurityUtils.escapeHtml(targetExam.shortName)} notes</span>
               </button>
             </div>
           </div>

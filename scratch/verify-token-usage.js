@@ -62,11 +62,11 @@ function makeSandbox(port) {
   // minute-long cooldowns; the quota suites verify the rolling window itself.
   let clock = Date.now();
   sandbox.Date = class extends Date { static now() { return clock; } };
-  sandbox.QuizQuality = {wait:async(ms,signal)=>{if(signal?.aborted)throw new DOMException('Cancelled','AbortError');clock+=ms;}};
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);
   new vm.Script(SRC, { filename: 'ai-client.js' }).runInContext(sandbox);
+  sandbox.window.aiClient._quotaWait = async (ms, options) => { if (options.signal?.aborted) throw new DOMException('Cancelled', 'AbortError'); clock += ms; };
   return { client: sandbox.window.aiClient, store, warnings };
 }
 
@@ -241,7 +241,7 @@ function makeSandbox(port) {
   console.log('\n=== Wiring ===');
   {
     check('tracking reads a clone, not the original',
-      /response\.clone\(\)\.json\(\)/.test(SRC));
+      /response\.clone\(\)/.test(SRC) && /readResponseJSON\(response\)/.test(SRC));
     check('tracking failures are swallowed so they cannot break a request',
       /_trackResponseUsage[\s\S]{0,400}catch/.test(SRC));
     check('usage exposed for the UI', /getUsage\(\)\s*\{/.test(SRC));
@@ -250,7 +250,7 @@ function makeSandbox(port) {
     const settings = read('js/views/settings.js');
     check('Settings renders usage', /AI Token Usage/.test(settings));
     check('Settings has a reset button', /resetAiUsage\(\)/.test(settings));
-    check('Settings states the counts are exact', /Exact counts reported by the Gemini API/.test(settings));
+    check('Settings states the counts come from Gemini', /Counts reported by Google Gemini/.test(settings));
 
     const aw = read('js/answer-writing-service.js');
     check('evaluateAnswer now caps its input', /MAX_ANSWER_CHARS/.test(aw));

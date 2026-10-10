@@ -290,7 +290,7 @@ IMPORTANT: Return ONLY valid JSON. Include only fields that genuinely help this 
       advancedModes
     });
 
-    // If online and API key or server proxy is available, attempt Gemini generation
+    // Use the configured provider through the common transport.
     let aiResponse = null;
     let geminiError = null;
 
@@ -298,7 +298,7 @@ IMPORTANT: Return ONLY valid JSON. Include only fields that genuinely help this 
       aiResponse = await this._callGeminiWithFallback(userPrompt, imageFile, { signal, advancedModes });
     } catch (err) {
       if (err.name === 'AbortError' || signal?.aborted) throw err;
-      console.warn('AI Teacher Gemini API attempt failed, switching to Deterministic Pedagogical Engine:', err);
+      console.warn('AI Teacher API attempt failed, switching to Deterministic Pedagogical Engine:', err);
       geminiError = err.message;
     }
 
@@ -313,12 +313,14 @@ IMPORTANT: Return ONLY valid JSON. Include only fields that genuinely help this 
       }
       aiResponse.data.studentContext = studentContext;
       aiResponse.data.advancedModes = advancedModes;
-      aiResponse.data.generation = { source: 'GEMINI_AI', model: aiResponse.model };
+      const provider=aiResponse.provider || window.aiClient?.getProvider?.() || 'gemini';
+      const source='GEMINI_AI';
+      aiResponse.data.generation = { source, model: aiResponse.model, provider };
       return {
         success: true,
         data: aiResponse.data,
-        source: 'GEMINI_AI',
-        model: aiResponse.model || 'Gemini 3.6 Flash',
+        source,
+        model: aiResponse.model || window.geminiService?.getActiveModel?.() || 'gemini-2.5-flash',
         studentContext
       };
     }
@@ -802,9 +804,11 @@ REMINDERS:
     const { signal, maxOutputTokens = 8192, validateLesson = true, advancedModes = {} } = options;
     this._throwIfAborted(signal);
     if (!window.aiClient) throw new Error('AI transport is not loaded.');
+    const provider=window.aiClient.getProvider?.() || 'gemini';
+    const checkSelection=()=>{this._throwIfAborted(signal);if((window.aiClient.getProvider?.() || 'gemini')!==provider)throw new DOMException('AI selection changed. Please retry the lesson.','AbortError');};
     const apiKey = window.geminiService?.getApiKey() || '';
-    await window.aiClient.probeServerKey();
-    this._throwIfAborted(signal);
+    await window.aiClient.probeServerKey(provider);
+    checkSelection();
     if (!window.aiClient.isAvailable()) throw new Error('Live AI is not configured.');
 
     const parts = [{ text: prompt }];
@@ -813,7 +817,7 @@ REMINDERS:
         throw new Error('Use a PNG, JPEG or WebP image under 1 MB.');
       }
       const data = await this._fileToBase64(imageFile);
-      this._throwIfAborted(signal);
+      checkSelection();
       parts.push({ inlineData: { mimeType: imageFile.type, data } });
     }
     const payload = {
@@ -824,7 +828,7 @@ REMINDERS:
     if (new TextEncoder().encode(JSON.stringify(payload)).length > 1800000) {
       throw new Error('The attached content is too large. Use a smaller document or image.');
     }
-    const activeModel = window.geminiService?.getActiveModel() || 'gemini-3.6-flash';
+    const activeModel = window.geminiService?.getActiveModel() || 'gemini-2.5-flash';
     let models = window.geminiService?.candidateModels
       ? window.geminiService.sortModelsByPreference(window.geminiService.candidateModels, activeModel)
       : [activeModel];
@@ -839,10 +843,10 @@ REMINDERS:
     }
     let lastError = new Error('Live AI could not return a lesson.');
     for (const model of [...new Set(models)]) {
-      this._throwIfAborted(signal);
+      checkSelection();
       try {
-        const res = await window.aiClient.fetchGenerateContent(model, payload, { apiKey, signal,stage:'teacher' });
-        this._throwIfAborted(signal);
+        const res = await window.aiClient.fetchGenerateContent(model, payload, { provider,apiKey, signal,stage:'teacher' });
+        checkSelection();
         if (!res.ok) {
           const errorData = await res.json().catch(() => ({}));
           lastError = new Error(errorData.error?.message || `HTTP ${res.status}`);
@@ -866,7 +870,7 @@ REMINDERS:
             // A guided attempt must not render the completed solution or an answer key.
             for (const field of ['mathSolution', 'steps', 'examples', 'summary', 'practiceQuestions', 'examPoints']) data[field] = null;
           }
-          return { success: true, data, model };
+          return { success: true, data, model, provider };
         }
         lastError = new Error(Object.values(advancedModes).some(Boolean) ? 'AI did not complete all selected mentorship modes. Please retry.' : 'AI returned an invalid or empty lesson. Please retry.');
       } catch (error) {

@@ -86,11 +86,11 @@ const check = (condition, label) => { assert.ok(condition, label); checks++; con
     await evaluate("settingsView._studyDraft.language='HINDI';settingsView._studyDraft.exam='CBSE Class 10';settingsView.saveStudyPreferences();true");
     check(await evaluate("studyPreferences.get().language==='HINDI' && studyPreferences.get().exam==='CBSE Class 10'"), label + ' study preferences save');
     await evaluate("document.querySelector('[data-settings-section=data]').open=true;document.querySelector('[data-settings-section=data]').scrollIntoView({block:'start',behavior:'instant'});true");
-    check(await evaluate("document.documentElement.scrollWidth<=innerWidth && document.querySelectorAll('.settings-module-resets button').length===6"),label+' storage and module reset controls fit viewport');
-    await evaluate("(async()=>{await db.notes.put({id:1,title:'Note to reset'});await db.quizzes.put({id:1,title:'Quiz to keep'});await db.cardReviews.bulkPut([{id:1,cardKey:'note_1:energy'},{id:2,cardKey:'q:1'}]);settingsView.confirmModuleReset('NOTES');})()");
+    check(await evaluate("document.documentElement.scrollWidth<=innerWidth && document.querySelectorAll('.settings-module-resets button').length===5"),label+' storage and module reset controls fit viewport');
+    await evaluate("(async()=>{await db.notes.put({id:1,title:'Note to reset'});await db.customDecks.put({id:1,title:'Custom deck to keep'});await db.cardReviews.bulkPut([{id:1,cardKey:'note_1:energy'},{id:2,cardKey:'custom:1',deckId:1,deckType:'CUSTOM'}]);settingsView.confirmModuleReset('NOTES');})()");
     check(await evaluate("db.notes.count().then(count=>count===1 && confirmation.title.includes('Study Notes'))"),label+' module reset waits for confirmation');
     await evaluate("confirmation.onConfirm()");
-    check(await evaluate("Promise.all([db.notes.count(),db.quizzes.count(),db.cardReviews.toArray()]).then(([notes,quizzes,reviews])=>notes===0&&quizzes===1&&reviews.length===1&&reviews[0].cardKey==='q:1')"),label+' actual IndexedDB reset removes only notes and related reviews');
+    check(await evaluate("Promise.all([db.notes.count(),db.customDecks.count(),db.cardReviews.toArray()]).then(([notes,decks,reviews])=>notes===0&&decks===1&&reviews.length===1&&reviews[0].cardKey==='custom:1')"),label+' actual IndexedDB reset removes only notes and related reviews');
     await evaluate("document.querySelector('[data-settings-section=data]').open=false;document.querySelector('[data-settings-section=study]').scrollIntoView({block:'start',behavior:'instant'});true");
     await sleep(600); // Let the existing card entrance animation finish before capturing.
     const screenshot = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }, sessionId);

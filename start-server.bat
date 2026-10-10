@@ -7,10 +7,10 @@ echo ================================================================
 REM Try node first, then agy-node fallback
 where node >nul 2>nul
 if %errorlevel% equ 0 (
-    node server.js
+    node --env-file-if-exists=.env server.js
 ) else (
     echo Using Antigravity Node runtime...
-    "C:\Users\sandy\AppData\Roaming\Antigravity\bin\agy-node.cmd" server.js
+    "C:\Users\sandy\AppData\Roaming\Antigravity\bin\agy-node.cmd" --env-file-if-exists=.env server.js
 )
 
 pause

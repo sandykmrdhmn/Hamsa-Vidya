@@ -9,9 +9,6 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 let passed = 0,
   failed = 0;
 const tables = [
-  'quizzes',
-  'questions',
-  'attempts',
   'notes',
   'customDecks',
   'customCards',
@@ -111,7 +108,7 @@ function database() {
 }
 function fixture({ db = true, app = false } = {}) {
   const dom = new JSDOM(
-    '<main><section id="view-flashcards"></section><section id="view-create-quiz"></section><section id="view-quiz-player"></section><section id="view-quiz-result"></section><section id="view-quiz-history"></section><section id="view-library"></section></main><div id="generating-overlay"></div><div id="generating-title"></div><div id="confirmation-modal"></div>',
+    '<main><section id="view-flashcards"></section><section id="view-library"></section></main><div id="generating-overlay"></div><div id="generating-title"></div><div id="confirmation-modal"></div>',
     {
       url: 'http://localhost/',
       runScripts: 'outside-only',
@@ -144,19 +141,11 @@ function fixture({ db = true, app = false } = {}) {
     navigate(view) {
       this.currentView = view;
     },
-    startQuiz(id) {
-      w.started = id;
-    },
-    viewQuizResult(id, hash, attempt) {
-      w.viewed = { id, attempt };
-    },
     checkAndUpdateStreak() {},
   };
   w.UIUtils = { buildViewHero: () => '', escapeJs: String };
   for (const file of [
     'js/sanitizer.js',
-    'js/quiz-quality.js',
-    'js/quiz-engine.js',
   ])
     w.eval(read(file));
   if (db) {
@@ -206,20 +195,6 @@ async function test(name, run) {
     f?.close();
   }
 }
-const question = (n = 1, extra = {}) => ({
-  questionText: `What is the result of ${n} + 1?`,
-  options: [String(n + 1), String(n + 2), String(n + 3), String(n + 4)],
-  correctAnswerIndex: 0,
-  explanation: `Adding one to ${n} gives ${n + 1}.`,
-  optionExplanations: [
-    'Adding one gives this result.',
-    'This adds two instead of one.',
-    'This adds three instead of one.',
-    'This adds four instead of one.',
-  ],
-  topic: 'Addition',
-  ...extra,
-});
 const seed = async (w) => {
   const id = await w.createCustomDeck({
     title: "2026 Student's Notes",
@@ -250,26 +225,13 @@ const seed = async (w) => {
       null,
     );
   });
-  await test('Missing or ambiguous quiz keys never become authoritative flashcard answers', ({
+  await test('Custom cards require a usable prompt and answer', ({
     w,
   }) => {
-    assert.equal(
-      w.FlashcardTools.questionCard(
-        question(1, { id: 1, correctAnswerIndex: null }),
-      ),
-      null,
-    );
-    const c = w.FlashcardTools.questionCard(
-      question(1, {
-        id: 1,
-        quizId: 9,
-        correctAnswerIndex: 'B',
-        memoryCue: 'One more',
-      }),
-      { title: 'Book' },
-    );
-    assert.equal(c.back, '3');
-    assert.equal(c.memoryCue, 'One more');
+    assert.equal(w.FlashcardTools.customCard({id:1,front:'Question',back:''}),null);
+    assert.equal(w.FlashcardTools.customCard({id:1,front:'',back:'Answer'}),null);
+    const c=w.FlashcardTools.customCard({id:1,deckId:9,front:'Question',back:'Answer',memoryCue:'Remember this'}, {title:'Book'});
+    assert.equal(c.back,'Answer');assert.equal(c.memoryCue,'Remember this');
   });
   await test('Note and section views share stable identities and keep formulas/references', ({
     w,
@@ -344,7 +306,7 @@ const seed = async (w) => {
     await w.flashcardsView.smartDeck('NEW');
     assert.equal(w.flashcardsView.activeTab, 'decks');
   });
-  await test('Quiz and Notes due records resolve to usable cards and orphan reviews are excluded', async ({
+  await test('Notes due records resolve to usable cards and orphan reviews are excluded', async ({
     w,
   }) => {
     await w.testDb.notes.add({
@@ -374,22 +336,20 @@ const seed = async (w) => {
     assert.equal(w.testDb.cardReviews.rows.length, 1);
     assert.equal(w.testDb.cardReviews.rows[0].cardKey, cards[0].cardKey);
   });
-  await test('Library counts unique Quiz/Notes/Custom cards without counting bookmarks twice', async ({
+  await test('Library counts unique Notes and Custom cards', async ({
     w,
   }) => {
     await seed(w);
-    await w.saveNewQuiz({ subject: 'Science' }, [
-      question(1, { isBookmarked: 1 }),
-    ]);
     await w.testDb.notes.add({
       id: 1,
       title: 'Note',
       glossaryTerms: [{ term: 'Force', definition: 'A push' }],
     });
     const library = await w.getFlashcardLibrary();
-    assert.equal(library.cards.length, 3);
+    assert.equal(library.cards.length, 2);
     assert.equal(library.notes[0].cardCount, 1);
-    assert.equal(library.quizzes[0].cardCount, 1);
+    assert.equal(library.customDecks[0].cardCount, 1);
+    assert.deepEqual(Array.from(new Set(library.cards.map(card=>card.sourceDeckType))).sort(),['CUSTOM','NOTE']);
   });
   await test('Review save has idempotency and preserves real source deck in smart sessions', async ({
     w,
@@ -571,19 +531,19 @@ const seed = async (w) => {
     await w.saveCardReviewProgress(`custom:${card}`, id, 'CUSTOM', 4);
     await w.updateCustomCard(card, { front: 'Updated', back: 'Corrected' });
     assert.equal(w.testDb.cardReviews.rows.length, 0);
-    const qid = await w.saveNewQuiz({}, [question()]),
-      q = (await w.getQuizById(qid)).questions[0];
-    await w.saveCardReviewProgress(`q:${q.id}`, qid, 'QUIZ', 4);
-    await w.testDb.questions.update(q.id, { explanation: 'New explanation' });
+    const noteId=await w.testDb.notes.add({title:'Energy',sections:[{id:'s',heading:'Energy',definitions:[{term:'Energy',definition:'Ability to work'}]}]});
+    const noteCard=w.FlashcardTools.noteCards(await w.getNoteById(noteId))[0];
+    await w.saveCardReviewProgress(noteCard.cardKey,noteId,'NOTE',4);
+    const note=await w.getNoteById(noteId);note.sections[0].definitions[0].definition='Capacity to do work';await w.updateNote(noteId,{sections:note.sections});
     const l = await w.getFlashcardLibrary();
-    assert.ok(l.due.some((c) => c.cardKey === `q:${q.id}` && c.changed));
+    assert.ok(l.due.some((c) => c.cardKey === noteCard.cardKey && c.changed));
   });
   await test('Card/deck/note deletion cleans related schedules only', async ({
     w,
   }) => {
     const { id, card } = await seed(w);
     await w.saveCardReviewProgress(`custom:${card}`, id, 'CUSTOM', 3);
-    await w.testDb.cardReviews.add({ cardKey: 'q:99' });
+    await w.testDb.cardReviews.add({ cardKey: 'custom:999' });
     await w.deleteCustomCard(card);
     assert.equal(w.testDb.cardReviews.rows.length, 1);
     await w.addCustomCard({ deckId: id, front: 'F', back: 'B' });
@@ -595,7 +555,7 @@ const seed = async (w) => {
     await w.deleteNote(5);
     assert.deepEqual(
       Array.from(w.testDb.cardReviews.rows, (r) => r.cardKey),
-      ['q:99'],
+      ['custom:999'],
     );
   });
   await test('Bulk import rejects invalid rows atomically and skips duplicates', async ({
@@ -803,18 +763,18 @@ const seed = async (w) => {
       ),
     );
   });
-  await test('Notes reset clears both modern and legacy keys while keeping Quiz schedules', async ({
+  await test('Notes reset clears both modern and legacy keys while keeping Custom schedules', async ({
     w,
   }) => {
     await w.testDb.cardReviews.bulkAdd([
       { cardKey: 'note:1:s:definition:0' },
       { cardKey: 'note_1:Energy' },
-      { cardKey: 'q:1' },
+      { cardKey: 'custom:1' },
     ]);
     await w.clearModuleData('NOTES');
     assert.deepEqual(
       Array.from(w.testDb.cardReviews.rows, (r) => r.cardKey),
-      ['q:1'],
+      ['custom:1'],
     );
   });
   await test('Pending review completes without repainting another tab, then returns at the right card', async ({
@@ -1012,7 +972,7 @@ const seed = async (w) => {
     touch('touchend', []);
     assert.equal(ratings, 1);
   });
-  await test('Notes sourceRefs and changed quiz choices survive into the card identity', ({
+  await test('Notes sourceRefs and changed custom answers survive into the card identity', ({
     w,
   }) => {
     const card = w.FlashcardTools.noteCards({
@@ -1028,11 +988,10 @@ const seed = async (w) => {
       ],
     })[0];
     assert.equal(card.sourceReferences[0].page, 4);
-    const q = question(1, { id: 1, quizId: 1 }),
-      old = w.FlashcardTools.questionCard(q);
-    q.options[2] = 'Different distractor';
+    const c={id:1,deckId:1,front:'What is force?',back:'A push'},old=w.FlashcardTools.customCard(c);
+    c.back='A push or pull';
     assert.notEqual(
-      w.FlashcardTools.questionCard(q).contentFingerprint,
+      w.FlashcardTools.customCard(c).contentFingerprint,
       old.contentFingerprint,
     );
     assert.throws(
@@ -1106,16 +1065,13 @@ const seed = async (w) => {
     assert.equal(v.savedSession(), null);
     assert.equal(v._saving, false);
   });
-  await test('Mathematical signs, decimal points and technical types are distinct quiz answers', ({
+  await test('Mathematical signs, decimal points and technical types are distinct card answers', ({
     w,
   }) => {
-    for (const options of [
-      ['-5', '5', '1.5', '15'],
-      ['List<int>', 'List<string>', 'Set<int>', 'Set<string>'],
-    ]) {
-      const c = w.FlashcardTools.questionCard(question(1, { id: 1, options }));
+    for (const answer of ['-5','5','1.5','15','List<int>','List<string>','Set<int>','Set<string>']) {
+      const c = w.FlashcardTools.customCard({id:1,front:'Recall',back:answer});
       assert.ok(c);
-      assert.equal(c.back, options[0]);
+      assert.equal(c.back, answer);
     }
     assert.equal(w.FlashcardTools.answerMatches('5', '-5'), false);
     assert.equal(w.FlashcardTools.answerMatches('1.5', '15'), false);
@@ -1201,7 +1157,7 @@ const seed = async (w) => {
       assert.equal(w.FlashcardTools.cloze(input), null);
     assert.ok(w.FlashcardTools.cloze('A {{c1::one}} and {{c1::two}}'));
   });
-  await test('Key points and quiz cards preserve their original PDF source references', ({
+  await test('Key points preserve their original PDF source references', ({
     w,
   }) => {
     const refs = [{ fileName: 'Physics.pdf', page: 8 }],
@@ -1218,11 +1174,7 @@ const seed = async (w) => {
         ],
       });
     assert.equal(n[0].sourceReferences[0].page, 8);
-    assert.equal(
-      w.FlashcardTools.questionCard(question(1, { id: 1, sourceRefs: refs }))
-        .sourceReferences[0].fileName,
-      'Physics.pdf',
-    );
+    assert.equal(n[0].sourceReferences[0].fileName,'Physics.pdf');
   });
   await test('Unsaved Add/Edit/Import drafts survive closing and can be explicitly discarded', async ({
     w,
@@ -1531,7 +1483,7 @@ const seed = async (w) => {
     const v = w.flashcardsView,
       s = {
         version: 1,
-        deck: { id: 1, title: 'Large session' },
+        deck: { id: 1, title: 'Large session', type:'CUSTOM' },
         keys: Array.from({ length: 6001 }, () => ['custom:1', 'fp']),
         masterKeys: [['custom:1', 'fp']],
         ratings: [],
@@ -1569,22 +1521,7 @@ const seed = async (w) => {
         T.customIdentity({ front: 'Same', back: a }),
         T.customIdentity({ front: 'Same', back: b }),
       );
-      assert.notEqual(
-        w.QuizQuality.answerIdentity(a),
-        w.QuizQuality.answerIdentity(b),
-      );
     }
-    assert.ok(
-      w.QuizQuality.normalize(
-        question(1, { options: ['x²', 'x2', 'x3', 'x4'] }),
-      ),
-    );
-    assert.equal(
-      w.QuizQuality.normalize(
-        question(1, { options: ['Paris', 'PARIS', 'Rome', 'Berlin'] }),
-      ),
-      null,
-    );
     const { id } = await seed(w);
     const imported = await w.importCustomCards(id, [
       { front: 'Simplify', back: 'x²' },
@@ -2176,36 +2113,18 @@ const seed = async (w) => {
     await other.loadCustomDeck(id);
     assert.ok(other.container.querySelector('#fc-typed-answer'));
   });
-  await test('Quiz decks explain excluded cards and cannot start an unusable answer set', async ({
+  await test('Vault offers only note and custom decks with active recall actions', async ({
     w,
   }) => {
-    const quiz = await w.testDb.quizzes.add({
-      title: 'Needs review',
-      subject: 'Science',
-    });
-    await w.testDb.questions.add({
-      ...question(),
-      quizId: quiz,
-      reviewIssue: 'Verify source key',
-    });
-    await w.testDb.questions.add({
-      ...question(2),
-      quizId: quiz,
-      explanation: '',
-    });
-    await w.testDb.questions.add({
-      ...question(3),
-      quizId: quiz,
-      correctAnswerIndex: 99,
-    });
+    await seed(w);
+    await w.testDb.notes.add({title:'Science note',sections:[{id:'s',heading:'Energy',keyPoints:['Energy is conserved']}]});
     await w.flashcardsView.render();
-    const deck = w.flashcardsView.container.querySelector('.fc-deck');
-    assert.ok(deck.textContent.includes('0 usable cards'));
-    assert.ok(deck.textContent.includes('3 questions need attention'));
-    assert.ok(deck.textContent.includes('Marked for answer review'));
-    assert.ok(deck.textContent.includes('Missing explanation'));
-    assert.ok(deck.textContent.includes('Invalid or ambiguous'));
-    assert.equal(deck.querySelector('[data-action=study-deck]').disabled, true);
+    const container=w.flashcardsView.container;
+    assert.deepEqual(Array.from(container.querySelectorAll('[data-action=study-deck]'),button=>button.dataset.type).sort(),['CUSTOM','NOTE']);
+    assert.ok(!/quiz|bookmarked questions/i.test(container.textContent));
+    await w.flashcardsView.smartDeck('ALL');
+    assert.equal(w.flashcardsView.cards.length,2);
+    assert.ok(w.flashcardsView.cards.every(card=>['NOTE','CUSTOM'].includes(card.sourceDeckType)));
   });
   await test('Resuming a different recall mode never changes the preferred mode for a new deck', async ({
     w,

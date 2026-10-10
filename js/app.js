@@ -4,12 +4,11 @@
 
 class HamsaApp {
   constructor() {
-    this.currentModule = 'quiz';
+    this.currentModule = 'dashboard';
     this.currentView = 'dashboard';
-    this.activeQuizId = null;
     this.searchQuery = '';
-    this.searchCategory = 'ALL'; // 'ALL', 'QUIZZES', 'QUESTIONS', 'NOTES'
-    this.searchResults = { quizzes: [], questions: [], notes: [], totalCount: 0 };
+    this.searchCategory = 'ALL'; // 'ALL', 'NOTES'
+    this.searchResults = { notes: [], totalCount: 0 };
     this.highlightedSearchIndex = 0;
     this._searchDebounceTimer = null;
   }
@@ -78,8 +77,6 @@ class HamsaApp {
       if (target && !target.id.includes('sound-toggle-btn')) {
         if (target.classList.contains('subnav-pill') || target.classList.contains('primary-module-btn') || target.classList.contains('mobile-nav-item')) {
           // Handled by app.navigate()
-        } else if (target.classList.contains('option-card')) {
-          // Handled by quizPlayerView.selectOption()
         } else {
           window.audioEngine?.playClick();
         }
@@ -314,7 +311,7 @@ class HamsaApp {
       banner.innerHTML = `
         <div style="position:fixed; top:0; left:0; right:0; z-index:9999; background:linear-gradient(135deg, #DC2626, #B91C1C); color:#fff; text-align:center; padding:0.6rem 1rem; font-size:0.88rem; font-weight:600; display:flex; align-items:center; justify-content:center; gap:0.5rem; box-shadow:0 2px 12px rgba(0,0,0,0.3);">
           <span>⚠️</span>
-          <span>You are currently offline. Some features like AI quiz generation require an internet connection.</span>
+          <span>You are currently offline. AI study features require an internet connection.</span>
         </div>
       `;
       document.body.prepend(banner);
@@ -422,44 +419,10 @@ class HamsaApp {
   // MODULE SWITCHER (Scalable multi-module architecture)
   // =========================================================================
   setModule(moduleName) {
-    if (moduleName === 'dashboard') {
-      this.currentModule = 'dashboard';
-      this.navigate('dashboard');
-    } else if (moduleName === 'ai-teacher') {
-      this.currentModule = 'ai-teacher';
-      this.navigate('ai-teacher');
-    } else if (moduleName === 'quiz') {
-      this.currentModule = 'quiz';
-      // Clicking the already-active module must not abandon an attempt or
-      // erase the selected historical result/hash by navigating to setup.
-      if (['quiz-player','quiz-result'].includes(this.currentView)) return;
-      const validQuizViews = ['create-quiz', 'library', 'quiz-history'];
-      const target = validQuizViews.includes(this.currentView) ? this.currentView : 'create-quiz';
-      this.navigate(target);
-    } else if (moduleName === 'study-hub' || moduleName === 'study-notes') {
-      this.currentModule = 'study-notes';
-      this.navigate('study-notes');
-    } else if (moduleName === 'flashcards') {
-      this.currentModule = 'flashcards';
-      this.navigate('flashcards');
-    } else if (moduleName === 'answer-writing') {
-      this.currentModule = 'answer-writing';
-      this.navigate('answer-writing');
-    } else if (moduleName === 'tools') {
-      this.currentModule = 'tools';
-      this.navigate('tools');
-    } else if (moduleName === 'exam-alerts') {
-      this.currentModule = 'exam-alerts';
-      this.navigate('exam-alerts');
-    } else if (moduleName === 'settings') {
-      this.currentModule = 'settings';
-      this.navigate('settings');
-    } else {
-      const moduleTitles = {
-        'mock-tests': 'Full-Length Mock Tests'
-      };
-      this.showToast(`✨ ${moduleTitles[moduleName] || moduleName} is under development and coming soon!`, 'info');
-    }
+    const modules = ['dashboard','quiz','ai-teacher','study-notes','library','flashcards','answer-writing','tools','exam-alerts','settings'];
+    const target = moduleName === 'study-hub' ? 'study-notes' : moduleName;
+    this.currentModule = modules.includes(target) ? target : 'dashboard';
+    this.navigate(this.currentModule);
   }
 
   // =========================================================================
@@ -475,6 +438,7 @@ class HamsaApp {
     this.setThemePalette(palette, false);
     this.setFontSize(fontSize, false);
     this.setFontFamily(fontFamily, false);
+
   }
 
   setThemeMode(mode, save = true) {
@@ -584,54 +548,19 @@ class HamsaApp {
   // ROUTING & VIEW SWITCHING
   // =========================================================================
   handleRoute() {
-    const hash = window.location.hash.slice(1);
-    const [view, paramStr] = hash.split('?');
+    const [view, paramStr] = window.location.hash.slice(1).split('?');
     const params = new URLSearchParams(paramStr);
-
-    if (view === 'dashboard' || view === 'quiz' || view === '') {
-      this.navigate('dashboard', {}, false);
-    } else if (view === 'ai-teacher') {
-      this.navigate('ai-teacher', {}, false);
-    } else if (view === 'study-notes' || view === 'study-hub') {
-      const id = params.get('id');
-      this.navigate('study-notes', {}, false);
-      if (id && window.studyNotesView) {
-        window.studyNotesView.openNote(Number(id));
-      }
-    } else if (view === 'create-quiz') {
-      this.navigate('create-quiz', {}, false);
-    } else if (view === 'quiz-player') {
-      const id = params.get('id');
-      if (id) this.startQuiz(id, false, params.get('mode'));
-      else this.navigate('dashboard', {}, false);
-    } else if (view === 'quiz-result') {
-      const id = params.get('id');
-      if (id) this.viewQuizResult(id, false, params.get('attempt'));
-      else this.navigate('dashboard', {}, false);
-    } else if (view === 'library') {
-      const tab = params.get('tab') || 'quizzes';
-      this.navigate('library', { tab }, false);
-    } else if (view === 'quiz-history') {
-      this.navigate('quiz-history', {}, false);
-    } else if (view === 'flashcards') {
-      this.navigate('flashcards', {}, false);
-    } else if (view === 'answer-writing') {
-      const id = params.get('id');
-      const tab = params.get('tab');
-      this.navigate('answer-writing', { id, tab }, false);
-    } else if (view === 'tools') {
-      const tool = params.get('tool');
-      this.navigate('tools', { tool }, false);
-    } else if (view === 'exam-alerts') {
-      this.navigate('exam-alerts', {}, false);
-    } else if (view === 'settings') {
-      this.navigate('settings', {}, false);
-    } else {
-      this.navigate('dashboard', {}, false);
+    const knownViews = ['dashboard','quiz','ai-teacher','study-notes','library','flashcards','answer-writing','tools','exam-alerts','settings'];
+    const target = view === 'study-hub' ? 'study-notes' : view;
+    if (!knownViews.includes(target)) return this.navigate('dashboard', {}, false);
+    this.navigate(target, Object.fromEntries(params), false);
+    if (target === 'study-notes' && params.get('id')) {
+      window.studyNotesView?.openNote(Number(params.get('id')));
     }
   }
 
   navigate(viewName, params = {}, updateHash = true) {
+    if (!['dashboard','quiz','ai-teacher','study-notes','library','flashcards','answer-writing','tools','exam-alerts','settings'].includes(viewName)) { viewName = 'dashboard'; params = {}; }
     const isLeavingView = viewName !== this.currentView;
 
     // Speech synthesis is a single browser-wide queue, so stop it centrally.
@@ -670,16 +599,7 @@ class HamsaApp {
       window.aiTeacherView.onLeaveView();
     }
     if (this.currentView === 'library' && viewName !== 'library') window.libraryView?.onLeaveView?.();
-    if (this.currentView === 'quiz-history' && viewName !== 'quiz-history') window.quizHistoryView?.onLeaveView?.();
-    if (this.currentView === 'create-quiz' && viewName !== 'create-quiz') window.createQuizView?.onLeaveView?.();
-    if (this.currentView === 'quiz-result' && viewName !== 'quiz-result') window.quizResultView?.onLeaveView?.();
-    // If leaving an active quiz, save progress and release the timer + key handler.
-    // Without this the practice-mode interval and the window keydown listener
-    // outlived the view, so A/B/C/D keys still answered the abandoned quiz.
-    if (this.currentView === 'quiz-player' && viewName !== 'quiz-player' && window.quizPlayerView) {
-      window.quizPlayerView.onLeaveView();
-    }
-
+    if (this.currentView === 'quiz' && viewName !== 'quiz') window.quizView?.onLeaveView?.();
     // Abandon any AI request tied to the view being left. Without this the
     // request kept running, spent quota, and resolved into a dead view.
     if (viewName !== this.currentView && window.aiClient?.inFlightCount > 0 && !this._isGenerating) {
@@ -693,16 +613,7 @@ class HamsaApp {
       window.audioEngine.playTabSwitch();
     }
 
-    // Toggle distraction-free mode when in active quiz play
-    document.body.classList.toggle('in-active-quiz', viewName === 'quiz-player');
     document.body.classList.toggle('in-study-notes', viewName === 'study-notes');
-
-    // Show Quiz Sub-Navigation bar ONLY when inside Quiz module tabs
-    const isQuizSubnavView = ['create-quiz', 'library', 'quiz-history'].includes(viewName);
-    const subnavEl = document.getElementById('module-subnav-quiz');
-    if (subnavEl) {
-      subnavEl.style.display = isQuizSubnavView ? 'block' : 'none';
-    }
 
     // Update active view DOM section
     document.querySelectorAll('.view-section').forEach(el => {
@@ -717,32 +628,7 @@ class HamsaApp {
 
     // Update Primary Module links active state
     document.querySelectorAll('.primary-module-btn').forEach(btn => {
-      const btnModule = btn.getAttribute('data-module');
-      if (viewName === 'dashboard') {
-        btn.classList.toggle('active', btnModule === 'dashboard');
-      } else if (viewName === 'ai-teacher') {
-        btn.classList.toggle('active', btnModule === 'ai-teacher');
-      } else if (viewName === 'study-notes') {
-        btn.classList.toggle('active', btnModule === 'study-notes');
-      } else if (viewName === 'flashcards') {
-        btn.classList.toggle('active', btnModule === 'flashcards');
-      } else if (viewName === 'answer-writing') {
-        btn.classList.toggle('active', btnModule === 'answer-writing');
-      } else if (viewName === 'tools') {
-        btn.classList.toggle('active', btnModule === 'tools');
-      } else if (viewName === 'exam-alerts') {
-        btn.classList.toggle('active', btnModule === 'exam-alerts');
-      } else if (viewName === 'settings') {
-        btn.classList.toggle('active', btnModule === 'settings');
-      } else {
-        // create-quiz, library, quiz-history, quiz-player, quiz-result all belong to quiz module
-        btn.classList.toggle('active', btnModule === 'quiz');
-      }
-    });
-
-    // Update Sub-Navigation pills active state
-    document.querySelectorAll('.subnav-pill').forEach(btn => {
-      btn.classList.toggle('active', btn.getAttribute('data-subview') === viewName);
+      btn.classList.toggle('active', btn.getAttribute('data-module') === viewName);
     });
 
     // Update Mobile Nav links active state
@@ -767,6 +653,8 @@ class HamsaApp {
         window.dashboardView = new window.DashboardView();
       }
       window.dashboardView && window.dashboardView.render();
+    } else if (viewName === 'quiz') {
+      window.quizView?.render(params);
     } else if (viewName === 'ai-teacher') {
       window.aiTeacherView && window.aiTeacherView.render();
     } else if (viewName === 'study-notes') {
@@ -775,12 +663,8 @@ class HamsaApp {
       window.flashcardsView && window.flashcardsView.render();
     } else if (viewName === 'answer-writing') {
       window.answerWritingView && window.answerWritingView.render(params);
-    } else if (viewName === 'create-quiz') {
-      window.createQuizView && window.createQuizView.render();
     } else if (viewName === 'library') {
       window.libraryView && window.libraryView.render(params.tab);
-    } else if (viewName === 'quiz-history') {
-      window.quizHistoryView && window.quizHistoryView.render();
     } else if (viewName === 'tools') {
       window.toolsView && window.toolsView.render(params.tool);
     } else if (viewName === 'exam-alerts') {
@@ -796,61 +680,9 @@ class HamsaApp {
   // =========================================================================
   // ACTIONS & FLOW CONTROLS
   // =========================================================================
-  startQuiz(quizId, updateHash = true, mode = null) {
-    // startQuiz bypasses navigate(), so release any previous attempt's timer
-    // and key handler here too. loadAndStart() re-attaches them cleanly.
-    if (this.currentView === 'quiz-player' && window.quizPlayerView) {
-      window.quizPlayerView.onLeaveView();
-    }
-
-    this.navigate('quiz-player', {}, false);
-    this.activeQuizId = Number(quizId);
-    this.currentView = 'quiz-player';
-    
-    document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-    const el = document.getElementById('view-quiz-player');
-    if (el) el.classList.add('active');
-
-    if (updateHash) {
-      const hash = `#quiz-player?id=${Number(quizId)}${['EXAM','PRACTICE'].includes(mode) ? '&mode='+mode : ''}`;
-      if (window.location.hash !== hash) window.history.pushState(null, '', hash);
-    }
-
-    window.quizPlayerView.loadAndStart(quizId, mode).catch(error => this.showToast(`Could not open quiz: ${error.message}`, 'error'));
-  }
-
-  viewQuizResult(quizId, updateHash = true, attemptId = null) {
-    // Also bypasses navigate() — covers jumping straight to a result via hash
-    // while a quiz is still running.
-    if (this.currentView === 'quiz-player' && window.quizPlayerView) {
-      window.quizPlayerView.onLeaveView();
-    }
-
-    this.navigate('quiz-result', {}, false);
-    this.activeQuizId = Number(quizId);
-    this.currentView = 'quiz-result';
-
-    document.querySelectorAll('.view-section').forEach(el => el.classList.remove('active'));
-    const el = document.getElementById('view-quiz-result');
-    if (el) el.classList.add('active');
-
-    if (updateHash) {
-      const hash = `#quiz-result?id=${Number(quizId)}${attemptId ? '&attempt='+Number(attemptId) : ''}`;
-      if (window.location.hash !== hash) window.history.pushState(null, '', hash);
-    }
-
-    window.quizResultView.loadResult(quizId, attemptId).catch(error => this.showToast(`Could not open results: ${error.message}`, 'error'));
-  }
-
+  // GENERATION LIFECYCLE (shared study overlay + cancellation)
   // =========================================================================
-  // GENERATION LIFECYCLE (overlay + cancellation + concurrency guard)
-  // =========================================================================
-
-  /**
-   * Open the generating overlay and mark a generation as in flight.
-   * @returns {boolean} false if another generation is already running.
-   */
-  beginGeneration(label = 'Preparing your quiz…') {
+  beginGeneration(label = 'Preparing study material…', { inline = false, owner = null } = {}) {
     if (this._isGenerating) {
       this.showToast('A generation is already running. Wait for it to finish or cancel it.', 'warning');
       return false;
@@ -859,6 +691,21 @@ class HamsaApp {
     this._generationCancelled = false;
     this._generationId = (this._generationId || 0) + 1;
     this._generationController = new AbortController();
+    this._generationInline = inline;
+    this._generationOwner = owner;
+
+    if (inline) {
+      // Inline workflows share the cancellation/AI lock without opening a modal.
+      this._generationFocus = null;
+      this._inlineGenerationKeydown ||= event => {
+        if (this._isGenerating && this._generationInline && event.key === 'Escape') {
+          event.preventDefault();
+          this.cancelGeneration();
+        }
+      };
+      document.addEventListener('keydown', this._inlineGenerationKeydown);
+      return true;
+    }
 
     const overlay = document.getElementById('generating-overlay');
     if (overlay) overlay.classList.add('active');
@@ -880,10 +727,29 @@ class HamsaApp {
     const batchPills = document.getElementById('batch-pills-container');
     if (batchPills) batchPills.innerHTML = '';
     document.querySelectorAll('.step-progress-item').forEach(el => {
-      el.className = 'step-progress-item';
+      el.classList.remove('active', 'completed');
+      el.removeAttribute('aria-current');
     });
 
     this.lastPingedBatch = null;
+    this._generationFocus = document.activeElement;
+    const box = overlay?.querySelector('.generating-box');
+    if (box) {
+      delete box.dataset.workflow;
+      box.querySelector('.batch-progress-bar')?.setAttribute('aria-valuenow', '0');
+      const detail = document.getElementById('generation-detail');
+      if (detail) detail.textContent = '';
+      box.focus();
+    }
+    this._generationKeydown ||= event => {
+      if (!this._isGenerating) return;
+      if (event.key === 'Escape') { event.preventDefault(); this.cancelGeneration(); }
+      if (event.key === 'Tab') {
+        const controls = [...document.querySelectorAll('#generating-overlay button:not([disabled])')];
+        if (controls.length) { event.preventDefault(); controls[event.shiftKey ? controls.length - 1 : 0].focus(); }
+      }
+    };
+    document.addEventListener('keydown', this._generationKeydown);
     return true;
   }
 
@@ -891,12 +757,21 @@ class HamsaApp {
   endGeneration(jobId) {
     if (jobId != null && jobId !== this._generationId) return;
     this._isGenerating = false;
+    this._generationInline = false;
+    this._generationOwner = null;
+    if (this._inlineGenerationKeydown) document.removeEventListener('keydown', this._inlineGenerationKeydown);
     const overlay = document.getElementById('generating-overlay');
     if (overlay) overlay.classList.remove('active');
+    if (this._generationKeydown) document.removeEventListener('keydown', this._generationKeydown);
+    if (overlay?.contains(document.activeElement) && this._generationFocus?.isConnected) this._generationFocus.focus();
   }
 
   /** True when the user pressed Cancel during the current generation. */
-  getGenerationContext() { return { id: this._generationId, signal: this._generationController?.signal }; }
+  getGenerationContext() {
+    const id = this._generationId;
+    return { id, jobId: id, signal: this._generationController?.signal,
+      isCurrent: () => this._isGenerating && this._generationId === id && !this._generationController?.signal.aborted };
+  }
 
   isGenerationCancelled() {
     return this._generationCancelled === true;
@@ -926,26 +801,7 @@ class HamsaApp {
   // =========================================================================
   // UNIVERSAL GENERATION STATUS HANDLER
   // =========================================================================
-  studentQuizProgress(status) {
-    const text=String(status.message||''),badge=String(status.badgeText||'');
-    let message='Preparing your quiz…',badgeText='Getting ready';
-    if(/Opening your quiz/i.test(text)){message='Opening your quiz…';badgeText='Almost ready';}
-    else if(/cooldown|quota|rate.limit/i.test(text+' '+badge)) {message='Please wait a moment. Your quiz will continue shortly…';badgeText='Please wait';}
-    else if(/retry|incomplete/i.test(text+' '+badge)) {message='Preparing your questions. Trying again…';badgeText='Please wait';}
-    else if(/ready|passed independent review/i.test(text)){message='Your questions are ready…';badgeText='Almost ready';}
-    else if(/checking|independently|review/i.test(text+' '+badge)){message='Checking your answers and explanations…';badgeText='Checking answers';}
-    else if(/writing|creating|formulating/i.test(text)){message='Creating questions from your study material…';badgeText='Creating questions';}
-    else if(/ocr|scanned/i.test(text)){message='Reading your scanned pages…';badgeText='Reading pages';}
-    else if(/read|extract|source|page/i.test(text+' '+badge)){message='Reading your study material…';badgeText='Reading pages';}
-    const count=String(status.countText||'').match(/(\d+)\s*\/\s*(\d+).*questions/i);
-    const completed=status.completedQuestions ?? (count?Number(count[1]):null);
-    const total=status.totalQuestions ?? (count?Number(count[2]):null);
-    const countText=completed!==null && total!==null?`${completed} / ${total} questions ready`:'Preparing your quiz';
-    return {...status,message,badgeText,countText};
-  }
-
   handleGenerationProgress(status) {
-    if(status?.workflow==='quiz') status=this.studentQuizProgress(status);
     const title = document.getElementById('generating-title');
     const bCard = document.getElementById('batch-progress-card');
     const bBadge = document.getElementById('batch-status-badge');
@@ -956,6 +812,8 @@ class HamsaApp {
     if (typeof status === 'string') {
       if (title) title.textContent = status;
     } else if (typeof status === 'object' && status !== null) {
+      const box = document.querySelector('#generating-overlay .generating-box');
+      if (box && status.workflow) box.dataset.workflow = status.workflow;
       if (title && status.message) title.textContent = status.message;
       
       const showCard = status.totalBatches > 1 || status.showBatchCard || status.percent !== undefined;
@@ -973,8 +831,8 @@ class HamsaApp {
       if (bCount) {
         if (status.countText) {
           bCount.textContent = status.countText;
-        } else if (status.completedQuestions !== undefined && status.totalQuestions !== undefined) {
-          bCount.textContent = `${status.completedQuestions} / ${status.totalQuestions} MCQs Ready`;
+        } else if (status.completedItems !== undefined && status.totalItems !== undefined) {
+          bCount.textContent = `${status.completedItems} / ${status.totalItems} ready`;
         } else if (status.percent !== undefined) {
           bCount.textContent = `${Math.round(status.percent)}% Completed`;
         }
@@ -982,6 +840,7 @@ class HamsaApp {
 
       if (bFill && status.percent !== undefined) {
         bFill.style.width = `${Math.min(100, Math.max(0, status.percent))}%`;
+        bFill.parentElement?.setAttribute('aria-valuenow', String(Math.round(Math.min(100, Math.max(0, status.percent)))));
       }
 
       if (status.batchIndex > 1 && status.batchIndex !== this.lastPingedBatch) {
@@ -989,8 +848,7 @@ class HamsaApp {
         if (window.audioEngine) window.audioEngine.playBatchPing();
       }
 
-      if(pillsRow && status.workflow==='quiz') pillsRow.innerHTML='';
-      else if (pillsRow && status.totalBatches > 1) {
+      if (pillsRow && status.totalBatches > 1) {
         // Show only the current batch to prevent UI overflow with many batches
         pillsRow.innerHTML = `
           <div class="batch-pill active" style="margin: 0 auto;">
@@ -1013,203 +871,6 @@ class HamsaApp {
     }
   }
 
-  // Instant Quick Revision Drill (5 AI-Generated MCQs via Gemini AI)
-  async launchQuickDrill() {
-    const drillTopics = [
-      { topic: 'Indian Polity: Fundamental Rights, Articles & Constitutional Remedies', subject: 'Indian Polity' },
-      { topic: 'Modern Indian History: Freedom Movement, 1857 Revolt & Leaders', subject: 'History & Culture' },
-      { topic: 'Science & Technology: Cell Biology, DNA & Space Missions', subject: 'Science & Tech' },
-      { topic: 'Indian Economy: RBI Monetary Policy, Inflation & GDP', subject: 'Economy' },
-      { topic: 'Indian Geography: Monsoons, Major Rivers & Mountain Passes', subject: 'Geography' }
-    ];
-
-    const chosen = drillTopics[Math.floor(Math.random() * drillTopics.length)];
-
-    // Refuses if a generation is already running, and resets the overlay state.
-    if (!this.beginGeneration('Preparing your 5-minute quiz…')) return;
-    const {id:jobId,signal}=this.getGenerationContext();
-    const prefs=window.studyPreferences?.get()||{};
-    const language=prefs.language==='AUTO'||!prefs.language?'ENGLISH':prefs.language;
-
-    const updateStep = (id, active = true, completed = false) => {
-      const el = document.getElementById(id);
-      if (el) {
-        if (completed) el.className = 'step-progress-item completed';
-        else if (active) el.className = 'step-progress-item active';
-      }
-    };
-
-    try {
-      updateStep('step-reading', true);
-      await QuizQuality.wait(250,signal);
-      updateStep('step-reading', false, true);
-      updateStep('step-extracting', true);
-      await QuizQuality.wait(250,signal);
-      updateStep('step-extracting', false, true);
-      updateStep('step-formulating', true);
-
-      const generationOptions = {
-        sourceContent: '',
-        sourceType: 'TOPIC',
-        signal, jobId, settings:prefs,
-        sourceTitle: chosen.topic,
-        subject: chosen.subject,
-        difficulty: 'MEDIUM',
-        questionCount: 5,
-        quizMode: 'EXAM',
-        language,
-        allowDemoFallback: false,
-        onStatusUpdate: (status) => {if(!signal.aborted && this._generationId===jobId) this.handleGenerationProgress(status);}
-      };
-      generationOptions.onCheckpoint=state=>this.saveQuickQuizCheckpoint(generationOptions,state,jobId,'NONE',300);
-      const generated=await window.geminiService.generateQuiz(generationOptions);
-
-      updateStep('step-formulating', false, true);
-      updateStep('step-crafting', true);
-      await QuizQuality.wait(300,signal);
-      updateStep('step-crafting', false, true);
-
-      QuizQuality.abort(signal);
-      const quizId = await saveNewQuiz({
-        title: `⚡ 5-Min AI Drill (${chosen.subject})`,
-        subject: chosen.subject,
-        difficulty: 'MEDIUM',
-        quizMode: 'EXAM',
-        language,
-        scoringPreset:'NONE',examDurationSeconds:300,generationModel:generated.model,generationSettings:prefs,
-        sourceType: 'TOPIC',
-        sourceTitle: chosen.topic
-      }, generated.questions);
-
-      if(window.createQuizView?.generationDraft?.jobId===jobId) {window.createQuizView.generationDraft=null;localStorage.removeItem('hamsa_quiz_generation_draft');}
-      QuizQuality.abort(signal);
-      this.endGeneration(jobId);
-      if (window.audioEngine) window.audioEngine.playFanfare();
-      this.showToast('5-Min AI Drill generated successfully via Gemini AI!', 'success');
-      this.startQuiz(quizId);
-    } catch (err) {
-      this.endGeneration(jobId);
-      // A user-initiated cancel already showed its own toast.
-      if (signal.aborted || err.name === 'AbortError') return;
-      console.error('Quick Drill error:', err);
-      this.showToast(`AI Generation failed: ${err.message}`, 'error');
-    }
-  }
-
-  // Full UPSC / State PSC Master Mock Test (15 Deep MCQs via Gemini AI in 2 Batches [10, 5])
-  async launchMockTest() {
-    const upscTopics = [
-      'UPSC CSE Prelims: Indian Constitution, Federal Structure & Landmark Judicial Pronouncements',
-      'UPSC CSE Prelims: Indian Economy, Macroeconomic Indicators, Fiscal Deficit & External Sector',
-      'UPSC CSE Prelims: Ecology & Environment, Biodiversity Hotspots & Climate Agreements',
-      'UPSC CSE Prelims: Modern Indian History, Tribal/Peasant Movements & Freedom Milestones'
-    ];
-
-    const chosenTopic = upscTopics[Math.floor(Math.random() * upscTopics.length)];
-
-    if (!this.beginGeneration('Preparing your practice test…')) return;
-    const {id:jobId,signal}=this.getGenerationContext();
-    const prefs=window.studyPreferences?.get()||{};
-    const language=prefs.language==='AUTO'||!prefs.language?'ENGLISH':prefs.language;
-
-    // Reset batch visuals
-    const batchCard = document.getElementById('batch-progress-card');
-    if (batchCard) batchCard.style.display = 'none';
-    const batchFill = document.getElementById('batch-progress-fill');
-    if (batchFill) batchFill.style.width = '0%';
-    const batchPills = document.getElementById('batch-pills-container');
-    if (batchPills) batchPills.innerHTML = '';
-
-    const updateStep = (id, active = true, completed = false) => {
-      const el = document.getElementById(id);
-      if (el) {
-        if (completed) el.className = 'step-progress-item completed';
-        else if (active) el.className = 'step-progress-item active';
-      }
-    };
-
-    try {
-      updateStep('step-reading', true);
-      await QuizQuality.wait(300,signal);
-      updateStep('step-reading', false, true);
-      updateStep('step-extracting', true);
-      await QuizQuality.wait(300,signal);
-      updateStep('step-extracting', false, true);
-      updateStep('step-formulating', true);
-
-      const generationOptions = {
-        sourceContent: '',
-        sourceType: 'TOPIC',
-        signal, jobId, settings:prefs,
-        sourceTitle: chosenTopic,
-        subject: 'General Knowledge',
-        difficulty: 'HARD',
-        questionCount: 15,
-        quizMode: 'EXAM',
-        language,
-        allowDemoFallback: false,
-        onStatusUpdate: (status) => {if(!signal.aborted && this._generationId===jobId) this.handleGenerationProgress(status);}
-      };
-      generationOptions.onCheckpoint=state=>this.saveQuickQuizCheckpoint(generationOptions,state,jobId,'UPSC_PRELIMS',1080);
-      const generated=await window.geminiService.generateQuiz(generationOptions);
-
-      updateStep('step-formulating', false, true);
-      updateStep('step-crafting', true);
-      await QuizQuality.wait(300,signal);
-      updateStep('step-crafting', false, true);
-
-      QuizQuality.abort(signal);
-      const quizId = await saveNewQuiz({
-        title: '📚 UPSC / State PSC Master Mock Test',
-        subject: 'General Knowledge',
-        difficulty: 'HARD',
-        quizMode: 'EXAM',
-        language,
-        scoringPreset:'UPSC_PRELIMS',examDurationSeconds:1080,generationModel:generated.model,generationSettings:prefs,
-        sourceType: 'TOPIC',
-        sourceTitle: 'UPSC Prelims Master Mock'
-      }, generated.questions);
-
-      if(window.createQuizView?.generationDraft?.jobId===jobId) {window.createQuizView.generationDraft=null;localStorage.removeItem('hamsa_quiz_generation_draft');}
-      QuizQuality.abort(signal);
-      this.endGeneration(jobId);
-      if (window.audioEngine) window.audioEngine.playFanfare();
-      this.showToast('UPSC Master Mock Test formulated successfully via Gemini AI!', 'success');
-      this.startQuiz(quizId);
-    } catch (err) {
-      this.endGeneration(jobId);
-      if (signal.aborted || err.name === 'AbortError') return;
-      console.error('UPSC Mock Test error:', err);
-      this.showToast(`AI Generation failed: ${err.message}`, 'error');
-    }
-  }
-
-  saveQuickQuizCheckpoint(options,state,jobId,scoringPreset,examDurationSeconds) {
-    if(jobId!==this._generationId || this._generationController?.signal.aborted || !window.createQuizView) return;
-    const saved=JSON.parse(JSON.stringify(options));delete saved.signal;
-    saved.scoringPreset=scoringPreset;saved.examDurationSeconds=examDurationSeconds;saved.importSourceQuestions=false;
-    window.createQuizView.generationDraft={options:saved,phase:'GENERATE',state,jobId};
-    window.createQuizView.persistDraft();
-  }
-
-  // PDF Export Handlers
-  async exportQuizPdf(quizId,variant='FULL',attemptId=null) {
-    const printWindow=window.open('','_blank');
-    if(!printWindow) {this.showToast('Allow pop-ups for PDF preview.','warning');return;}
-    try {
-      const data=attemptId ? await getQuizAttemptResult(quizId,attemptId) : await getQuizWithQuestions(quizId);
-      if(!data?.questions?.length) throw new Error('Quiz questions could not be loaded.');
-      await window.pdfGenerator.generateQuestionPaperPdf(data,data.questions,{variant,printWindow});
-      this.showToast('Print preview opened. Choose Save as PDF.','success');
-    } catch(error) {printWindow.close();this.showToast(`PDF export failed: ${error.message}`,'error');}
-  }
-  async exportCurrentPlayingPdf() {
-    if(this.activeQuizId) await this.exportQuizPdf(this.activeQuizId,'QUESTIONS');
-  }
-
-  // =========================================================================
-  // TOAST NOTIFICATIONS & MODALS
-  // =========================================================================
   showToast(message, type = 'info', duration = 3500) {
     const container = document.getElementById('toast-container');
     if (!container) return;
@@ -1363,7 +1024,7 @@ class HamsaApp {
   }
 
   // =========================================================================
-  // GLOBAL SEARCH ENGINE CONTROLLER (Unified Search Across Quizzes, Qs, Notes)
+  // GLOBAL SEARCH ENGINE CONTROLLER (Study Notes)
   // =========================================================================
   openGlobalSearch() {
     const modal = document.getElementById('global-search-modal');
@@ -1405,7 +1066,7 @@ class HamsaApp {
     const clearBtn = document.getElementById('search-clear-btn');
     if (clearBtn) clearBtn.style.display = 'none';
     this.searchQuery = '';
-    this.searchResults = { quizzes: [], questions: [], notes: [], totalCount: 0 };
+    this.searchResults = { notes: [], totalCount: 0 };
     this.renderSearchResults();
   }
 
@@ -1423,7 +1084,7 @@ class HamsaApp {
 
   async executeGlobalSearch(query) {
     if (!query) {
-      this.searchResults = { quizzes: [], questions: [], notes: [], totalCount: 0 };
+      this.searchResults = { notes: [], totalCount: 0 };
       this.renderSearchResults();
       return;
     }
@@ -1489,13 +1150,9 @@ class HamsaApp {
 
     const totalCount = this.searchResults.totalCount || 0;
     const countAll = document.getElementById('count-all');
-    const countQuizzes = document.getElementById('count-quizzes');
-    const countQuestions = document.getElementById('count-questions');
     const countNotes = document.getElementById('count-notes');
 
     if (countAll) countAll.textContent = totalCount;
-    if (countQuizzes) countQuizzes.textContent = this.searchResults.quizzes.length;
-    if (countQuestions) countQuestions.textContent = this.searchResults.questions.length;
     if (countNotes) countNotes.textContent = this.searchResults.notes.length;
 
     if (!this.searchQuery) {
@@ -1503,17 +1160,10 @@ class HamsaApp {
         <div class="search-empty-state">
           <i data-lucide="compass" style="width:36px;height:36px;color:var(--color-primary-light);opacity:0.7;"></i>
           <p style="font-weight:600;margin-top:0.5rem;color:var(--text-main);">Type to search across everything</p>
-          <span style="font-size:0.85rem;color:var(--text-muted);">Quizzes, questions, options, digital textbook notes & chapters</span>
+          <span style="font-size:0.85rem;color:var(--text-muted);">Digital textbook notes, topics and chapters</span>
         </div>
         <div style="padding: 0.5rem 0.5rem 0.25rem;">
           <div class="search-group-header">Quick Actions</div>
-          <div class="search-result-item" onclick="app.closeGlobalSearch(); app.navigate('create-quiz');">
-            <div class="search-result-icon action"><i data-lucide="plus-circle" style="width:18px;height:18px;"></i></div>
-            <div class="search-result-body">
-              <div class="search-result-title">Create New Quiz</div>
-              <div class="search-result-desc">Ingest PDF or text notes to generate AI practice MCQs</div>
-            </div>
-          </div>
           <div class="search-result-item" onclick="app.closeGlobalSearch(); app.setModule('study-hub');">
             <div class="search-result-icon note"><i data-lucide="book-open" style="width:18px;height:18px;"></i></div>
             <div class="search-result-body">
@@ -1522,10 +1172,10 @@ class HamsaApp {
             </div>
           </div>
           <div class="search-result-item" onclick="app.closeGlobalSearch(); app.setModule('flashcards');">
-            <div class="search-result-icon quiz"><i data-lucide="zap" style="width:18px;height:18px;"></i></div>
+            <div class="search-result-icon action"><i data-lucide="zap" style="width:18px;height:18px;"></i></div>
             <div class="search-result-body">
               <div class="search-result-title">Practice Flashcards &amp; Active Recall</div>
-              <div class="search-result-desc">Review starred questions and memory cards</div>
+              <div class="search-result-desc">Review your decks and memory cards</div>
             </div>
           </div>
           <div class="search-result-item" onclick="app.closeGlobalSearch(); app.setModule('exam-alerts');">
@@ -1564,50 +1214,7 @@ class HamsaApp {
       return safe.replace(regex, '<mark class="search-highlight">$1</mark>');
     };
 
-    // 1. Quizzes
-    if ((category === 'ALL' || category === 'QUIZZES') && this.searchResults.quizzes.length > 0) {
-      html += `<div class="search-group-header">Quizzes (${this.searchResults.quizzes.length})</div>`;
-      html += this.searchResults.quizzes.map(quiz => `
-        <div class="search-result-item" onclick="app.selectSearchResult('quiz', ${quiz.id})">
-          <div class="search-result-icon quiz">
-            <i data-lucide="help-circle" style="width:18px;height:18px;"></i>
-          </div>
-          <div class="search-result-body">
-            <div class="search-result-title">${highlight(quiz.title)}</div>
-            <div class="search-result-desc">
-              ${quiz.percentage !== null ? `Completed with score: <strong>${quiz.percentage}%</strong> • ` : 'Not attempted yet • '}
-              ${quiz.totalQuestions} Questions • ${highlight(quiz.subject)}
-            </div>
-            <div class="search-result-meta">
-              <span class="badge badge-muted">${quiz.difficulty}</span>
-              <span>Matched in ${quiz.matchField}</span>
-            </div>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    // 2. Questions
-    if ((category === 'ALL' || category === 'QUESTIONS') && this.searchResults.questions.length > 0) {
-      html += `<div class="search-group-header">Questions (${this.searchResults.questions.length})</div>`;
-      html += this.searchResults.questions.map(q => `
-        <div class="search-result-item" onclick="app.selectSearchResult('question', ${q.id}, ${q.quizId})">
-          <div class="search-result-icon question">
-            <i data-lucide="check-square" style="width:18px;height:18px;"></i>
-          </div>
-          <div class="search-result-body">
-            <div class="search-result-title">${highlight(q.questionText)}</div>
-            <div class="search-result-desc">${highlight(q.explanation || 'Question from ' + q.quizTitle)}</div>
-            <div class="search-result-meta">
-              <span>From: <strong>${this.escapeHtml(q.quizTitle)}</strong></span>
-              <span>•</span>
-              <span>${this.escapeHtml(q.subject)}</span>
-            </div>
-          </div>
-        </div>
-      `).join('');
-    }
-
+    // Study Notes
     // 3. Study Notes
     if ((category === 'ALL' || category === 'NOTES') && this.searchResults.notes.length > 0) {
       html += `<div class="search-group-header">Digital Textbook & Study Notes (${this.searchResults.notes.length})</div>`;
@@ -1652,26 +1259,11 @@ class HamsaApp {
     return SecurityUtils.sanitizeHtml(str);
   }
 
-  async selectSearchResult(type, id, quizId) {
+  selectSearchResult(type, id) {
     this.closeGlobalSearch();
-
-    if (type === 'quiz') {
-      this.startQuiz(id);
-    } else if (type === 'question') {
-      const quiz = await db.quizzes.get(Number(quizId));
-      if (quiz && quiz.completedAt) {
-        this.navigate('quiz-result');
-        if (window.quizResultView) {
-          window.quizResultView.loadResult(quizId);
-        }
-      } else {
-        this.startQuiz(quizId);
-      }
-    } else if (type === 'note') {
+    if (type === 'note') {
       this.setModule('study-hub');
-      if (window.studyNotesView) {
-        window.studyNotesView.openNote(id);
-      }
+      window.studyNotesView?.openNote(id);
     }
   }
 
@@ -2090,8 +1682,7 @@ class HamsaApp {
     }
     document.body.classList.remove('onboarding-locked');
 
-    if (window.audioEngine) window.audioEngine.playQuizComplete();
-    this.celebrateConfetti();
+    if (window.audioEngine) window.audioEngine.playFanfare();
 
     this.updateGlobalStudentIdentity();
 

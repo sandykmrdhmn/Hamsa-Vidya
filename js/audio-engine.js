@@ -273,7 +273,7 @@ class AudioEngine {
   }
 
   /**
-   * 7. Celebratory Fanfare (Joyful sparkle arpeggio on Quiz Completion)
+   * 7. Celebratory Fanfare (Joyful sparkle arpeggio when study work is completed)
    */
   playFanfare() {
     if (this.isMuted) return;

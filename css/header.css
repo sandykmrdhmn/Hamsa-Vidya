@@ -473,6 +473,23 @@
   }
 }
 
+/* Keep the brand and all utility controls reachable on narrow phones. */
+@media (max-width: 600px) {
+  .header-top {
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .header-top .brand-container {
+    flex-basis: 100%;
+  }
+
+  .header-top .header-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
 
 /* ==========================================================================
    7. PRINT — the whole header is hidden by responsive.css; nothing to do here

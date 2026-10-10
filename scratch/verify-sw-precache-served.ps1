@@ -1,5 +1,5 @@
+param([string]$Base = 'http://localhost:3000')
 $ProgressPreference = 'SilentlyContinue'
-$base = 'http://localhost:3000'
 $bad = 0
 
 Write-Host ""
@@ -45,7 +45,6 @@ foreach ($a in @(
   'assets/vendor/pdf.worker.min.js',
   'assets/vendor/pdf-lib.min.js',
   'assets/vendor/jspdf.umd.min.js',
-  'assets/vendor/jspdf.plugin.autotable.min.js',
   'assets/vendor/html2pdf.bundle.min.js'
 )) {
   try {
@@ -57,7 +56,7 @@ foreach ($a in @(
     }
   } catch { Write-Host "  FAIL  $a -> request error"; $bad++ }
 }
-Write-Host "  6 vendor bundles checked"
+Write-Host "  5 vendor bundles checked"
 
 Write-Host ""
 Write-Host "=== /api/ must never be cacheable ==="

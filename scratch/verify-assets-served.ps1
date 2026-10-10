@@ -1,5 +1,5 @@
+param([string]$Base = 'http://localhost:3000')
 $ProgressPreference = 'SilentlyContinue'
-$base = 'http://localhost:3000'
 $bad = 0
 $total = 0
 
@@ -28,10 +28,11 @@ foreach ($h in $js) {
 Write-Host "  $($js.Count) scripts checked"
 
 Write-Host ""
-Write-Host "=== Retired originals must NOT be linked or needed ==="
+Write-Host "=== Retired stylesheet stubs must be removed and unlinked ==="
 foreach ($h in @('css/components.css', 'css/ai-teacher.css')) {
   if ($css -contains $h) { Write-Host "  FAIL  $h is still linked"; $bad++ }
-  else { Write-Host "  OK    $h not linked" }
+  elseif (Test-Path -LiteralPath $h) { Write-Host "  FAIL  $h still exists"; $bad++ }
+  else { Write-Host "  OK    $h removed and not linked" }
 }
 
 Write-Host ""

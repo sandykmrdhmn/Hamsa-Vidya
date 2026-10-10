@@ -1,7 +1,7 @@
 /**
- * HAMSA VIDYA (हंस विद्या) — Unified Gemini Transport Layer
+ * HAMSA VIDYA (हंस विद्या) — Shared AI Transport Layer
  *
- * Single choke point for every Google Gemini network call in the app.
+ * Single request pipeline for every Gemini AI call in the app.
  *
  * WHY THIS EXISTS
  * ---------------
@@ -19,14 +19,17 @@
  *   DIRECT — legacy "bring your own key" fallback using localStorage, so existing
  *            users who already saved a personal key keep working offline-of-server.
  *
- * Mode is resolved once per session by probing GET /api/gemini/status.
+ * Gemini model preferences persist locally. Status probes never generate tokens.
  */
 
 class AIClient {
   constructor() {
     this.PROXY_BASE = '/api/gemini';
+    try {
+      for (const key of ['hamsa_ai_provider', 'hamsa_openai_model', 'hamsa_openai_api_key']) localStorage.removeItem(key);
+      for (const key of Object.keys(localStorage)) if (key.startsWith('hamsa_ai_pacing_openai_')) localStorage.removeItem(key);
+    } catch { /* Restricted browser storage still uses Gemini. */ }
     this.DIRECT_BASE = 'https://generativelanguage.googleapis.com/v1beta';
-
     // Generation with large maxOutputTokens can legitimately take a while.
     this.DEFAULT_TIMEOUT_MS = 120000;
     this.PROBE_TIMEOUT_MS = 4000;
@@ -40,6 +43,9 @@ class AIClient {
 
     // Every in-flight controller, so navigation can cancel outstanding work.
     this._activeControllers = new Set();
+    this._controllerProviders = new WeakMap();
+    this._providerVersions = {gemini:0};
+    this._responseData = new WeakMap();
 
     // ---- Token accounting -------------------------------------------------
     // Gemini bills by token and the free tier has daily limits, but nothing in
@@ -55,10 +61,10 @@ class AIClient {
     this._requestLog = [];
     this._stageLog = [];
     // Conservative application pacing, NOT a claim about Google's project quota.
-    // Allow short quizzes to finish promptly while retaining the same 5/minute cap.
-    this.QUIZ_REQUEST_INTERVAL_MS = 0;
-    this.QUIZ_REQUESTS_PER_MINUTE = 5;
-    this.QUIZ_INPUT_TOKENS_PER_MINUTE = 12000;
+    // Allow short study requests to finish promptly while retaining the same 5/minute cap.
+    this.SHARED_REQUEST_INTERVAL_MS = 0;
+    this.SHARED_REQUESTS_PER_MINUTE = 5;
+    this.SHARED_INPUT_TOKENS_PER_MINUTE = 12000;
   }
 
   // =========================================================================
@@ -80,18 +86,16 @@ class AIClient {
   }
 
   /** Estimate the input tokens for a request payload. */
-  estimatePayloadTokens(payload, model = 'gemini-3.6-flash') {
+  estimatePayloadTokens(payload, model = 'gemini-2.5-flash') {
     let total = 0;
     for (const content of payload?.contents || []) {
       for (const part of content?.parts || []) {
         if (part.text) total += this.estimateTokens(part.text);
         if (part.inlineData) {
           const resolution = String(part.mediaResolution?.level || payload.generationConfig?.mediaResolution || '').toLowerCase();
-          // Gemini 3's default image budget is 1120, not the older 258-token
-          // small-image estimate. Do not lower OCR resolution to fit a budget.
-          total += /^gemini-3[.-]/.test(model)
-            ? (/ultra_high/.test(resolution) ? 2240 : /low/.test(resolution) ? 280 : /medium/.test(resolution) ? 560 : 1120)
-            : 1120; // conservative image reservation for legacy callers
+          // Reserve the image's requested resolution without lowering it to
+          // fit a request budget. Actual usage corrects this estimate later.
+          total += /ultra_high/.test(resolution) ? 2240 : /low/.test(resolution) ? 280 : /medium/.test(resolution) ? 560 : 1120;
         }
       }
     }
@@ -198,10 +202,19 @@ class AIClient {
   _trackResponseUsage(response) {
     if (!response?.ok) return;
     try {
-      response.clone().json()
+      this.readResponseJSON(response)
         .then(data => this._recordUsage(data?.usageMetadata))
         .catch(() => { /* non-JSON or already consumed — skip silently */ });
     } catch { /* clone unsupported — skip silently */ }
+  }
+
+  /** Share parsed metadata with the study pipeline without consuming its Response. */
+  readResponseJSON(response) {
+    const saved=this._responseData.get(response);
+    if(saved) return saved.error ? Promise.reject(saved.error) : saved.promise || Promise.resolve(saved.data);
+    const promise=response.clone().json();
+    this._responseData.set(response,{promise});
+    return promise;
   }
 
   // =========================================================================
@@ -209,7 +222,8 @@ class AIClient {
   // =========================================================================
 
   /** The user's own key, if they saved one. Only used in DIRECT mode. */
-  getUserKey() {
+  getUserKey(provider = this.getProvider()) {
+    if (provider !== 'gemini') return '';
     try {
       return (localStorage.getItem('hamsa_gemini_api_key') || '').trim();
     } catch {
@@ -221,12 +235,13 @@ class AIClient {
    * Successful probes are cached; negative results expire. A transient network
    * failure remains unknown, so an offline startup cannot disable this session.
    */
-  async probeServerKey() {
+  async probeServerKey(provider = this.getProvider()) {
+    this.requireGemini(provider);
     if (this._probePromise) return this._probePromise;
     // An explicit personal key remains the active transport. Avoid repeated
     // capability probes during long direct-mode jobs; removing it re-enables
     // negative-cache expiry and server recovery.
-    if (this.getUserKey() && this._serverKeyConfigured === false) return false;
+    if (this.getUserKey('gemini') && this._serverKeyConfigured === false) return false;
     if (this._serverKeyConfigured !== null && (!this._probeExpiresAt || Date.now() < this._probeExpiresAt)) return this._serverKeyConfigured;
     if (Date.now() < this._probeExpiresAt) return false;
 
@@ -234,7 +249,7 @@ class AIClient {
       try {
         const res = await this._request(`${this.PROXY_BASE}/status`, {
           cache: 'no-store'
-        }, { timeoutMs: this.PROBE_TIMEOUT_MS });
+        }, { timeoutMs: this.PROBE_TIMEOUT_MS, provider:'gemini' });
 
         if (!res.ok) {
           this._serverKeyConfigured = null;
@@ -259,15 +274,17 @@ class AIClient {
   }
 
   /** True when the secure server proxy should be used. */
-  useProxy() {
+  useProxy(provider = this.getProvider()) {
+    if (provider !== 'gemini') return false;
     // An explicitly saved personal key is the active connection. Test and
     // generation must never silently use different credentials.
-    return this._serverKeyConfigured === true && !this.getUserKey();
+    return this._serverKeyConfigured === true && !this.getUserKey('gemini');
   }
 
   /** Human-readable mode for Settings UI. */
-  getMode() {
-    if (this.getUserKey()) return 'DIRECT';
+  getMode(provider = this.getProvider()) {
+    if (provider !== 'gemini') return 'UNCONFIGURED';
+    if (this.getUserKey('gemini')) return 'DIRECT';
     if (this._serverKeyConfigured === true) return 'PROXY';
     return 'UNCONFIGURED';
   }
@@ -276,8 +293,18 @@ class AIClient {
    * Can we make AI calls at all? Replaces the old `if (apiKey)` gates, which
    * would wrongly fall back to the offline engine in PROXY mode.
    */
-  isAvailable() {
-    return this._serverKeyConfigured === true || !!this.getUserKey();
+  isAvailable(provider = this.getProvider()) {
+    if (provider !== 'gemini') return false;
+    return this._serverKeyConfigured === true || !!this.getUserKey('gemini');
+  }
+
+  getProvider() { return 'gemini'; }
+
+  getProviderLabel() { return 'Google Gemini'; }
+
+  requireGemini(provider = 'gemini') {
+    if (provider !== 'gemini') throw Object.assign(new Error('Only Google Gemini is supported.'), {code:'AI_PROVIDER_UNSUPPORTED',retryable:false});
+    return provider;
   }
 
   resetQuotaState() {
@@ -286,7 +313,8 @@ class AIClient {
   }
 
   _quotaScope(model, options) {
-    const credential = (options.forceProxy || this.useProxy()) && !options.forceDirect ? 'SERVER_PROXY' : (options.apiKey || this.getUserKey());
+    this.requireGemini(options.provider);
+    const credential = (options.forceProxy || this.useProxy('gemini')) && !options.forceDirect ? 'SERVER_PROXY' : (options.apiKey || this.getUserKey('gemini'));
     let hash = 2166136261;
     for (const character of credential) hash = Math.imul(hash ^ character.charCodeAt(0), 16777619);
     return `hamsa_ai_pacing_${model}_${(hash >>> 0).toString(16)}`;
@@ -303,8 +331,8 @@ class AIClient {
     // provider cooldowns and stricter intervals remain in effect.
     if(!state.pacingVersion && Number(state.interval)===12100) state.interval=0;
     state.pacingVersion=2;
-    state.interval = Math.max(this.QUIZ_REQUEST_INTERVAL_MS, Number(state.interval) || 0);
-    state.tpm = Math.min(this.QUIZ_INPUT_TOKENS_PER_MINUTE, Number(state.tpm) || this.QUIZ_INPUT_TOKENS_PER_MINUTE);
+    state.interval = Math.max(this.SHARED_REQUEST_INTERVAL_MS, Number(state.interval) || 0);
+    state.tpm = Math.min(this.SHARED_INPUT_TOKENS_PER_MINUTE, Number(state.tpm) || this.SHARED_INPUT_TOKENS_PER_MINUTE);
     return state;
   }
 
@@ -314,14 +342,9 @@ class AIClient {
     try { localStorage.setItem(scope, JSON.stringify(state)); } catch {}
   }
 
-  getQuizInputBudget(model, options = {}) {
-    return this._loadQuota(this._quotaScope(model, options)).tpm;
-  }
-
   async _quotaWait(ms, options) {
     if (options.signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
     options.onQuotaWait?.(ms);
-    if (window.QuizQuality) return QuizQuality.wait(ms, options.signal);
     return new Promise((resolve, reject) => {
       const cancel = () => { clearTimeout(timer); options.signal?.removeEventListener('abort', cancel); reject(new DOMException('Request cancelled.', 'AbortError')); };
       const timer = setTimeout(() => { options.signal?.removeEventListener('abort', cancel); resolve(); }, ms);
@@ -339,7 +362,7 @@ class AIClient {
 
   async _scheduleQuotaRequest(model, payload, options) {
     if (options.signal?.aborted) throw new DOMException('Request cancelled.', 'AbortError');
-    await this.probeServerKey();
+    await this.probeServerKey(options.provider);
     const scope = this._quotaScope(model, options);
     const execute = async () => {
       const tokens = this.estimatePayloadTokens(payload, model);
@@ -361,10 +384,10 @@ class AIClient {
         let at = Math.max(Date.now(), state.nextAt);
         const history = state.history.slice();
         let used = history.reduce((sum, item) => sum + item.tokens, 0);
-        // Larger non-quiz requests retain their existing size policy, but use
+        // Larger study requests retain their existing size policy, but use
         // an otherwise empty minute. A learned provider TPM is always enforced.
         const minuteBudget = options.quotaSafe || state.learnedTpm ? state.tpm : Math.max(state.tpm, tokens);
-        while ((used + tokens > minuteBudget || history.length >= this.QUIZ_REQUESTS_PER_MINUTE) && history.length) { const item = history.shift(); used -= item.tokens; at = Math.max(at, item.at + 60050); }
+        while ((used + tokens > minuteBudget || history.length >= this.SHARED_REQUESTS_PER_MINUTE) && history.length) { const item = history.shift(); used -= item.tokens; at = Math.max(at, item.at + 60050); }
         const wait = at - Date.now();
         if (options.deadlineAt && at >= options.deadlineAt) {
           const error = new Error('Rate-limit wait exceeds this step’s time budget. Your draft is saved; resume after the cooldown.');
@@ -379,16 +402,16 @@ class AIClient {
       state.history.push(reservation);
       this._saveQuota(scope, state);
       const startedAt = Date.now();
-      if (log) { log.startedAt = startedAt; log.transport = (options.forceProxy || this.useProxy()) && !options.forceDirect ? 'PROXY' : 'DIRECT'; }
+      if (log) { log.startedAt = startedAt; log.transport = (options.forceProxy || this.useProxy(options.provider)) && !options.forceDirect ? 'PROXY' : 'DIRECT'; }
       try {
         const response = await this.fetchGenerateContent(model, payload, {...options,_quotaScheduled:true,timeoutMs:Math.min(options.timeoutMs || this.DEFAULT_TIMEOUT_MS, options.deadlineAt ? Math.max(1,options.deadlineAt-Date.now()) : Infinity)});
         if (log) log.status = response.status;
         if (log && !response.ok) {
-          try { const error=await this.createError(response.clone()); log.errorCode=error.code || `HTTP_${response.status}`; }
+          try { const error=await this.createError(response, options.provider); log.errorCode=error.code || `HTTP_${response.status}`;if(error.providerStatus)log.providerStatus=error.providerStatus; }
           catch { log.errorCode=`HTTP_${response.status}`; }
         }
         if (response.status === 429) {
-          const error = await this.createError(response.clone());
+          const error = await this.createError(response, options.provider);
           state = this._loadQuota(scope);
           state.interval = Math.max(state.interval, error.requestIntervalMs || 0);
           if (error.inputTokensPerMinute) { state.tpm = Math.min(state.tpm,error.inputTokensPerMinute); state.learnedTpm = true; }
@@ -400,7 +423,7 @@ class AIClient {
           this._saveQuota(scope,state);
         }
         try {
-          const usage = (await response.clone().json()).usageMetadata;
+          const usage = (await this.readResponseJSON(response)).usageMetadata;
           if (log) { log.usage = usage || null; log.usageKnown = Boolean(usage); }
           const actual = Number(usage?.promptTokenCount);
           if (Number.isFinite(actual)) {
@@ -465,6 +488,7 @@ class AIClient {
   async _request(url, init = {}, options = {}) {
     const timeoutMs = options.timeoutMs ?? this.DEFAULT_TIMEOUT_MS;
     const controller = new AbortController();
+    this._controllerProviders.set(controller, options.provider || this.getProvider());
     // Queued generation already has a registered controller that propagates
     // cancellation here; count that request once from queue through completion.
     if (!options._queuedController) this._activeControllers.add(controller);
@@ -485,13 +509,18 @@ class AIClient {
 
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
-      // Keep cancellation and the deadline active through the complete body.
-      // Draining a clone preserves the native Response for existing callers.
-      await response.clone().arrayBuffer();
+      // Drain one clone under the deadline. Keep parsed JSON for usage, quota
+      // accounting and structured response processing rather than cloning it for every stage.
+      const copy=response.clone();
+      if(typeof copy.text==='function') {
+        const raw=await copy.text();
+        try {this._responseData.set(response,{data:JSON.parse(raw)});}
+        catch(error) {this._responseData.set(response,{error});}
+      } else await copy.arrayBuffer();
       return response;
     } catch (err) {
       if (timedOut) {
-        const error = new Error(`Gemini request timed out after ${Math.round(timeoutMs / 1000)}s. Try a smaller batch or check your connection.`);
+        const error = new Error(`${this.getProviderLabel(options.provider)} request timed out after ${Math.round(timeoutMs / 1000)}s. Try a smaller batch or check your connection.`);
         error.code = 'AI_TIMEOUT';throw error;
       }
       if (init.method === 'POST' && err.name !== 'AbortError' && !err.code) {
@@ -509,10 +538,20 @@ class AIClient {
 
   /** Cancel every outstanding Gemini request (used when navigating away). */
   abortAll() {
+    this._providerVersions.gemini++;
     for (const controller of this._activeControllers) {
       try { controller.abort(); } catch { /* already settled */ }
     }
     this._activeControllers.clear();
+  }
+
+  abortProvider(provider) {
+    this._providerVersions[provider]++;
+    for (const controller of this._activeControllers) {
+      if (this._controllerProviders.get(controller) !== provider) continue;
+      controller.abort();
+      this._activeControllers.delete(controller);
+    }
   }
 
   /** Number of requests currently in flight. */
@@ -527,21 +566,27 @@ class AIClient {
 
   /**
    * POST a generateContent request.
-   * @param {string} model   e.g. 'gemini-3.6-flash'
+   * @param {string} model   e.g. 'gemini-2.5-flash'
    * @param {Object} payload { contents, generationConfig, ... }
    * @param {Object} options { signal, timeoutMs, apiKey }
    * @returns {Promise<Response>}
    */
   async fetchGenerateContent(model, payload, options = {}) {
-    const safeModel = String(model || window.geminiService?.getActiveModel() || 'gemini-3.6-flash').replace(/^models\//, '');
+    const provider = this.requireGemini(options.provider);
+    const version = this._providerVersions[provider];
+    options = {...options, provider};
+    if (options.signal?.aborted || version !== this._providerVersions[provider]) throw new DOMException('Request cancelled.', 'AbortError');
+    const safeModel = String(model || window.geminiService?.getGeminiModel?.() || 'gemini-2.5-flash').replace(/^models\//, '');
+    if (!/^gemini-[A-Za-z0-9._-]+$/.test(safeModel)) throw Object.assign(new Error('Only Gemini model IDs are supported.'), {code:'AI_MODEL_UNSUPPORTED',retryable:false});
     if (!options._quotaScheduled) {
       const controller = new AbortController();
+      this._controllerProviders.set(controller, provider);
       const external = options.signal;
       const cancel = () => controller.abort(external?.reason);
       if (external?.aborted) cancel();
       else external?.addEventListener('abort',cancel,{once:true});
       this._activeControllers.add(controller);
-      const log = {stage:options.stage || 'generation', jobId:options.jobId ?? null, attempt:options.attempt ?? 0, model:safeModel, estimatedInputTokens:this.estimatePayloadTokens(payload,safeModel),queuedAt:Date.now(),quotaWaitMs:0,usageKnown:false,sent:false};
+      const log = {stage:options.stage || 'generation', provider, jobId:options.jobId ?? null, attempt:options.attempt ?? 0, model:safeModel, estimatedInputTokens:this.estimatePayloadTokens(payload,safeModel),queuedAt:Date.now(),quotaWaitMs:0,usageKnown:false,sent:false};
       this._requestLog.push(log); if (this._requestLog.length > 100) this._requestLog.shift();
       const requestOptions = {...options,signal:controller.signal,_queuedController:controller,_diagnostic:log};
       const execute = () => this._scheduleQuotaRequest(safeModel, payload, requestOptions);
@@ -555,7 +600,7 @@ class AIClient {
         log.durationMs=Date.now()-log.queuedAt; options.onRequestComplete?.({...log});
       }
     }
-    await this.probeServerKey();
+    await this.probeServerKey(provider);
 
     // Pre-flight size check. Warn once per oversized request rather than
     // silently sending a prompt that will be truncated or rejected upstream.
@@ -568,14 +613,37 @@ class AIClient {
     }
 
     let requestPayload = payload;
+    if (/^gemini-2\.5(?:[.-]|$)/.test(safeModel)) {
+      // REST thinkingLevel belongs to Gemini 3. Pro cannot disable thinking;
+      // Flash-Lite accepts zero or a positive budget of at least 512 tokens.
+      // Keep the shared 1024-token cap and leave the caller's payload intact.
+      const thinking=payload?.generationConfig?.thinkingConfig;
+      const requested=thinking?.thinkingBudget;
+      let thinkingBudget=Number.isInteger(requested)?Math.max(0,Math.min(1024,requested)):0;
+      if (/^gemini-2\.5-pro(?:[.-]|$)/.test(safeModel)) thinkingBudget=Math.max(128,thinkingBudget);
+      else if (/^gemini-2\.5-flash-lite(?:[.-]|$)/.test(safeModel) && thinkingBudget>0) thinkingBudget=Math.max(512,thinkingBudget);
+      requestPayload={...payload,generationConfig:{...payload?.generationConfig,thinkingConfig:{thinkingBudget,includeThoughts:false}}};
+    } else if (/^gemini-3(?:[.-]|$)/.test(safeModel) && payload?.generationConfig) {
+      const thinking=payload.generationConfig.thinkingConfig||{};
+      const levels=/^gemini-3(?:\.\d+)?-pro(?:[.-]|$)/.test(safeModel) ? ['low','high']
+        : /^gemini-3\.(?:7|8)-flash(?:[.-]|$)/.test(safeModel) ? ['low','medium','high']
+        : /^gemini-3\.1-flash-lite-image(?:[.-]|$)/.test(safeModel) ? ['minimal','high']
+        : ['minimal','low','medium','high'];
+      const fallbackLevel=levels.includes('low')?'low':'minimal';
+      requestPayload={...payload,generationConfig:{...payload.generationConfig,thinkingConfig:{thinkingLevel:levels.includes(thinking.thinkingLevel)?thinking.thinkingLevel:fallbackLevel}}};
+    } else if (payload?.generationConfig?.thinkingConfig) {
+      const generationConfig={...payload.generationConfig};
+      delete generationConfig.thinkingConfig;
+      requestPayload={...payload,generationConfig};
+    }
     if (/^gemini-3[.-]/.test(safeModel) && payload?.generationConfig) {
       // Gemini 3 migration guidance removes sampling overrides. Keep the
       // caller's payload intact so retrying with another model is safe.
-      const generationConfig = { ...payload.generationConfig };
+      const generationConfig = { ...(requestPayload.generationConfig || {}) };
       for (const parameter of ['temperature', 'topP', 'topK', 'candidateCount']) {
         delete generationConfig[parameter];
       }
-      requestPayload = { ...payload, generationConfig };
+      requestPayload = { ...requestPayload, generationConfig };
     }
     const init = {
       method: 'POST',
@@ -584,16 +652,19 @@ class AIClient {
     };
 
     let response;
-    if ((options.forceProxy || this.useProxy()) && !options.forceDirect) {
+    if ((options.forceProxy || this.useProxy('gemini')) && !options.forceDirect) {
       if (options._diagnostic) options._diagnostic.sent=true;
+      options.onRequestStart?.({model: safeModel, startedAt: Date.now(), timeoutMs: options.timeoutMs ?? this.DEFAULT_TIMEOUT_MS});
       response = await this._request(`${this.PROXY_BASE}/${encodeURIComponent(safeModel)}`, init, options);
     } else {
-      const key = (options.apiKey || this.getUserKey()).trim();
+      const key = (options.apiKey || this.getUserKey('gemini')).trim();
       if (!key) {
         throw new Error('Gemini API key is not configured. Open Settings to add your key, or set GEMINI_API_KEY on the server.');
       }
-      const url = `${this.DIRECT_BASE}/models/${encodeURIComponent(safeModel)}:generateContent?key=${encodeURIComponent(key)}`;
+      const url = `${this.DIRECT_BASE}/models/${encodeURIComponent(safeModel)}:generateContent`;
+      init.headers = {...init.headers,'x-goog-api-key':key};
       if (options._diagnostic) options._diagnostic.sent=true;
+      options.onRequestStart?.({model: safeModel, startedAt: Date.now(), timeoutMs: options.timeoutMs ?? this.DEFAULT_TIMEOUT_MS});
       response = await this._request(url, init, options);
     }
 
@@ -609,18 +680,20 @@ class AIClient {
    * @returns {Promise<Response>}
    */
   async fetchListModels(options = {}) {
-    await this.probeServerKey();
+    const provider = this.requireGemini(options.provider);
+    options = {...options, provider};
+    await this.probeServerKey(provider);
 
-    if ((options.forceProxy || this.useProxy()) && !options.forceDirect) {
+    if ((options.forceProxy || this.useProxy('gemini')) && !options.forceDirect) {
       return this._request(`${this.PROXY_BASE}/models`, { method: 'GET' }, options);
     }
 
-    const key = (options.apiKey || this.getUserKey()).trim();
+    const key = (options.apiKey || this.getUserKey('gemini')).trim();
     if (!key) {
       throw new Error('Gemini API key is not configured. Open Settings to add your key, or set GEMINI_API_KEY on the server.');
     }
-    const url = `${this.DIRECT_BASE}/models?key=${encodeURIComponent(key)}`;
-    return this._request(url, { method: 'GET' }, options);
+    const url = `${this.DIRECT_BASE}/models`;
+    return this._request(url, { method: 'GET', headers: {'x-goog-api-key':key} }, options);
   }
 
   /**
@@ -628,23 +701,46 @@ class AIClient {
    * Centralises the `errData.error?.message || HTTP <status>` pattern that was
    * duplicated at every call site.
    */
-  async createError(res) {
-    const data = await res.json().catch(() => ({}));
+  async createError(res, provider = this.getProvider()) {
+    const data = await this.readResponseJSON(res).catch(() => ({}));
     const msg = typeof data?.error === 'string' ? data.error : data?.error?.message;
     const defaults = {
       429: 'Gemini rate limit reached (HTTP 429). Wait a moment and retry.',
       403: 'Gemini rejected the credentials (HTTP 403). Check the API key and its permissions.',
-      503: 'Gemini is temporarily overloaded (HTTP 503). Please retry shortly.'
+      503: 'Gemini service is unavailable (HTTP 503). Please retry shortly.'
     };
     const error = new Error(msg || defaults[res.status] || `HTTP ${res.status}`);
     error.status = res.status;
+    const providerStatus=data?.error?.status;
+    if(typeof providerStatus==='string' && /^[A-Z_]{1,64}$/.test(providerStatus))error.providerStatus=providerStatus;
     const code = data?.code || data?.error?.code;
     if (typeof code === 'string' && /^AI_[A-Z_]+$/.test(code)) error.code = code;
     if (data?.retryable === false || data?.error?.retryable === false) error.retryable = false;
+    if (!error.code && [400,401,403].includes(res.status) && (res.status !== 400 || /API.?key|credential|authentication/i.test(error.message))) {
+      error.code = 'AI_AUTHENTICATION_FAILED';
+      error.retryable = false;
+      error.userMessage = 'Google rejected the Gemini API key or its permissions. Open Settings, paste a valid Google AI Studio key and run Test Connection. A successful test saves the same key and model used for study generation.';
+    }
+    const details = Array.isArray(data?.error?.details) ? data.error.details : [];
+    if (res.status === 400 && !error.code && (providerStatus === 'INVALID_ARGUMENT' || /request contains an invalid argument/i.test(error.message))) {
+      error.code = 'AI_INVALID_ARGUMENT';
+      error.retryable = false;
+      // Keep parameter paths for diagnosis, never echo violation descriptions
+      // or payload values that may contain source text or credentials.
+      error.invalidFields = [...new Set(details
+        .filter(detail => detail?.['@type'] === 'type.googleapis.com/google.rpc.BadRequest')
+        .flatMap(detail => Array.isArray(detail.fieldViolations) ? detail.fieldViolations : [])
+        .map(violation => violation?.field)
+        .filter(field => typeof field === 'string' && /^[A-Za-z_][A-Za-z0-9_.\[\]-]{0,239}$/.test(field)))].slice(0,20);
+    }
+    error.retryAfterMs = this._retryDelay(res,details,error.message);
+    if (res.status === 503 && !error.code && error.retryable !== false) {
+      error.isOverloaded=/\boverload(?:ed)?\b|\bhigh demand\b|\bbusy\b/i.test(error.message);
+      if(error.isOverloaded)error.userMessage = 'Gemini is temporarily overloaded. Your completed work is saved; wait a moment before resuming.';
+    }
     if (res.status !== 429) return error;
 
-    const details = Array.isArray(data?.error?.details) ? data.error.details : [];
-    const violations = details.flatMap(detail => Array.isArray(detail.violations) ? detail.violations : []);
+    const violations = details.flatMap(detail => Array.isArray(detail?.violations) ? detail.violations : []).filter(value=>value && typeof value==='object');
     const quotaIds = violations.map(v => `${v.quotaId || ''} ${v.quotaMetric || ''}`).join(' ');
     // Google's generic "check your plan and billing details" sentence also
     // appears on minute limits. It must never classify an error as permanent.
@@ -654,6 +750,21 @@ class AIClient {
     error.code = zero ? 'AI_QUOTA_UNAVAILABLE' : daily ? 'AI_DAILY_QUOTA' : spending ? 'AI_SPEND_LIMIT' : 'AI_RATE_LIMIT';
     error.retryable = !zero && !daily && !spending;
 
+    const rpm = violations.filter(v => /requestsperminute/i.test(v.quotaId || '')).map(v => Number(v.quotaValue)).filter(n => n > 0);
+    const printedLimit = error.message.match(/limit\s*[:=]\s*(\d+)\b/i);
+    if (!rpm.length && /requestsperminute/i.test(quotaIds) && Number(printedLimit?.[1]) > 0) rpm.push(Number(printedLimit[1]));
+    error.requestIntervalMs = rpm.length ? Math.ceil(60000 / Math.min(...rpm)) + 100 : 1000;
+    const tpm = violations.filter(v => /(?:input|prompt).*tokens.*perminute|tokensperminute/i.test(`${v.quotaId || ''} ${v.quotaMetric || ''}`)).map(v => Number(v.quotaValue)).filter(n => n > 0);
+    error.inputTokensPerMinute = tpm.length ? Math.min(...tpm) : null;
+    error.userMessage = zero
+      ? 'The selected Gemini model has no quota for the active project. Run Test Connection in Settings to choose another model listed for this API key, or check model access and quota in Google AI Studio.'
+      : daily ? 'Gemini daily quota is exhausted. Resume this saved draft after the quota resets, or check your project quota in Google AI Studio.'
+      : spending ? 'Gemini project spending limit was reached. Check your project billing/limits in Google AI Studio before resuming.'
+      : `Gemini is temporarily rate-limited.${error.retryAfterMs != null ? ` Wait at least ${Math.ceil(error.retryAfterMs / 1000)} seconds before resuming.` : ' Please wait a moment before resuming.'} Your completed work is saved.`;
+    return error;
+  }
+
+  _retryDelay(res, details, message) {
     const delays = [];
     const header = res.headers?.get('Retry-After');
     if (header) {
@@ -662,31 +773,45 @@ class AIClient {
       if (Number.isFinite(delay) && delay >= 0) delays.push(delay);
     }
     for (const detail of details) {
-      const value = detail.retryDelay;
+      const value = detail?.retryDelay;
       const seconds = typeof value === 'string' && /^\d+(?:\.\d+)?s$/.test(value)
         ? Number(value.slice(0, -1))
         : value && typeof value === 'object' ? Number(value.seconds || 0) + Number(value.nanos || 0) / 1e9 : NaN;
       if (Number.isFinite(seconds) && seconds >= 0) delays.push(seconds * 1000);
     }
-    const textDelay = error.message.match(/(?:retry in|retry after)\s+(\d+(?:\.\d+)?)\s*s/i);
+    const textDelay = message.match(/(?:retry in|retry after)\s+(\d+(?:\.\d+)?)\s*s/i);
     if (textDelay) delays.push(Number(textDelay[1]) * 1000);
-    error.retryAfterMs = delays.length ? Math.max(...delays) : null;
-    const rpm = violations.filter(v => /requestsperminute/i.test(v.quotaId || '')).map(v => Number(v.quotaValue)).filter(n => n > 0);
-    const printedLimit = error.message.match(/limit\s*[:=]\s*(\d+)\b/i);
-    if (!rpm.length && /requestsperminute/i.test(quotaIds) && Number(printedLimit?.[1]) > 0) rpm.push(Number(printedLimit[1]));
-    error.requestIntervalMs = rpm.length ? Math.ceil(60000 / Math.min(...rpm)) + 100 : 1000;
-    const tpm = violations.filter(v => /(?:input|prompt).*tokens.*perminute|tokensperminute/i.test(`${v.quotaId || ''} ${v.quotaMetric || ''}`)).map(v => Number(v.quotaValue)).filter(n => n > 0);
-    error.inputTokensPerMinute = tpm.length ? Math.min(...tpm) : null;
-    error.userMessage = zero
-      ? 'Gemini 3.6 Flash quota is unavailable for the active project. Check this project’s model access and quota in Google AI Studio. No other model will be used.'
-      : daily ? 'Gemini daily quota is exhausted. Resume this saved draft after the quota resets, or check your project quota in Google AI Studio.'
-      : spending ? 'Gemini project spending limit was reached. Check your project billing/limits in Google AI Studio before resuming.'
-      : `Gemini is temporarily rate-limited.${error.retryAfterMs != null ? ` Wait at least ${Math.ceil(error.retryAfterMs / 1000)} seconds before resuming.` : ' Please wait a moment before resuming.'} Your completed work is saved.`;
-    return error;
+    return delays.length ? Math.max(...delays) : null;
   }
 
-  async describeError(res) {
-    return (await this.createError(res)).message;
+  async describeError(res, provider = this.getProvider()) {
+    return (await this.createError(res, provider)).message;
+  }
+
+  /** Gemini entry point for new features, using the same request queue. */
+  async generate({prompt, contents, systemInstruction, generationConfig = {}, model, provider = this.getProvider(), signal, ...options}) {
+    this.requireGemini(provider);
+    const version = this._providerVersions[provider];
+    if (signal?.aborted || version !== this._providerVersions[provider]) throw new DOMException('Request cancelled.', 'AbortError');
+    const payload = {contents:contents || [{role:'user',parts:[{text:String(prompt || '')}]}],generationConfig};
+    if (systemInstruction) payload.systemInstruction = typeof systemInstruction === 'string' ? {parts:[{text:systemInstruction}]} : systemInstruction;
+    const selectedModel = model || window.geminiService?.getGeminiModel?.() || 'gemini-2.5-flash';
+    const response = await this.fetchGenerateContent(selectedModel, payload, {...options,provider,signal});
+    if (!response.ok) throw await this.createError(response, provider);
+    const data = await response.json();
+    const candidate = data.candidates?.[0];
+    const text = (candidate?.content?.parts || []).filter(part=>!part.thought).map(part=>part.text || '').join('');
+    if (!text.trim() || data.promptFeedback?.blockReason || candidate?.finishReason && candidate.finishReason !== 'STOP') {
+      throw Object.assign(new Error('AI returned blocked, empty or incomplete content.'),{code:'AI_INVALID_RESPONSE',retryable:false});
+    }
+    let structuredData = data.structuredData ?? null;
+    if ((generationConfig.responseMimeType === 'application/json' || generationConfig.responseSchema) && structuredData == null) {
+      try { structuredData = JSON.parse(text); }
+      catch { throw Object.assign(new Error('AI returned malformed structured content.'),{code:'AI_STRUCTURED_OUTPUT',retryable:false}); }
+    }
+    const reported = data.usageMetadata;
+    const usage = data.usage || (reported ? {inputTokens:Number(reported.promptTokenCount) || 0,outputTokens:Number(reported.candidatesTokenCount) || 0,totalTokens:Number(reported.totalTokenCount) || 0,reasoningTokens:Number(reported.thoughtsTokenCount) || 0} : null);
+    return {text,structuredData,usage,model:data.model || selectedModel,provider,finishReason:data.finishReason || candidate?.finishReason || 'STOP',requestId:data.requestId || null};
   }
 }
 

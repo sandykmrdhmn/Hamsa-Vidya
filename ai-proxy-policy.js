@@ -49,8 +49,22 @@ function validatePayload(payload) {
   if (config.responseModalities && (!Array.isArray(config.responseModalities) || config.responseModalities.some(item => item !== 'TEXT'))) return 'Only text output is enabled.';
   const thinking = config.thinkingConfig;
   if (thinking != null && (typeof thinking !== 'object' || Array.isArray(thinking))) return 'Invalid thinking configuration.';
-  if (thinking && (thinking.thinkingBudget != null || (thinking.thinkingLevel != null && !['minimal','low'].includes(thinking.thinkingLevel)))) return 'Use minimal or low thinking for this shared proxy.';
+  if (thinking && (Object.keys(thinking).some(key=>!['thinkingBudget','thinkingLevel','includeThoughts'].includes(key)) ||
+      (thinking.thinkingBudget != null && (!Number.isInteger(thinking.thinkingBudget) || thinking.thinkingBudget<0 || thinking.thinkingBudget>1024)) ||
+      (thinking.thinkingLevel != null && !['minimal','low','medium','high'].includes(thinking.thinkingLevel)) ||
+      (thinking.thinkingBudget != null && thinking.thinkingLevel != null) ||
+      (thinking.includeThoughts != null && thinking.includeThoughts!==false))) return 'Use a valid Gemini thinking budget or thinking level.';
   return null;
+}
+
+function isProviderDailyQuota(status, body) {
+  if (status !== 429) return false;
+  let error;
+  try { error = JSON.parse(body)?.error; } catch { return false; }
+  if (!error || typeof error !== 'object') return false;
+  const violations = Array.isArray(error.details) ? error.details.flatMap(detail => Array.isArray(detail?.violations) ? detail.violations : []) : [];
+  return violations.some(item => /per[_\s-]?day|\/day|daily/i.test(String(item?.quotaId || ''))) ||
+    /\bdaily\b|\bper day\b/i.test(String(error.message || ''));
 }
 
 class ProxyBudget {
@@ -72,12 +86,37 @@ class ProxyBudget {
     }
   }
 
+  currentDay() {
+    return new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).format(this.now());
+  }
+
+  persist() {
+    if (!this.file) return true;
+    try {
+      fs.writeFileSync(this.file+'.tmp',JSON.stringify({...this.daily,history:this.history}),{mode:0o600});
+      fs.renameSync(this.file+'.tmp',this.file);
+      return true;
+    } catch {
+      this.storageError = true;
+      return false;
+    }
+  }
+
+  markProviderDailyExhausted(requestDay) {
+    // A response to yesterday's request must not block today's allowance.
+    const day = this.currentDay();
+    if (requestDay !== day) return;
+    this.daily = {...(this.daily?.day === day ? this.daily : {day,requests:0,tokens:0}),providerExhausted:true};
+    this.persist();
+  }
+
   reserve(inputTokens, outputLimit) {
     if (this.storageError) return {status:503,code:'AI_BUDGET_STORAGE',message:'Shared AI budget storage is unavailable. No generation request was sent.',retryable:false};
     const now = this.now();
     if (this.strictInputLimit && inputTokens > this.limits.tpm) return {status:400,code:'AI_INPUT_BUDGET',message:'This request exceeds the configured project input limit. Choose a smaller source range.',retryable:false};
-    const day = new Intl.DateTimeFormat('en-CA',{timeZone:'America/Los_Angeles',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
+    const day = this.currentDay();
     const daily = this.daily?.day === day ? this.daily : {day,requests:0,tokens:0};
+    if (daily.providerExhausted === true) return {status:429,code:'AI_DAILY_QUOTA',message:'Gemini reported an exhausted daily allowance for this project. Resume after midnight Pacific time.',retryable:false};
     // Include output reservations in the daily safety guard; these are an
     // intentionally conservative bound, not a displayed bill or token actual.
     const tokens = inputTokens + outputLimit;
@@ -89,17 +128,9 @@ class ProxyBudget {
     if (history.length >= this.limits.rpm || (history.length && used+inputTokens > this.limits.tpm)) return {status:429,code:'AI_RATE_LIMIT',message:'The application shared AI minute budget is busy. Your draft is saved; retry after the cooldown.',retryable:true,retryAfter:Math.max(1,Math.ceil((history[0].at+60050-now)/1000))};
     this.daily = {...daily,requests:daily.requests+1,tokens:daily.tokens+tokens};
     this.history = [...history,{at:now,tokens:inputTokens}];
-    if (this.file) {
-      try {
-        fs.writeFileSync(this.file+'.tmp',JSON.stringify({...this.daily,history:this.history}),{mode:0o600});
-        fs.renameSync(this.file+'.tmp',this.file);
-      } catch {
-        this.storageError = true;
-        return {status:503,code:'AI_BUDGET_STORAGE',message:'Shared AI budget could not be saved. No generation request was sent.',retryable:false};
-      }
-    }
+    if (!this.persist()) return {status:503,code:'AI_BUDGET_STORAGE',message:'Shared AI budget could not be saved. No generation request was sent.',retryable:false};
     return null;
   }
 }
 
-module.exports = {ProxyBudget,positiveLimit,estimateInput,validatePayload};
+module.exports = {ProxyBudget,positiveLimit,estimateInput,validatePayload,isProviderDailyQuota};

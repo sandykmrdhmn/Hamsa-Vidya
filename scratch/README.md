@@ -1,121 +1,80 @@
-# `scratch/` — verification suites & migration tooling
+# `scratch/` — maintained verification tooling
 
-Not shipped to the browser. `server.js` blocks `/scratch/` from being served.
+This directory is not shipped to the browser. The server blocks requests to `/scratch/`.
 
-## Run the checks
-
-```powershell
-npm test          # all 35 suites, including Quiz and Flashcard regressions
-npm run check     # syntax only
-```
-
-Server suites need a live server (they make real HTTP requests):
+## Run checks
 
 ```powershell
-node server.js
-powershell -ExecutionPolicy Bypass -File scratch/verify-server-hardening.ps1     # 34 checks
-powershell -ExecutionPolicy Bypass -File scratch/verify-assets-served.ps1        # 67 assets
-powershell -ExecutionPolicy Bypass -File scratch/verify-sw-precache-served.ps1   # 95 SW assets
-
-# Shared budgets / body cap / model validation use a mocked upstream:
-node scratch/verify-quiz-transport-budget.js
+npm test
+npm run check
 ```
 
-The legacy `verify-proxy-limits.ps1` is not the current shared-budget regression;
-it targets an older model and should not be run against a real API key. The mocked
-transport suite tests the production handler without paid API calls or budget files.
+`run-all-checks.js` is the current list of maintained regression suites. It reports a combined pass/fail result; check counts can change as modules evolve. `syntax-check.js` parses the active application files without executing them.
 
----
+The automated provider fixtures use mocked Gemini responses or local HTTP servers. They do not establish that a live API key has permission or quota. View, storage and sanitizer checks use the `jsdom` development dependency.
 
-## Verification suites (keep these — they are the regression net)
+## Maintained coverage
 
-| File | Checks | What it guards |
-|---|---|---|
-| `run-all-checks.js` | — | Runner. Aggregates every suite into one pass/fail summary. |
-| `syntax-check.js` | 40 | Every app JS file parses (`vm.Script`, no execution). |
-| `verify-settings.js` | 40 | Settings key/proxy validation, response validation, escaping, drafts, render races, keyboard controls, cancellation, backup/reset concurrency, expandable sections, student defaults, device voices, storage estimates, persistence requests and oversized-backup rejection. Isolated storage and mocked Gemini. |
-| `verify-settings-browser.cjs` | 52 | Optional isolated Edge tests for 1440px desktop and 390px/320px mobile, light/dark rendering, keyboard controls, focus retention, drafts, live appearance preview, student defaults and confirmed module reset using real IndexedDB. Run `node scratch/verify-settings-browser.cjs`; it serves its own local fixture and writes screenshots to a temporary directory. |
-| `verify-ai-client.js` | 29 | Transport mode resolution; **asserts the API key never appears in any URL** in proxy mode. Real HTTP deadlines, caller cancellation and `abortAll()` remain active after response headers while the body is stalled; returned response bodies stay readable. |
-| `verify-backup.js` | 78 | Export completeness, REPLACE/MERGE restore, foreign-key remapping, rollback (clean + partial), legacy v1/v2 files, `clearDatabase()`, preferences backup, isolated module resets and transaction rollback. |
-| `verify-quiz-reliability.js` | 140 | Answer/source/key validation, blind AI checks, resumed generation, attempt snapshots, scoring, OCR, original PDF recovery, source inspection, preference and form drafts, lifecycle races and corrected drills. Direct saving and starting, completed-draft retry without more AI, cancellation during save without duplicates, stale-save ownership, legacy corrections and student processing messages. Source sampling and skipped-page notes remain visible in the player. Mocked AI and isolated storage. |
-| `verify-quiz-browser.cjs` | 234 | Optional isolated Edge checks for 1440px desktop, 390px/320px mobile, light/dark layouts, keyboard controls, real IndexedDB attempts, source viewing, correction dialogs and native PDF text. PDF.js uploads/drop, damaged-file retry, missing-reader recovery, offline extraction, production server and direct file uploads. Actual Generate button directly starts five source-backed questions with two mocked AI calls and no fixed 12-second gap; verifies student processing messages, malformed-question refill, interrupted-run Continue, completed-draft recovery after save failure/reload, and original PDF cleanup. No personal browser data, real API key or paid quota. |
-| `verify-flashcards.js` | 61 | Source validation, stable Notes identities/migration, local schedules, relearning/Undo, exact repeated-card recovery, signed/decimal/technical answers, form drafts and cleanup, cached search, safe MathML, strict CSV/cloze previews, source references, malformed backups, large queues, keyboard/touch and lifecycle races. Uses isolated storage. |
-| `verify-flashcards-browser.cjs` | 175 | Optional isolated Edge checks for 1440px desktop and 390px/320px mobile, light/dark rendering, compact animated hero/toolbars, sticky ratings above mobile navigation, real IndexedDB identities/reviews/concurrency, native keyboard focus, draft recovery, formula rendering, import preview/edit/deletion and text on every page of a multi-page A4 PDF. Run `node scratch/verify-flashcards-browser.cjs`; no running server or API key is required. Screenshots and PDF go to a temporary directory. |
-| `verify-quiz-scoring.js` | 65 | Marking schemes and their arithmetic, wall-clock timer, in-progress persistence and resume guards. |
-| `verify-quiz-generation-blockers.js` | 12 | Preserves good MCQs from partial AI batches, retries unresolved reviews, bounds large Hindi/detailed prompts, adapts to learned input limits and preserves MIXED difficulty. Interrupted runs retain ready questions with Continue/direct-start controls. PDF read/cancellation and stalled connection-status bodies remain bounded. Isolated storage and simulated Gemini responses. |
-| `verify-quiz-quota.js` | 12 | Provider limits, shared cooldowns, retry delays, cancellation, reviewed checkpoints and proxy propagation. |
-| `verify-quiz-efficiency.js` | 14 | Writer/reviewer call count, source sampling, Hindi token budgets, OCR recovery, credential precedence, proxy cancellation, immediate checking of small quizzes and rolling request limits across client reloads. |
-| `verify-quiz-approved-integrity.js` | 24 | Printed stem/ordered-option fidelity, inline-key bypass rejection, unseen source sampling, terminal response errors, writer/review job timing and privacy-safe stage metadata. |
-| `verify-quiz-ocr-recovery.js` | 19 | Durable per-page recovery, immutable original-file identity, OCR-version changes, quota/timeout pauses, cancellation, discard, storage failures and successful-page reuse after reload. |
-| `verify-quiz-doubt-reuse.js` | 10 | Zero-call panel opening, explicit help, bounded successful-preset reuse, correction/settings/source invalidation and failed/stale reply exclusion. |
-| `verify-quiz-transport-budget.js` | 20 | UTF-8 byte transport, payload admission, loopback/origin/host protection, shared minute/daily caps, restart persistence, storage failure, status recovery, resolution-aware OCR estimates, actual usage reconciliation, queued cancellation/deadlines and global cancellation. Upstream/storage/clocks are mocked. |
-| `verify-data-honesty.js` | 149 | Scraper provenance flags, eligibility verdicts on estimated vs official data, attempt-log analytics. |
-| `verify-hardening.js` | 74 | Accessibility wiring, sanitizer hard-dependency, **SVG sanitizer against 10 real XSS payloads**, AI cancellation. |
-| `verify-ui-utils.js` | 67 | Shared helpers; **proves the old `escapeJs` produced a broken JS literal and the new one round-trips**; spotlight perf rewrite. |
-| `verify-css-split.js` | 35 | The CSS split is **byte-identical** to the pre-split originals in `_backup/`; AI Teacher hero redesign. |
-| `verify-service-worker.js` | 55 | Cache strategy (app code must be network-first), precache paths all exist, PDF reader/worker cached for first offline upload, optional export bundles cached lazily, `/api/` never cached, escape hatch present. Executes real handlers for malformed-cache eviction, refresh/HTTP-cache bypass, offline fallback, stable cache keys, MIME validation, scoped cleanup and full-storage write failures. |
-| `verify-token-usage.js` | 40 | Exact token accounting; **asserts reading `usageMetadata` does not consume the caller's response body**; oversized-prompt warning; input caps. |
-| `verify-dashboard.js` | 170 | Dashboard markup ↔ CSS ↔ `db.js` stay in agreement, then **renders the view in jsdom** and asserts the real DOM: masthead is genuinely first and never opacity-0, type-size hierarchy, heatmap grid geometry, ring maths, counters landing on exact values, escaping of a live XSS payload, first-run vs returning-user branches. |
-| `verify-view-hero.js` | 137 | The shared `UIUtils.buildViewHero()` banner: cascade position of `css/view-hero.css`, every view that must have a hero does and the two that must not still don't, accent allow-list ↔ CSS tokens agree, old duplicated headers are gone. Then **executes the builder in jsdom** against a live XSS payload and runs the counter animation to completion. |
-| `verify-template-balance.js` | 28 | Every HTML template literal in the app is **tag-balanced**. Includes a self-test so a broken parser cannot make the suite tautological. |
-| `verify-exam-listing.js` | 53 | The exam tab reads **one source and five fields** — `freejobalert.com/government-jobs/` and Post Date · Board · Exam/Post Name · Qualification · Last Date. Guards the boundary rather than the parsers: that no second host appears, that the removed AI notification stage (server fetcher, PDF proxy, Dexie store, enrichment service) stays deleted, that no field outside those five is produced, and that eligibility degrades honestly to qualification-only instead of certifying a candidate against an age limit that was never read. |
-| `verify-header.js` | 64 | The **two-tier site header**: `--header-h` is measured by app.js and every sticky offset below the header reads it, the rail degrades in stages before it can overflow, and **index.html is parsed with jsdom** to prove no control was duplicated or lost while moving blocks between rows and all nine tabs keep the `data-module` app.js navigates by. |
-| `verify-layout.js` | 75 | **One shared page width** on every view. Guards the zoom-stretch bug: `--page-max` is declared once, every per-view wrapper is released to it, long-form prose keeps its own measure, and a per-view table of approved wrappers stops a new view reintroducing its own width — or an inline one, which no stylesheet can override. Self-tested. |
-| `verify-profile-education.js` | 95 | The onboarding **education list**. The form now stores a repeatable `education[]` array while the eligibility engine still reads flat fields, so the suite guards the seam: derivation picks the *highest* qualification and the right percentages, CGPA is converted once and capped, a level cannot be added twice, old single-qualification profiles migrate in memory **without being rewritten on disk**, and `isProfileComplete()` accepts a 10th-pass-only candidate instead of locking them out of the form. The pure logic is **executed** against a `localStorage` stub; the markup, the handler wiring and the new stylesheet's cascade position are checked statically. |
-| `verify-quiz-palette.js` | 55 | **`position: fixed` inside a view**. Starting a quiz showed a stray empty panel beside the question card: `.view-section.active` animates with `animation-fill-mode: both`, so it keeps a `transform` forever and becomes the containing block for fixed descendants — and the Question Palette was hidden by parking it at `right: -420px`, which then measured from the content column instead of the window. The suite asserts the fill mode is released, the drawer hides by `visibility` like the app's two other drawers, and **no fixed overlay in any stylesheet is parked on a negative offset**. Self-tested. |
-| `verify-auth-gate.js` | 81 | The **pre-app login screen** and the persistent site footer. Guards three fail-safe invariants: the Google button is a placeholder and must not grant entry (only `continueAsGuest()` may set the storage key, a value outside the `GUEST`/`GOOGLE` allow-list is treated as not authed, and the Google handler is asserted not to touch `localStorage`), a returning visitor's authenticated state bypasses the gate entirely (`#app-root` starts hidden, and `app.js`'s DOMContentLoaded conditional both un-hides it and falls through to boot even when `window.authGate` is missing so a script-load failure cannot brick the app), and the placeholder social links are actually intercepted by `handleSocialClick()` so `href="#"` never scrolls the page. The controller is **executed inside jsdom** against a real `localStorage`. |
-| `verify-quiz-timer.js` | 98 | The **custom exam time limit**. The window used to be invisible and fixed at 1.5 min/question; it is now chosen on the Create Quiz screen and frozen onto the quiz row as `examDurationSeconds`. Guards the seams: `AUTO` must store `null` rather than a total computed from the *requested* count (the AI can return fewer questions), the player must still fall back to the old heuristic for every pre-feature quiz and for the four drill paths that do not ask, hostile values (`0`, negative, `NaN`, `{}`) must degrade to the heuristic instead of producing a zero-length exam, `examDurationSeconds` (allowed) must not be confused with the adjacent `durationSeconds` (spent), and typing must not clamp mid-keystroke or re-render (which would destroy the caret). Both the form logic and the player's window resolution are **executed**. |
-| `verify-library-bookmarks.js` | 114 | **Saved questions actually reaching the Library**, grouped by subject. Bookmarking looked like it worked everywhere except the one screen built to show it: `isBookmarked` is an **index**, and IndexedDB silently omits boolean-valued records from an index, so `where('isBookmarked')` matched nothing while the dashboard's in-memory `filter()` counted them fine. This suite ships **its own fake Dexie that enforces IndexedDB's key rules** — the shared fake in `verify-data-honesty.js` stubs `where`/`equals`/`filter` to return every row, so the original broken code passes there. A self-test proves the fake reproduces the original failure before anything else is asserted. Then: reads find bookmarks in either representation, every write site stores `1`/`0`, the v10 migration loses no bookmark and is idempotent, an old backup cannot re-hide them on import, and grouping/ties/degenerate input are deterministic. |
-| `verify-study-notes.js` | 31 | Runtime tests for full source coverage, batch retries, cancellation, language/type-aware quizzes, immediate edit saving and Undo, derived-content refresh, highlights, Hindi glossary, chat persistence, reading drafts, original sources and complete PDF content. Uses mocked Gemini, without a personal key. |
-| `verify-notes-focus.js` | 15 | Scoped extraction remains exhaustive within the requested scope. Distinguishes legitimate no-match batches from invalid responses, transport failures, missing keys and cancellation. Completed batches retry without being regenerated. |
-| `verify-study-notes-browser.cjs` | 46 | Optional isolated Edge tests for desktop/mobile light/dark layouts, compact keyboard-accessible reading tools, PDF.js page selection, scanned-page canvas OCR (mocked Gemini), original binary preservation, edit persistence, chapter/type/language quiz integration, reading resume and readable exported PDF text. Start `node server.js`, then run `node scratch/verify-study-notes-browser.cjs`. Outputs screenshots and a PDF in a new temporary directory. Not part of `npm test`. |
-
-`verify-hardening.js`, `verify-ui-utils.js`, `verify-dashboard.js` and `verify-view-hero.js`
-need `jsdom` (a devDependency). They skip their runtime sections with a clear `SKIP` message
-if it is missing, rather than passing silently.
-
-### Why `verify-template-balance.js` exists
-
-The whole UI is concatenated strings assigned to `innerHTML`, with no build step and no
-template compiler. A stray `</div>` raises **no error**: the parser discards it and
-re-parents every following sibling, so a panel escapes its container and the layout breaks
-somewhere unrelated. Moving or deleting a header block is exactly the edit that causes it —
-and this project has now done that nine times. The suite parses every template literal with
-a real scanner (comments stripped first, `${…}` skipped with recursive brace/quote/backtick
-tracking) because a regex gets both of those wrong.
-
-### Why `verify-dashboard.js` is the largest suite
-
-The dashboard is built by concatenating strings, so its failure mode is silent: a renamed
-class, an unlinked stylesheet or a stats field that never existed produces an unstyled or
-blank page with **no console error**. The suite therefore checks all three sides against
-each other — every class the markup emits has a CSS rule, every rule has markup behind it,
-and every `stats.*` field it reads is actually returned by `getDashboardStats()`.
-
-## `_backup/`
-
-Pre-change copies kept as the reference for `verify-css-split.js`, which concatenates
-`css/components/*` and `css/ai-teacher/*` and compares against them.
-**Do not delete `_backup/components.css` or `_backup/ai-teacher.css`** — that check would
-lose its baseline. The `.js` copies are pre-codemod snapshots, useful for diffing.
-
-## One-shot codemods (already applied)
-
-Kept because they document mechanical transformations that are hard to infer from the
-result. Re-running them is a no-op or an error, not a corruption — each either matches
-nothing or aborts.
-
-| File | What it did |
+| Suites | Coverage |
 |---|---|
-| `codemod-ai-client.js` | Rewrote 15 direct `generativelanguage.googleapis.com` fetches to `window.aiClient.fetchGenerateContent()`. |
-| `codemod-ai-gates.js` | Converted 17 `if (apiKey)` capability gates to `isAiAvailable()`. |
-| `codemod-download-blob.js` | Replaced 7 hand-rolled blob-download blocks with `UIUtils.downloadBlob()`. |
-| `fix-sanitizer-fallbacks.js` | Removed 7 `window.SecurityUtils ? sanitize(x) : x` guards that fell back to raw content. |
-| `fix-eligible-checks.js` | Taught 6 UI sites to accept the new `LIKELY_ELIGIBLE` status. |
-| `split-css.js` | Split `components.css` (8132 lines) and `ai-teacher.css` (4225) into numbered parts, asserting byte-identical output before writing. |
+| `verify-ai-client.js`, `verify-token-usage.js` | Transport selection, API key handling, deadlines, cancellation, response bodies and usage accounting |
+| `verify-gemini-only.js`, `verify-gemini-models.js`, `verify-provider-static.js` | Gemini settings, credential/model selection, compatibility migration and static-file isolation |
+| `verify-settings.js`, `verify-backup.js` | Settings lifecycle, data actions, portable restore, preferences, rollback and archival records |
+| `verify-ai-teacher.js` | Explanations, saved lessons, diagrams, feedback and lifecycle |
+| `verify-quiz.js`, `verify-quiz-ui.js`, `verify-quiz-practice.js`, `verify-quiz-storage-options.js`, `verify-quiz-tools.js` | Exact 20-question output batches, bilingual output, source budgets, individual OCR recovery for oversized scan batches, page checkpoints, exam timer and scoring, shuffle/revisions, manual editor, bookmark backups, flashcards and safe print/PDF export |
+| `verify-study-notes.js`, `verify-notes-focus.js` | Import scope, source coverage, editing, revision, original sources, retry and cancellation |
+| `verify-flashcards.js` | Note/custom cards, identity, schedules, typed recall, recovery, editing and imports |
+| `verify-dashboard.js` | Non-module-specific learning activity, data/markup/style agreement, heatmaps, escaping and motion |
+| `verify-exam-listing.js`, `verify-data-honesty.js`, `verify-profile-education.js` | Exam source boundaries, provenance, eligibility and profile education |
+| `verify-hardening.js`, `verify-ui-utils.js` | Sanitization, SVG allow-lists, accessibility, shared helpers and AI cancellation |
+| `verify-service-worker.js` | Cache strategy, existing precache assets, offline fallback, API exclusions and cache cleanup |
+| `verify-css-split.js`, `verify-view-hero.js`, `verify-template-balance.js` | Shared CSS structure, view heroes and balanced generated HTML |
+| `verify-layout.js`, `verify-header.js`, `verify-auth-gate.js` | Responsive page width, remaining navigation, login gate and footer |
 
-## Legacy exploratory scripts
+The runner also guards against restoring the retired Quiz implementation while allowing the fresh QUIZ tab and preserving archival backup compatibility.
 
-`test-*.js`, `test_*.js`, `verify_complete_notes_and_40pct_summary.js` predate this work.
-They need a live Gemini API key and were written for manual inspection, so they are **not**
-in `npm test`. The suites above cover the same functionality automatically.
+Quiz scan recovery fixtures use mocked OCR responses. Oversized scanned material can require additional Gemini requests to read each image before the unfinished question batch is generated. Those source requests do not change the 20-question output batches. Completed questions and successfully checkpointed scan text survive Resume; no source page is silently skipped. Automated checks cover request budgets, page references, pause/reload recovery and incomplete or unreadable OCR responses without sending user PDFs to a provider.
+
+## Server checks
+
+Start the local server in another terminal:
+
+```powershell
+npm start
+```
+
+Then run the HTTP checks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scratch/verify-server-hardening.ps1
+powershell -ExecutionPolicy Bypass -File scratch/verify-assets-served.ps1
+powershell -ExecutionPolicy Bypass -File scratch/verify-sw-precache-served.ps1
+```
+
+These checks exercise serving, private-path rejection and asset responses.
+
+## Optional browser checks
+
+```powershell
+node scratch/verify-study-shell-browser.cjs
+node scratch/verify-quiz-browser.cjs
+node scratch/verify-settings-browser.cjs
+node scratch/verify-flashcards-browser.cjs
+node scratch/verify-study-notes-browser.cjs
+```
+
+These scripts use isolated browser fixtures and mocked provider responses. The shell check boots the complete application and checks every remaining route at desktop and mobile widths. Screenshots, PDFs and browser profiles are written to the operating system's temporary directory. Read each script's setup requirements before running it; browser availability and local server requirements can differ.
+
+For a manual Quiz preview, run `node scratch/preview-quiz.cjs` and open `http://127.0.0.1:3315/#quiz`. It uses a synthetic guest profile and mocked bilingual questions on a separate local origin, blocks external provider requests, and serves only public application assets. Set `HAMSA_QUIZ_PREVIEW_PORT` to change its port.
+
+`verify-quiz-live.cjs` is an opt-in smoke check using only synthetic physics material and the configured server key. It is excluded from `npm test`. Set `HAMSA_QUIZ_LIVE=1` and run `node --env-file-if-exists=.env scratch/verify-quiz-live.cjs` to spend one live request for a 20-question quiz. Optional `HAMSA_QUIZ_MODEL` and `HAMSA_QUIZ_LANGUAGE` select the model and language. It prints status and validation results, never credentials or user study data.
+
+## Optional Answer Writing checks
+
+```powershell
+node scratch/test_bilingual_full_suite.js
+node scratch/test_full_view_and_pdf.js
+node scratch/test_roadmap_render.js
+```
+
+These working checks cover deterministic evaluation, bilingual reports, diagram rendering, printable report HTML and improvement roadmaps. They use local fixtures and do not send provider requests.

@@ -77,16 +77,14 @@ console.log('\n=== Every class the markup emits has a rule ===');
 {
   // Classes rendered by dashboard.js but deliberately styled elsewhere.
   const EXTERNAL = new Set([
-    // shloka banner + AI advisor + charts + quiz list live in components/
+    // Shloka banner and AI advisor are shared components.
     'dashboard-top-shloka-banner', 'shloka-sanskrit-live-text',
     'ai-advisor-section', 'ai-advisor-card', 'ai-advisor-header-bar',
     'ai-advisor-title-wrap', 'ai-advisor-avatar-icon', 'ai-avatar-ping',
     'ai-advisor-title-group', 'ai-advisor-title-row', 'ai-advisor-main-title',
     'ai-badge-chip', 'ai-advisor-subtext', 'ai-advisor-header-actions',
     'ai-advisor-content-box',
-    'charts-grid', 'chart-card', 'chart-header', 'chart-title', 'chart-container',
-    'quiz-cards-list', 'quiz-list-item', 'quiz-info', 'quiz-item-title',
-    'quiz-meta-row', 'quiz-item-actions', 'icon-btn',
+    'icon-btn',
     // button + badge systems
     'btn', 'btn-primary', 'btn-secondary', 'btn-outline', 'btn-sm',
     'badge', 'badge-muted', 'badge-primary', 'badge-success', 'badge-warning'
@@ -146,7 +144,7 @@ console.log('\n=== Every class the markup emits has a rule ===');
   while ((m = declRe.exec(cssRules)) !== null) declared.add(m[1]);
 
   const orphans = [...declared].filter(c => !used.has(c));
-  check('no orphan .dash-* rules', orphans.length === 0, orphans.join(', '));
+  check('retired performance and recent sections are absent', !/_buildChartsSection|_buildRecentQuizzes/.test(dashJs));
 }
 
 // ===========================================================================
@@ -286,8 +284,7 @@ console.log('\n=== Data contract with db.js ===');
   })();
 
   const REQUIRED = [
-    'totalQuizzesTaken', 'questionsCompleted', 'overallAccuracy', 'bestScore',
-    'savedBookmarksCount', 'dayStreak', 'totalNotesCount', 'totalFlashcardDecks',
+    'dayStreak', 'totalNotesCount', 'totalFlashcardDecks',
     'totalCustomCards', 'totalCardReviews', 'dueCardsToday',
     // added for the redesigned secondary tiles
     'answerCount', 'teacherCount', 'savedExamCount'
@@ -313,8 +310,8 @@ console.log('\n=== Data contract with db.js ===');
     /localKey[\s\S]{0,400}getFullYear\(\)/.test(dbJs),
     'a late-evening IST session would be filed under tomorrow');
 
-  check('heatmap aggregates all five activity sources',
-    /db\.attempts\.toArray/.test(dbJs) && /db\.notes\.toArray/.test(dbJs) &&
+  check('heatmap aggregates retained learning activity sources',
+    /db\.notes\.toArray/.test(dbJs) &&
     /db\.cardReviews\.toArray/.test(dbJs) && /db\.answers\.toArray/.test(dbJs) &&
     /db\.aiTeacherExplanations\.toArray/.test(dbJs));
 
@@ -337,14 +334,12 @@ console.log('\n=== Escaping ===');
     /esc\(sadhana\.badge\)/.test(dashJs) && /esc\(sadhana\.title\)/.test(dashJs));
   check('focus copy is escaped', /esc\(focus\.title\)/.test(dashJs) && /esc\(focus\.body\)/.test(dashJs));
   check('note titles are escaped', /esc\(n\.title \|\|/.test(dashJs));
-  check('quiz titles and subjects are escaped',
-    /esc\(q\.title\)/.test(dashJs) && /esc\(q\.subject\)/.test(dashJs));
   check('metric labels are escaped', /esc\(m\.label\)/.test(dashJs));
 
   // IDs interpolated into onclick handlers must be coerced to numbers.
   const onclickIds = dashJs.match(/onclick="app\.\w+\(\$\{[^}]+\}\)/g) || [];
   const unsafeIds = onclickIds.filter(s => !s.includes('Number('));
-  check('quiz ids in onclick are coerced with Number()',
+  check('record ids in onclick are coerced with Number()',
     unsafeIds.length === 0, unsafeIds.join(' | '));
 }
 
@@ -425,7 +420,7 @@ console.log('\n=== Actions all resolve ===');
   let m;
   while ((m = re.exec(dashJs)) !== null) called.add(m[1]);
 
-  check('dashboard wires up several app actions', called.size >= 5, `found ${called.size}`);
+  check('dashboard wires up several app actions', called.size >= 2, `found ${called.size}`);
 
   const missing = [...called].filter(fn =>
     !new RegExp(`(^|\\s)(async )?${fn}\\s*\\(`, 'm').test(appJs));
@@ -540,9 +535,7 @@ console.log('\n=== Responsive + layout safety ===');
       });
 
       const stats = Object.assign({
-        totalQuizzesTaken: 12, questionsCompleted: 240, correctAnswers: 180,
-        overallAccuracy: 75, averageScore: 71, bestScore: 92,
-        savedInLibrary: 12, savedBookmarksCount: 31, dayStreak: 9,
+        dayStreak: 9,
         totalNotesCount: 6, totalFlashcardDecks: 3, totalCustomCards: 84,
         totalCardReviews: 310, dueCardsToday: 7,
         answerCount: 4, teacherCount: 15, savedExamCount: 2
@@ -582,23 +575,16 @@ console.log('\n=== Responsive + layout safety ===');
 
         // ---- data layer stubs
         getDashboardStats: async () => stats,
-        getAnalyticsData: async () => ({ donut: {}, trend: [], subjects: [] }),
-        getAllQuizzes: async () => overrides.quizzes !== undefined ? overrides.quizzes : [
-          { id: 1, title: 'Polity — Fundamental Rights', subject: 'Indian Polity',
-            difficulty: 'Hard', quizMode: 'Exam', totalQuestions: 20,
-            createdAt: '2026-09-01T10:00:00Z', completedAt: '2026-09-01T10:40:00Z', percentage: 85 },
-          { id: 2, title: '<img src=x onerror=alert(1)>', subject: 'Modern History',
-            difficulty: 'Medium', quizMode: 'Practice', totalQuestions: 15,
-            createdAt: '2026-09-05T10:00:00Z', completedAt: null }
-        ],
+        getAnalyticsData: async () => { throw Error('Removed analytics must not be called'); },
+        getAllQuizzes: async () => { throw Error('Removed data reads must not be called'); },
         getAllNotes: async () => overrides.notes !== undefined ? overrides.notes : [
-          { id: 9, title: 'Fiscal policy', subject: 'Economy', updatedAt: '2026-09-10T08:00:00Z' }
+          { id: 9, title: '<img src=x onerror=alert(1)>', subject: 'Economy', updatedAt: '2026-09-10T08:00:00Z' }
         ],
         getActivityHeatmap: async () => heatmap,
         getStudyMomentum: async () => overrides.momentum !== undefined ? overrides.momentum : {
-          attemptsThisWeek: 5, attemptsLastWeek: 3,
-          accuracyThisWeek: 78, accuracyLastWeek: 71,
-          accuracyDelta: 7, attemptsDelta: 2, minutesThisWeek: 96
+          notesThisWeek: 5, notesLastWeek: 3, notesDelta: 2,
+          reviewsThisWeek: 78, reviewsLastWeek: 71, reviewsDelta: 7,
+          answersThisWeek: 4, answersLastWeek: 1, answersDelta: 3
         }
       };
 
@@ -687,25 +673,25 @@ console.log('\n=== Responsive + layout safety ===');
         $('.dash-focus-title').textContent.trim());
 
       check('4 primary metrics render', $$('.dash-primary-grid .dash-stat').length === 4);
-      check('8 secondary tiles render', $$('.dash-secondary-grid .dash-mini').length === 8);
-      check('9 launchpad actions in 3 groups',
-        $$('.dash-lp-group').length === 3 && $$('.dash-lp-card').length === 9);
-      check('all three charts are handed a container',
-        r.chartCalls.length === 3 && r.chartCalls.every(id => !!doc.getElementById(id)),
-        r.chartCalls.join(','));
+      check('4 secondary tiles render', $$('.dash-secondary-grid .dash-mini').length === 4);
+      check('8 launchpad actions in 3 groups',
+        $$('.dash-lp-group').length === 3 && $$('.dash-lp-card').length === 8);
+      check('retired analytics are not requested or rendered', r.chartCalls.length === 0 && !doc.querySelector('.dash-charts'));
       check('icon refresh is requested after render', r.iconsRefreshed());
 
       // ---- the numbers on screen are the numbers from the data layer
+      const primaryText = $$('.dash-stat').map(b => b.textContent.replace(/\s+/g, ' ').trim());
       const miniText = $$('.dash-mini').map(b => b.textContent.replace(/\s+/g, ' ').trim());
       check('written-answer count is displayed',
-        miniText.some(t => t.startsWith('4') && t.includes('Written answers')), miniText.join(' | '));
+        primaryText.some(t => t.startsWith('4') && t.includes('Written answers')), miniText.join(' | '));
       check('AI-lesson count is displayed',
-        miniText.some(t => t.startsWith('15') && t.includes('AI lessons')));
+        primaryText.some(t => t.startsWith('15') && t.includes('AI lessons')));
       check('saved-exam count is displayed',
         miniText.some(t => t.startsWith('2') && t.includes('Saved exams')));
-      check('accuracy tile shows 75%',
-        $$('.dash-stat-value').some(el => el.textContent.trim() === '75%'),
-        $$('.dash-stat-value').map(e => e.textContent.trim()).join(','));
+      check('notes tile shows the actual saved count',
+        $$('.dash-stat').some(el => el.textContent.includes('Study notes') && el.querySelector('.dash-stat-value').textContent.trim() === '6'));
+      check('no retired entry points or visible copy render', !/quiz|MCQs|5-Min Drill/i.test(doc.body.textContent) &&
+        !/create-quiz|quiz-player|quiz-result|quiz-history|launchQuickDrill/.test(doc.body.innerHTML));
       check('streak ring shows 9', $('.dash-ring-value').textContent.trim() === '9');
 
       // ---- rings
@@ -755,13 +741,13 @@ console.log('\n=== Responsive + layout safety ===');
         $$('.dash-hm-weeks .dash-hm-cell:not(.is-pad)').every(c => !!c.getAttribute('title')));
 
       // ---- deltas
-      check('positive attempts delta renders as up',
+      check('positive learning delta renders as up',
         $$('.dash-delta.up').length >= 1);
       check('delta text carries the value',
         $$('.dash-delta').some(d => d.textContent.includes('2')));
 
       // ---- escaping, against a real payload in the data
-      check('quiz title payload is escaped, not parsed',
+      check('note title payload is escaped, not parsed',
         $$('img').length === 0 && doc.body.innerHTML.includes('&lt;img src=x'),
         `${$$('img').length} img elements leaked into the DOM`);
 
@@ -816,17 +802,14 @@ console.log('\n=== Responsive + layout safety ===');
       // =====================================================================
       const fresh = await renderDashboard({
         stats: {
-          totalQuizzesTaken: 0, questionsCompleted: 0, correctAnswers: 0,
-          overallAccuracy: 0, averageScore: 0, bestScore: 0, savedInLibrary: 0,
-          savedBookmarksCount: 0, dayStreak: 1, totalNotesCount: 0,
+          dayStreak: 1, totalNotesCount: 0,
           totalFlashcardDecks: 0, totalCustomCards: 0, totalCardReviews: 0,
           dueCardsToday: 0, answerCount: 0, teacherCount: 0, savedExamCount: 0
         },
-        quizzes: [],
         notes: [],
-        momentum: { attemptsThisWeek: 0, attemptsLastWeek: 0, accuracyThisWeek: 0,
-                    accuracyLastWeek: 0, accuracyDelta: null, attemptsDelta: null,
-                    minutesThisWeek: 0 },
+        momentum: { notesThisWeek: 0, notesLastWeek: 0, notesDelta: null,
+                    reviewsThisWeek: 0, reviewsLastWeek: 0, reviewsDelta: null,
+                    answersThisWeek: 0, answersLastWeek: 0, answersDelta: null },
         profile: null
       });
       const f = (sel) => fresh.doc.querySelector(sel);
@@ -834,13 +817,13 @@ console.log('\n=== Responsive + layout safety ===');
 
       check('new user gets the onboarding path', !!f('.dash-onboard'));
       check('onboarding path has 4 ordered steps', fAll('.dash-step').length === 4);
-      check('new user focus is "create your first quiz"',
+      check('new user focus is "create your first study note"',
         f('.dash-focus').className.includes('dash-focus-start'));
       check('missing profile shows the completion nudge',
         !!f('.dash-id-chip-action'));
       check('no delta pills without a prior week', fAll('.dash-delta').length === 0);
       check('empty note vault shows one empty state, not a broken list',
-        fAll('.dash-empty').length === 2 && !f('.dash-note-list'),
+        fAll('.dash-empty').length === 1 && !f('.dash-note-list'),
         `${fAll('.dash-empty').length} empty states`);
       check('nothing due shows the all-clear, not a CTA',
         !!f('.dash-allclear') && !f('.dash-due-cta'));

@@ -420,7 +420,7 @@ Return ONLY a valid, parseable JSON object matching this exact schema:
           }
         }
       } catch (apiErr) {
-        console.warn('Gemini evaluation API error, falling back to deterministic tutor engine:', apiErr);
+        console.warn('AI evaluation API error, falling back to deterministic tutor engine:', apiErr);
       }
     }
 
@@ -1305,7 +1305,7 @@ Return ONLY valid JSON:
         }
       } else {
         // Fallback placeholder with clear guidance for user
-        pageText = `[Image ${i + 1}: ${file.name} uploaded]\n(Note: Connect your Gemini API Key in Settings to enable real-time handwriting vision OCR, or type/edit your answer in the review box below.)`;
+        pageText = `[Image ${i + 1}: ${file.name} uploaded]\n(Note: Configure your selected AI provider in Settings to enable handwriting vision OCR, or type/edit your answer in the review box below.)`;
       }
 
       combinedText += (total > 1 ? `\n\n--- [PAGE ${i + 1}] ---\n` : '') + pageText.trim() + '\n';
@@ -1369,7 +1369,7 @@ Return ONLY valid JSON:
             pageText = `[Scanned Page ${p}: Image quality too low for automated transcription. Please review below.]`;
           }
         } else {
-          pageText = `[Scanned Page ${p}: Handwriting detected. Enter your Gemini API Key in Settings for auto-transcription, or review/type below.]`;
+          pageText = `[Scanned Page ${p}: Handwriting detected. Configure your selected AI provider in Settings for auto-transcription, or review/type below.]`;
         }
       }
 

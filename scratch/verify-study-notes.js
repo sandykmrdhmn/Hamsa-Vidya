@@ -17,14 +17,13 @@ function setup() {
   w.console={...console,warn(){},error(){}};
   for(const name of ['js/sanitizer.js','js/ui-utils.js','assets/vendor/marked.min.js','js/gemini-service.js'])w.eval(read(name));
   w.UIUtils.buildViewHero=()=>'';
-  w.app={currentView:'study-notes',refreshIcons(){},showToast:(...args)=>toasts.push(args),beginGeneration:()=>true,endGeneration(){},isGenerationCancelled:()=>false,handleGenerationProgress(){},navigate(view){this.currentView=view;},startQuiz(id){this.quiz=id;}};
+  w.app={currentView:'study-notes',refreshIcons(){},showToast:(...args)=>toasts.push(args),beginGeneration:()=>true,endGeneration(){},isGenerationCancelled:()=>false,handleGenerationProgress(){},navigate(view){this.currentView=view;}};
   w.getAllNotes=async()=>clone(records);w.getNoteById=async id=>clone(records.find(item=>item.id===Number(id))||null);
   w.updateNote=async(id,data)=>{const found=records.find(item=>item.id===Number(id));if(!found)throw Error('Note not found');saves.push({id,data:clone(data)});Object.assign(found,clone(data));return clone(found);};
   w.updateNoteAnnotations=async(id,annotations)=>w.updateNote(id,{annotations});
   w.updateNoteMastery=async(id,masteredSections)=>w.updateNote(id,{masteredSections});
   w.saveNewNote=async data=>{const id=records.length+1;records.push({id,...clone(data)});return id;};
-  w.saveNewQuiz=async(meta,questions)=>{w.savedQuiz={meta,questions};return 9;};
-  const svc=w.geminiService;svc.candidateModels=['gemini-3.6-flash'];svc.getApiKey=()=>'';svc.isAiAvailable=()=>true;svc.discoverAvailableModels=async()=>[];
+  const svc=w.geminiService;svc.candidateModels=['gemini-2.5-flash'];svc.getApiKey=()=>'';svc.isAiAvailable=()=>true;svc.discoverAvailableModels=async()=>[];
   w.aiClient={fetchGenerateContent:async(model,payload)=>{prompts.push(payload.contents[0].parts[0].text);return {ok:true,json:async()=>({candidates:[{finishReason:'STOP',content:{parts:[{text:JSON.stringify({sections:[section()],glossaryTerms:[]})}]}}]})};}};
   w.eval(read('js/views/study-notes.js'));w.eval(read('js/pdf-generator.js'));
   return {dom,w,svc,view:w.studyNotesView,records,saves,toasts,prompts};
@@ -70,7 +69,7 @@ async function test(name,callback) {
   });
   await test('Local formatting cannot pretend it translated a document',async({svc})=>{
     svc.isAiAvailable=()=>false;
-    await assert.rejects(svc.generateStructuredStudyBook({topic:'Study',rawText:'English source',settings:{language:'HINDI'}}),/Changing the source language needs Gemini/);
+    await assert.rejects(svc.generateStructuredStudyBook({topic:'Study',rawText:'English source',settings:{language:'HINDI'}}),/Changing the source language needs AI/);
   });
   await test('Revision covers late sections and does not swallow cancellation',async({svc,w})=>{
     const chapters=[section(),section('sec-2','LAST_SECTION_SENTINEL')];let prompts=[];
@@ -82,13 +81,6 @@ async function test(name,callback) {
     const chapters=Array.from({length:20},(_,i)=>({...section(`sec-${i}`,`Topic ${i}`),content:'Common material '.repeat(600)}));chapters[19].content='The ZX_UNIQUE_LATE process changes energy.';
     let prompt;w.aiClient.fetchGenerateContent=async(model,payload)=>{prompt=payload.contents[0].parts[0].text;return {ok:true,json:async()=>({candidates:[{content:{parts:[{text:'Source-based answer'}]}}]})};};
     await svc.askAiAboutNote({sections:chapters,noteTopic:'Study',userQuestion:'ZX_UNIQUE_LATE'});assert.ok(prompt.includes('ZX_UNIQUE_LATE process'));assert.ok(prompt.includes('sec-19'));
-  });
-  await test('Quiz types and languages are respected in efficient multi-question batches',async({svc,w})=>{
-    let requests=0;w.aiClient.fetchGenerateContent=async(model,payload)=>{
-      const prompt=payload.contents[0].parts[0].text;assert.ok(prompt.includes('HINDI'));const targets=JSON.parse(prompt.match(/TARGETS: (.*)\n/)[1]);requests++;
-      return {ok:true,json:async()=>({candidates:[{content:{parts:[{text:JSON.stringify({questions:targets.map(target=>({slot:target.slot,questionText:`Question ${target.slot}`,options:target.type==='TRUE_FALSE'?['सही','गलत']:['A','B','C','D'],correctAnswerIndex:0,explanation:'Source-supported reasoning'}))})}]}}]})};
-    };
-    const result=await svc.generateStudyQuiz({sections:[section()],questionCount:10,questionType:'MIXED',language:'HINDI'});assert.equal(requests,3);assert.equal(result.questions.length,10);assert.equal(result.questions[1].options.length,2);assert.equal(result.questions[0].options.length,4);
   });
   await test('Editing then immediately Done saves the latest text and supports Undo',async({view,w,records})=>{
     await view.openNote(1);const previous=view.activeNote.sections[0].content;view.isEditMode=true;view.onSectionTextEdit('sec-1','MY NEW EXPLANATION');await view.toggleEditMode();
@@ -104,7 +96,7 @@ async function test(name,callback) {
   await test('Immediate navigation persists reading position and unfinished recall drafts',async({view,records})=>{
     await view.openNote(1);view.activeNote.readingPosition={sectionId:'sec-1'};view.keepRecallDraft('sec-1','My unfinished explanation');await view.backToDashboard();
     assert.equal(records[0].readingPosition.sectionId,'sec-1');assert.equal(records[0].recallAnswers['sec-1'].draft,'My unfinished explanation');
-    await view.openNote(1);assert.equal(view.microQuizAnswers['sec-1'].draft,'My unfinished explanation');
+    await view.openNote(1);assert.equal(view.recallAnswers['sec-1'].draft,'My unfinished explanation');
   });
   await test('Chat storage failure keeps a received answer and warns separately',async({view,svc,w,toasts})=>{
     await view.openNote(1);view.toggleAskAiDrawer();svc.askAiAboutNote=async()=> 'Received answer';w.updateNote=async()=>{throw Error('Storage full');};w.document.getElementById('ask-ai-input-field').value='Question';await view.sendAiMessage();
@@ -114,14 +106,7 @@ async function test(name,callback) {
     await view.openNote(1);const calls=[],printWindow={document:{body:{textContent:''}},close(){calls.push('close');}};
     w.open=()=>{calls.push('open');return printWindow;};view.flushAutoSave=async()=>calls.push('save');w.pdfGenerator.exportStudyNotesBookletPdf=(note,reserved)=>{assert.equal(reserved,printWindow);calls.push('export');};
     await view.exportStudyNotesPdf(1);assert.deepEqual(calls,['open','save','export']);
-    w.geminiService.generateStudyQuiz=async()=>({questions:[{questionText:'Source question',options:['A','B','C','D'],correctAnswerIndex:0,explanation:'Reason'}]});
-    w.pdfGenerator.exportPrintableQuizPdf=(quiz,questions,reserved)=>{assert.equal(reserved,printWindow);assert.equal(questions.length,1);calls.push('quiz-export');};await view.exportPrintableQuizPrompt(1);assert.equal(calls.at(-1),'quiz-export');
-    w.geminiService.generateStudyQuiz=async()=>{throw new w.DOMException('Cancelled','AbortError');};await view.exportPrintableQuizPrompt(1);assert.equal(calls.at(-1),'close');
     w.open=()=>null;await view.exportStudyNotesPdf(1);assert.ok(toasts.some(item=>item[0].includes('Allow pop-ups')));
-  });
-  await test('Quiz generation rejects duplicated questions within one response',async({svc})=>{
-    svc._studyRequest=async(prompt,options)=>{assert.equal(options.validate({questions:[0,1].map(slot=>({slot,questionText:'Same question',options:['A','B','C','D'],correctAnswerIndex:0,explanation:'Reason'}))}),false);throw Error('Duplicate response rejected');};
-    await assert.rejects(svc.generateStudyQuiz({sections:[section()],questionCount:2}),/Duplicate/);
   });
   await test('Save failures keep the editor draft and block note switching until retry',async({view,w,records})=>{
     await view.openNote(1);view.onSectionTextEdit('sec-1','KEEP_DRAFT');const update=w.updateNote;w.updateNote=async()=>{throw Error('Storage full');};
@@ -132,16 +117,18 @@ async function test(name,callback) {
     await view.openNote(1);view.onSectionTextEdit('sec-1','FIRST_EDIT');const hold=deferred(),update=w.updateNote;let first=true;
     w.updateNote=async(id,data)=>{if(first){first=false;await hold.promise;}return update(id,data);};const pending=view.flushAutoSave();await Promise.resolve();view.onSectionTextEdit('sec-1','SECOND_EDIT');hold.resolve();await pending;assert.equal(view._dirty,true);await view.flushAutoSave();assert.equal(records[0].sections[0].content,'SECOND_EDIT');
   });
-  await test('Dashboard AI Quiz opens a real configuration dialog',async({view,w})=>{
-    await view.render();await view.openQuizModalForNote(1);assert.ok(w.document.querySelector('[role=dialog]'));assert.ok(w.document.querySelector('.study-chapter-picker input'));
+  await test('Dashboard and reader keep study actions without a quiz generator',async({view,w})=>{
+    await view.render();assert.ok(!/quiz/i.test(w.document.body.textContent));
+    await view.openNote(1);assert.ok(w.document.querySelector('.study-recall'));assert.ok(w.document.body.textContent.includes('Ask AI'));
+    assert.equal(typeof view.launchGeneratedQuizForNote,'undefined');assert.equal(typeof view.openQuizModal,'undefined');
   });
   await test('Review marks report successful storage only and do not claim knowledge mastery',async({view,w,toasts,records})=>{
     await view.openNote(1);w.updateNoteMastery=async()=>{throw Error('Storage full');};await view.toggleSectionMastery('sec-1');assert.equal(view.activeNote.masteredSections?.length||0,0);assert.ok(toasts.some(item=>item[0].includes('Review status could not be saved')));
     w.updateNoteMastery=async(id,masteredSections)=>w.updateNote(id,{masteredSections});await view.toggleSectionMastery('sec-1');assert.deepEqual(records[0].masteredSections,['sec-1']);assert.ok(!view.container.textContent.includes('Topic Mastery'));
   });
   await test('Micro recall and saved attempts are isolated by note',async({view})=>{
-    await view.openNote(1);const first=view.getOrGenerateSectionQuiz(view.activeNote.sections[0],0,view.activeNote);view.keepRecallDraft('sec-1','FIRST NOTE');await view.openNote(2);assert.equal(view.microQuizAnswers['sec-1'],undefined);
-    const other={...view.activeNote.sections[0],recall:null};assert.ok(view.getOrGenerateSectionQuiz(other,0,view.activeNote).question.includes('Light'));assert.ok(first.expectedPoints.length);
+    await view.openNote(1);const first=view.getSectionRecall(view.activeNote.sections[0],0,view.activeNote);view.keepRecallDraft('sec-1','FIRST NOTE');await view.openNote(2);assert.equal(view.recallAnswers['sec-1'],undefined);
+    const other={...view.activeNote.sections[0],recall:null};assert.ok(view.getSectionRecall(other,0,view.activeNote).question.includes('Light'));assert.ok(first.expectedPoints.length);
   });
   await test('Hindi and overlapping glossary terms produce safe native controls',({view,w})=>{
     const html=view.injectGlossarySpans('प्रकाश संश्लेषण creates energy. Energy transfer matters.',[{term:'प्रकाश संश्लेषण'},{term:'Energy transfer'},{term:'Energy'}]);const box=w.document.createElement('div');box.innerHTML=html;
@@ -166,7 +153,7 @@ async function test(name,callback) {
   });
   await test('Tutor history and active recall feedback are saved and reload',async({view,w,svc,records})=>{
     await view.openNote(1);svc.askAiAboutNote=async()=> 'Specific feedback';w.document.getElementById('ask-ai-input-field').value='My doubt';await view.sendAiMessage();assert.equal(records[0].chatHistory.length,2);
-    w.document.getElementById('recall-sec-1').value='My explanation';await view.checkRecall('sec-1',true);await view.openNote(2);await view.openNote(1);assert.equal(view.askAiMessages.length,2);assert.equal(view.microQuizAnswers['sec-1'].draft,'My explanation');
+    w.document.getElementById('recall-sec-1').value='My explanation';await view.checkRecall('sec-1',true);await view.openNote(2);await view.openNote(1);assert.equal(view.askAiMessages.length,2);assert.equal(view.recallAnswers['sec-1'].draft,'My explanation');
   });
   await test('Source references open the requested original page and OCR is labelled',async({view,w,records})=>{
     records[0].originalSource={text:'OCR text',pages:[{fileName:'Chapter.pdf',page:2,text:'OCR text',method:'OCR'}],files:[{name:'Chapter.pdf',type:'PDF',data:'data:application/pdf;base64,JVBERi0xLjc='}]};await view.openNote(1);view.openSourceReference('Chapter.pdf',2);await view.render();const iframe=w.document.querySelector('iframe');assert.ok(iframe.src.endsWith('#page=2'));assert.ok(w.document.querySelector('.study-original').textContent.includes('OCR transcription'));

@@ -331,9 +331,11 @@ class GurukulWisdomEngine {
 
   /**
    * AI Gurukul Contemplation (AI चिन्तन)
-   * Connects to Google Gemini API (if available) or synthesizes an instant custom Vedic shloka.
+   * Uses the selected AI provider when configured, or cycles saved wisdom locally.
    */
   async generateAiWisdom() {
+    if(this._wisdomPending)return;
+    this._wisdomPending=true;
     const btn = document.getElementById('ai-wisdom-btn');
     if (btn) {
       btn.classList.add('loading');
@@ -345,7 +347,10 @@ class GurukulWisdomEngine {
     const targetExam = studentProfile && studentProfile.targetExams && studentProfile.targetExams[0] ? studentProfile.targetExams[0] : 'UPSC / Competitive Exams';
 
     try {
-      if (window.geminiService && window.geminiService.apiKey) {
+      const provider=window.aiClient?.getProvider?.() || 'gemini';
+      await window.aiClient?.probeServerKey?.(provider);
+      if((window.aiClient?.getProvider?.() || 'gemini')!==provider)throw new DOMException('AI selection changed.','AbortError');
+      if (window.geminiService?.isAiAvailable()) {
         const prompt = `You are an enlightened Ancient Indian Rishi / Guru in a royal Vedic Gurukul advising an aspiring student preparing for competitive exams like "${targetExam}".
 Provide ONE profound, authentic, inspirational Sanskrit Subhashita Shloka with precise Devanagari script, source reference, lucid Hindi Bhavartha, and modern English mindset guidance.
 Format EXACTLY as JSON:
@@ -357,11 +362,20 @@ Format EXACTLY as JSON:
   "english": "Modern motivational takeaway for students",
   "tag": "Focus area tag"
 }`;
-        const rawResponse = await window.geminiService.generateContent(prompt, { temperature: 0.7 });
+        const properties=Object.fromEntries(['source','category','sanskrit','hindi','english','tag'].map(key=>[key,{type:'string'}]));
+        const response=await window.aiClient.fetchGenerateContent(window.geminiService.getActiveModel(),{
+          contents:[{parts:[{text:prompt}]}],generationConfig:{maxOutputTokens:1200,responseMimeType:'application/json'}
+        },{provider,apiKey:window.geminiService.getApiKey(),stage:'wisdom'});
+        if(!response.ok)throw window.aiClient.createError?await window.aiClient.createError(response):new Error('AI wisdom request failed.');
+        const body=await response.json(),candidate=body.candidates?.[0];
+        if(body.promptFeedback?.blockReason || (candidate?.finishReason && candidate.finishReason!=='STOP'))throw new Error('AI wisdom response was incomplete.');
+        const rawResponse=(candidate?.content?.parts||[]).filter(part=>!part.thought).map(part=>part.text||'').join('');
         const jsonMatch = rawResponse.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
+          if(!Object.keys(properties).every(key=>typeof parsed[key]==='string'&&parsed[key].trim()))throw new Error('AI wisdom response was incomplete.');
           parsed.id = Date.now();
+          parsed.generationProvider=provider;parsed.generationModel=body.model || window.geminiService.getActiveModel();
           this.shlokas.unshift(parsed);
           this.currentIndex = 0;
           if (window.app && window.app.showToast) {
@@ -380,6 +394,7 @@ Format EXACTLY as JSON:
     } catch (e) {
       this.nextShloka();
     } finally {
+      this._wisdomPending=false;
       if (btn) {
         btn.classList.remove('loading');
         btn.innerHTML = `<i data-lucide="sparkles" style="width:14px;height:14px;"></i> <span>AI चिन्तन (New)</span>`;
@@ -392,8 +407,8 @@ Format EXACTLY as JSON:
   /**
    * Determine student's Vedic Scholarship Title & Sadhana Level
    */
-  getSadhanaLevel(quizzesCount = 0, accuracy = 0) {
-    if (quizzesCount >= 15 && accuracy >= 75) {
+  getSadhanaLevel(studyActions = 0, activeDays = 0) {
+    if (studyActions >= 15 && activeDays >= 7) {
       return {
         title: "महाविद्वान् / आचार्य",
         enTitle: "Vedic Grandmaster Scholar",
@@ -401,9 +416,9 @@ Format EXACTLY as JSON:
         auraColor: "#F59E0B",
         badge: "👑 स्वर्ण पदवी",
         diyaFlickerRate: "1.2s",
-        streakDays: Math.max(5, quizzesCount)
+        streakDays: Math.max(5, activeDays)
       };
-    } else if (quizzesCount >= 8) {
+    } else if (studyActions >= 8) {
       return {
         title: "विद्यालंकार",
         enTitle: "Adorned with Knowledge",
@@ -411,9 +426,9 @@ Format EXACTLY as JSON:
         auraColor: "#10B981",
         badge: "🌿 रजत पदवी",
         diyaFlickerRate: "1.8s",
-        streakDays: Math.max(3, quizzesCount)
+        streakDays: Math.max(3, activeDays)
       };
-    } else if (quizzesCount >= 3) {
+    } else if (studyActions >= 3) {
       return {
         title: "अध्येता",
         enTitle: "Diligent Vedic Scholar",
@@ -421,7 +436,7 @@ Format EXACTLY as JSON:
         auraColor: "#6366F1",
         badge: "🪶 ज्ञान साधक",
         diyaFlickerRate: "2.4s",
-        streakDays: Math.max(2, quizzesCount)
+        streakDays: Math.max(2, activeDays)
       };
     } else {
       return {
@@ -459,17 +474,17 @@ Format EXACTLY as JSON:
     container.innerHTML = `
       <div class="gurukul-shloka-flow animate-shloka-fade">
         <div class="gurukul-devanagari-quote">
-          “ ${shloka.sanskrit.replace(/\n/g, '<span class="shloka-line-break"> </span>')} ”
+          “ ${SecurityUtils.escapeHtml(shloka.sanskrit).replace(/\n/g, '<span class="shloka-line-break"> </span>')} ”
         </div>
 
         <div class="gurukul-bhavartha-stream">
           <div class="bhavartha-row hindi-row">
             <span class="lang-dot hi-dot">हिन्दी</span>
-            <span class="bhavartha-text">${shloka.hindi}</span>
+            <span class="bhavartha-text">${SecurityUtils.escapeHtml(shloka.hindi)}</span>
           </div>
           <div class="bhavartha-row english-row">
             <span class="lang-dot en-dot">English</span>
-            <span class="bhavartha-text">${shloka.english}</span>
+            <span class="bhavartha-text">${SecurityUtils.escapeHtml(shloka.english)}</span>
           </div>
         </div>
       </div>

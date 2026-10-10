@@ -1,7 +1,7 @@
 /**
  * HAMSA VIDYA (हंस विद्या) — Dashboard / Command Centre
  *
- * Aggregates analytics from the Quiz engine, Study Notes vault, Flashcard SRS,
+ * Aggregates activity from the Study Notes vault, Flashcard SRS,
  * Answer Writing studio and AI Teacher.
  *
  * LAYOUT RATIONALE
@@ -16,7 +16,6 @@
  *   5. AI advisor     — existing personalised guidance
  *   6. Consistency    — activity heatmap, which rewards showing up daily
  *   7. Analytics      — primary metrics with rings, secondary compact
- *   8. Charts         — accuracy, trend, subject mastery
  *   9. Recent activity — what you last touched
  *
  * Every number shown comes from IndexedDB. Nothing is decorative filler.
@@ -32,16 +31,13 @@ class DashboardView {
     if (!this.container) return;
 
     // Fetch everything in parallel — these are independent reads.
-    const [stats, analytics, allQuizzes, allNotes, heatmap, momentum] = await Promise.all([
+    const [stats, allNotes, heatmap, momentum] = await Promise.all([
       getDashboardStats(),
-      getAnalyticsData(),
-      getAllQuizzes().catch(() => []),
       getAllNotes().catch(() => []),
       typeof getActivityHeatmap === 'function' ? getActivityHeatmap(84).catch(() => null) : null,
       typeof getStudyMomentum === 'function' ? getStudyMomentum().catch(() => null) : null
     ]);
 
-    const recentQuizzes = allQuizzes.slice(0, 5);
     const recentNotes = allNotes.slice(0, 3);
 
     const profile = window.examProfileManager
@@ -49,11 +45,10 @@ class DashboardView {
       : null;
     const firstName = (window.examProfileManager && window.examProfileManager.getStudentFirstName()) || 'Scholar';
     const sadhana = window.gurukulWisdomEngine
-      ? window.gurukulWisdomEngine.getSadhanaLevel(stats.totalQuizzesTaken, stats.overallAccuracy)
+      ? window.gurukulWisdomEngine.getSadhanaLevel(stats.totalNotesCount + stats.totalCardReviews + (stats.answerCount || 0) + (stats.teacherCount || 0), stats.dayStreak)
       : { title: 'जिज्ञासु', badge: '✨ नव प्रवेशी', enTitle: 'Curious Seeker', level: 1 };
 
-    const isNewUser = stats.totalQuizzesTaken === 0
-      && stats.totalNotesCount === 0
+    const isNewUser = stats.totalNotesCount === 0
       && stats.totalFlashcardDecks === 0;
 
     this.container.innerHTML = `
@@ -66,16 +61,9 @@ class DashboardView {
         ${this._buildAdvisorSection()}
         ${heatmap ? this._buildConsistencySection(heatmap, stats) : ''}
         ${this._buildMetricsSection(stats, momentum)}
-        ${this._buildChartsSection()}
         ${this._buildModuleSection(stats, recentNotes)}
-        ${this._buildRecentQuizzes(recentQuizzes)}
       </div>
     `;
-
-    // Charts
-    HamsaCharts.renderDonutChart('chart-donut-container', analytics.donut);
-    HamsaCharts.renderTrendLineChart('chart-trend-container', analytics.trend);
-    HamsaCharts.renderSubjectMasteryChart('chart-subject-container', analytics.subjects);
 
     if (window.aiAdvisorEngine) {
       window.aiAdvisorEngine.generateLiveAdvice(false)
@@ -183,37 +171,19 @@ class DashboardView {
         action: "app.navigate('flashcards')"
       };
     }
-    if (stats.totalQuizzesTaken === 0) {
-      return {
-        tone: 'start',
-        icon: 'sparkles',
-        eyebrow: 'Get started',
-        title: 'Turn your first PDF or notes into a quiz',
-        body: 'Upload a chapter and Hamsa will write exam-style MCQs from it, with explanations and page citations.',
-        cta: 'Create first quiz',
-        action: "app.navigate('create-quiz')"
-      };
+    if (stats.totalNotesCount === 0) {
+      return { tone: 'start', icon: 'book-open', eyebrow: 'Get started',
+        title: 'Create your first study note', body: 'Upload a chapter or paste material to build a structured revision guide.',
+        cta: 'Create a note', action: "app.navigate('study-notes')" };
     }
-    if (stats.overallAccuracy > 0 && stats.overallAccuracy < 60) {
-      return {
-        tone: 'improve',
-        icon: 'target',
-        eyebrow: 'Focus area',
-        title: `Accuracy is ${stats.overallAccuracy}% — worth a targeted drill`,
-        body: 'Re-attempt your weakest subject rather than new material. Fixing known gaps lifts scores faster than adding volume.',
-        cta: 'Run a 5-min drill',
-        action: 'app.launchQuickDrill()'
-      };
+    if ((stats.answerCount || 0) === 0) {
+      return { tone: 'improve', icon: 'pen-tool', eyebrow: 'Practise explaining',
+        title: 'Write your first answer', body: 'Put what you have learned into words and get feedback on your explanation.',
+        cta: 'Write an answer', action: "app.navigate('answer-writing')" };
     }
-    return {
-      tone: 'steady',
-      icon: 'trending-up',
-      eyebrow: 'Keep the momentum',
-      title: `${stats.dayStreak}-day streak — protect it today`,
-      body: 'A short session counts. Generate a quick drill or review a saved lesson to keep the streak alive.',
-      cta: 'Quick 5-min drill',
-      action: 'app.launchQuickDrill()'
-    };
+    return { tone: 'steady', icon: 'graduation-cap', eyebrow: 'Keep the momentum',
+      title: `${stats.dayStreak}-day streak — continue learning`, body: 'Review a saved lesson or ask the AI Teacher about a difficult concept.',
+      cta: 'Ask the AI Teacher', action: "app.navigate('ai-teacher')" };
   }
 
   _buildCommandCentre({ firstName, profile, sadhana, stats, momentum }) {
@@ -299,22 +269,22 @@ class DashboardView {
             <div class="dash-week">
               <div class="dash-week-title">This week</div>
               <div class="dash-week-row">
-                <span class="dash-week-label">Attempts</span>
+                <span class="dash-week-label">Notes added</span>
                 <span class="dash-week-value">
-                  ${momentum ? momentum.attemptsThisWeek : 0}
-                  ${this._deltaBadge(momentum && momentum.attemptsDelta)}
+                  ${momentum ? momentum.notesThisWeek : 0}
+                  ${this._deltaBadge(momentum && momentum.notesDelta)}
                 </span>
               </div>
               <div class="dash-week-row">
-                <span class="dash-week-label">Accuracy</span>
+                <span class="dash-week-label">Card reviews</span>
                 <span class="dash-week-value">
-                  ${momentum && momentum.attemptsThisWeek ? momentum.accuracyThisWeek + '%' : '—'}
-                  ${this._deltaBadge(momentum && momentum.accuracyDelta, '%')}
+                  ${momentum ? momentum.reviewsThisWeek : 0}
+                  ${this._deltaBadge(momentum && momentum.reviewsDelta)}
                 </span>
               </div>
               <div class="dash-week-row">
-                <span class="dash-week-label">Time on quizzes</span>
-                <span class="dash-week-value">${momentum ? momentum.minutesThisWeek : 0}m</span>
+                <span class="dash-week-label">Written answers</span>
+                <span class="dash-week-value">${momentum ? momentum.answersThisWeek : 0}</span>
               </div>
             </div>
           </aside>
@@ -341,7 +311,7 @@ class DashboardView {
   _buildOnboardingPath() {
     const steps = [
       { n: 1, icon: 'user-check', title: 'Set up your profile', body: 'Unlocks exam eligibility matching.', cta: 'Open profile', action: 'app.openProfileManagerModal()' },
-      { n: 2, icon: 'sparkles', title: 'Generate your first quiz', body: 'Upload a PDF chapter or paste notes.', cta: 'Create quiz', action: "app.navigate('create-quiz')" },
+      { n: 2, icon: 'book-open', title: 'Create your first study note', body: 'Upload a PDF chapter or paste notes.', cta: 'Create a note', action: "app.navigate('study-notes')" },
       { n: 3, icon: 'graduation-cap', title: 'Ask the AI Teacher', body: 'Any concept, explained from scratch.', cta: 'Try it', action: "app.navigate('ai-teacher')" },
       { n: 4, icon: 'zap', title: 'Build a flashcard deck', body: 'Spaced repetition locks it in.', cta: 'Open decks', action: "app.navigate('flashcards')" }
     ];
@@ -379,33 +349,20 @@ class DashboardView {
   // =========================================================================
   _buildLaunchpad(stats) {
     const groups = [
-      {
-        label: 'Learn',
-        accent: 'violet',
-        items: [
-          { icon: 'graduation-cap', title: 'AI Teacher', sub: 'Understand any concept', action: "app.navigate('ai-teacher')" },
-          { icon: 'book-open', title: 'Study Notes', sub: `${stats.totalNotesCount} in your vault`, action: "app.navigate('study-notes')" },
-          { icon: 'pen-tool', title: 'Answer Writing', sub: 'Mains-style evaluation', action: "app.navigate('answer-writing')" }
-        ]
-      },
-      {
-        label: 'Practise',
-        accent: 'emerald',
-        items: [
-          { icon: 'sparkles', title: 'Generate Quiz', sub: 'From PDF or notes', action: "app.navigate('create-quiz')", primary: true },
-          { icon: 'zap', title: '5-Min Drill', sub: 'Instant AI questions', action: 'app.launchQuickDrill()' },
-          { icon: 'layers', title: 'Flashcards', sub: stats.dueCardsToday > 0 ? `${stats.dueCardsToday} due today` : 'Spaced repetition', action: "app.navigate('flashcards')", badge: stats.dueCardsToday > 0 ? stats.dueCardsToday : null }
-        ]
-      },
-      {
-        label: 'Track',
-        accent: 'amber',
-        items: [
-          { icon: 'bell-ring', title: 'Exam Alerts', sub: 'Eligibility radar', action: "app.navigate('exam-alerts')" },
-          { icon: 'library', title: 'Library', sub: `${stats.savedBookmarksCount} bookmarked`, action: "app.navigate('library')" },
-          { icon: 'history', title: 'History', sub: 'Every attempt logged', action: "app.navigate('quiz-history')" }
-        ]
-      }
+      { label: 'Learn', accent: 'violet', items: [
+        { icon: 'graduation-cap', title: 'AI Teacher', sub: 'Understand any concept', action: "app.navigate('ai-teacher')" },
+        { icon: 'book-open', title: 'Study Notes', sub: `${stats.totalNotesCount} in your vault`, action: "app.navigate('study-notes')" },
+        { icon: 'library', title: 'Library', sub: 'Saved study material', action: "app.navigate('library')" }
+      ]},
+      { label: 'Practise', accent: 'emerald', items: [
+        { icon: 'layers', title: 'Flashcards', sub: stats.dueCardsToday > 0 ? `${stats.dueCardsToday} due today` : 'Spaced repetition', action: "app.navigate('flashcards')", badge: stats.dueCardsToday > 0 ? stats.dueCardsToday : null },
+        { icon: 'pen-tool', title: 'Answer Writing', sub: 'Get feedback on your answers', action: "app.navigate('answer-writing')" }
+      ]},
+      { label: 'Track', accent: 'amber', items: [
+        { icon: 'bell-ring', title: 'Exam Alerts', sub: 'Eligibility radar', action: "app.navigate('exam-alerts')" },
+        { icon: 'timer', title: 'Study Tools', sub: 'Plan focused sessions', action: "app.navigate('tools')" },
+        { icon: 'settings', title: 'Settings', sub: 'Your study preferences', action: "app.navigate('settings')" }
+      ]}
     ];
 
     return `
@@ -451,13 +408,13 @@ class DashboardView {
                   <span class="ai-badge-chip">AI Student Mentor</span>
                 </div>
                 <p class="ai-advisor-subtext">
-                  आपके परीक्षा फॉर्म योग्यता (Eligibility), अध्ययन प्रगति, कमजोर विषयों और परीक्षा तिथियों का सजीव AI विश्लेषण
+                  आपके परीक्षा फॉर्म योग्यता (Eligibility), अध्ययन गतिविधि और परीक्षा तिथियों का सजीव विश्लेषण
                 </p>
               </div>
             </div>
 
             <div class="ai-advisor-header-actions">
-              <button class="btn btn-secondary btn-sm" onclick="window.aiAdvisorEngine.generateLiveAdvice(true)" title="Re-evaluate progress, weak subjects & upcoming exam dates">
+              <button class="btn btn-secondary btn-sm" onclick="window.aiAdvisorEngine.generateLiveAdvice(true)" title="Refresh study activity and upcoming exam dates">
                 <i data-lucide="refresh-cw" style="width:13px;height:13px;"></i>
                 <span>Refresh AI Advice</span>
               </button>
@@ -509,7 +466,7 @@ class DashboardView {
           <div>
             <h2 class="dash-section-title">Consistency</h2>
             <p class="dash-section-sub">
-              Every quiz, note, flashcard review, written answer and AI lesson from the last 12 weeks.
+              Every note, flashcard review, written answer and AI lesson from the last 12 weeks.
             </p>
           </div>
           <div class="dash-consistency-stats">
@@ -569,39 +526,16 @@ class DashboardView {
     // Four headline numbers get rings; the rest are compact tiles. Previously
     // all eight were the same size, so nothing stood out.
     const primary = [
-      {
-        label: 'Accuracy', value: stats.overallAccuracy, suffix: '%',
-        pct: stats.overallAccuracy, icon: 'target', accent: 'violet',
-        caption: 'Correct of attempted',
-        delta: momentum ? momentum.accuracyDelta : null
-      },
-      {
-        label: 'Best score', value: stats.bestScore, suffix: '%',
-        pct: stats.bestScore, icon: 'trophy', accent: 'pink',
-        caption: 'Highest single attempt'
-      },
-      {
-        label: 'Attempts', value: stats.totalQuizzesTaken, suffix: '',
-        pct: Math.min(100, stats.totalQuizzesTaken * 5), icon: 'award', accent: 'indigo',
-        caption: 'Quizzes completed',
-        delta: momentum ? momentum.attemptsDelta : null
-      },
-      {
-        label: 'Questions', value: stats.questionsCompleted, suffix: '',
-        pct: Math.min(100, stats.questionsCompleted), icon: 'check-circle', accent: 'cyan',
-        caption: 'MCQs answered'
-      }
+      { label: 'Study notes', value: stats.totalNotesCount, suffix: '', pct: Math.min(100, stats.totalNotesCount * 5), icon: 'book-open', accent: 'violet', caption: 'Notes in your vault', delta: momentum ? momentum.notesDelta : null },
+      { label: 'Cards reviewed', value: stats.totalCardReviews, suffix: '', pct: Math.min(100, stats.totalCardReviews), icon: 'rotate-cw', accent: 'pink', caption: 'Recall sessions logged', delta: momentum ? momentum.reviewsDelta : null },
+      { label: 'Written answers', value: stats.answerCount ?? 0, suffix: '', pct: Math.min(100, (stats.answerCount || 0) * 5), icon: 'pen-tool', accent: 'indigo', caption: 'Writing practice saved', delta: momentum ? momentum.answersDelta : null },
+      { label: 'AI lessons', value: stats.teacherCount ?? 0, suffix: '', pct: Math.min(100, (stats.teacherCount || 0) * 5), icon: 'graduation-cap', accent: 'cyan', caption: 'Concepts explored' }
     ];
-
     const secondary = [
-      { label: 'Study notes', value: stats.totalNotesCount, icon: 'book-open', accent: 'amber', action: "app.navigate('study-notes')" },
       { label: 'Flashcard decks', value: stats.totalFlashcardDecks, icon: 'layers', accent: 'emerald', action: "app.navigate('flashcards')" },
-      { label: 'Cards reviewed', value: stats.totalCardReviews, icon: 'rotate-cw', accent: 'violet', action: "app.navigate('flashcards')" },
+      { label: 'Memory cards', value: stats.totalCustomCards, icon: 'credit-card', accent: 'violet', action: "app.navigate('flashcards')" },
       { label: 'Due today', value: stats.dueCardsToday, icon: 'clock', accent: stats.dueCardsToday > 0 ? 'orange' : 'slate', action: "app.navigate('flashcards')" },
-      { label: 'Written answers', value: stats.answerCount ?? 0, icon: 'pen-tool', accent: 'pink', action: "app.navigate('answer-writing')" },
-      { label: 'AI lessons', value: stats.teacherCount ?? 0, icon: 'graduation-cap', accent: 'cyan', action: "app.navigate('ai-teacher')" },
-      { label: 'Bookmarks', value: stats.savedBookmarksCount, icon: 'bookmark', accent: 'amber', action: "app.navigate('library', { tab: 'bookmarks' })" },
-      { label: 'Saved exams', value: stats.savedExamCount ?? 0, icon: 'bell-ring', accent: 'indigo', action: "app.navigate('exam-alerts')" }
+      { label: 'Saved exams', value: stats.savedExamCount ?? 0, icon: 'bell-ring', accent: 'amber', action: "app.navigate('exam-alerts')" }
     ];
 
     const esc = (s) => SecurityUtils.escapeHtml(String(s));
@@ -653,57 +587,7 @@ class DashboardView {
   }
 
   // =========================================================================
-  // 9. CHARTS
-  // =========================================================================
-  _buildChartsSection() {
-    return `
-      <section class="dash-charts reveal">
-        <div class="dash-section-head">
-          <div>
-            <h2 class="dash-section-title">Quiz performance</h2>
-            <p class="dash-section-sub">Accuracy breakdown, trajectory and subject strength.</p>
-          </div>
-        </div>
-
-        <div class="charts-grid">
-          <div class="chart-card">
-            <div class="chart-header">
-              <h3 class="chart-title">
-                <i data-lucide="pie-chart" style="width:17px;height:17px;color:var(--color-primary-light);"></i>
-                Accuracy ratio
-              </h3>
-              <span class="badge badge-muted">Breakdown</span>
-            </div>
-            <div id="chart-donut-container" class="chart-container"></div>
-          </div>
-
-          <div class="chart-card">
-            <div class="chart-header">
-              <h3 class="chart-title">
-                <i data-lucide="trending-up" style="width:17px;height:17px;color:var(--color-success);"></i>
-                Trend — last 10 attempts
-              </h3>
-              <span class="badge badge-muted">Trajectory</span>
-            </div>
-            <div id="chart-trend-container" class="chart-container"></div>
-          </div>
-        </div>
-
-        <div class="chart-card dash-subject-card">
-          <div class="chart-header">
-            <h3 class="chart-title">
-              <i data-lucide="bar-chart-3" style="width:17px;height:17px;color:var(--color-gold);"></i>
-              Subject mastery
-            </h3>
-            <span class="badge badge-primary">Domain analysis</span>
-          </div>
-          <div id="chart-subject-container"></div>
-        </div>
-      </section>
-    `;
-  }
-
-  // =========================================================================
+  // MODULE ACTIVITY
   // 10. MODULE ACTIVITY
   // =========================================================================
   _buildModuleSection(stats, recentNotes) {
@@ -711,11 +595,11 @@ class DashboardView {
 
     return `
       <section class="dash-modules reveal">
-        <div class="charts-grid">
+        <div class="dash-module-grid">
           <!-- Study notes -->
-          <div class="chart-card">
-            <div class="chart-header">
-              <h3 class="chart-title">
+          <div class="dash-module-card">
+            <div class="dash-module-header">
+              <h3 class="dash-module-title">
                 <i data-lucide="book-open" style="width:17px;height:17px;color:var(--color-gold);"></i>
                 Study notes
               </h3>
@@ -754,9 +638,9 @@ class DashboardView {
           </div>
 
           <!-- Flashcards / SRS -->
-          <div class="chart-card">
-            <div class="chart-header">
-              <h3 class="chart-title">
+          <div class="dash-module-card">
+            <div class="dash-module-header">
+              <h3 class="dash-module-title">
                 <i data-lucide="zap" style="width:17px;height:17px;color:var(--color-success);"></i>
                 Spaced repetition
               </h3>
@@ -800,72 +684,7 @@ class DashboardView {
   }
 
   // =========================================================================
-  // 11. RECENT QUIZZES
-  // =========================================================================
-  _buildRecentQuizzes(recentQuizzes) {
-    const esc = (s) => SecurityUtils.escapeHtml(s);
-
-    return `
-      <section class="dash-recent reveal">
-        <div class="dash-section-head">
-          <div>
-            <h2 class="dash-section-title">Recent quizzes</h2>
-            <p class="dash-section-sub">Pick up where you left off.</p>
-          </div>
-          <button class="btn btn-outline btn-sm" onclick="app.navigate('library')">
-            <span>View all</span>
-            <i data-lucide="arrow-right" style="width:15px;height:15px;"></i>
-          </button>
-        </div>
-
-        <div class="quiz-cards-list">
-          ${recentQuizzes.length === 0 ? `
-            <div class="dash-empty dash-empty-lg">
-              <i data-lucide="clipboard-list"></i>
-              <p class="dash-empty-title">No quizzes yet</p>
-              <p class="dash-empty-body">Ingest a PDF or paste study notes and Hamsa will write exam-style MCQs with explanations.</p>
-              <button class="btn btn-primary" onclick="app.navigate('create-quiz')">
-                <i data-lucide="plus"></i><span>Create your first quiz</span>
-              </button>
-            </div>
-          ` : recentQuizzes.map(q => `
-            <div class="quiz-list-item">
-              <div class="quiz-info">
-                <div class="quiz-item-title">${esc(q.title)}</div>
-                <div class="quiz-meta-row">
-                  <span class="badge badge-primary">${esc(q.subject)}</span>
-                  <span class="badge badge-muted">${esc(q.difficulty)}</span>
-                  <span class="badge badge-muted">${esc(q.quizMode)}</span>
-                  <span>${Number(q.totalQuestions) || 0} questions</span>
-                  <span>· ${UIUtils.formatDate(q.createdAt)}</span>
-                </div>
-              </div>
-
-              <div class="quiz-item-actions">
-                ${q.completedAt ? `
-                  <span class="badge ${q.percentage >= 70 ? 'badge-success' : 'badge-warning'}">
-                    ${q.percentage}%
-                  </span>
-                  <button class="btn btn-secondary btn-sm" onclick="app.viewQuizResult(${Number(q.id)})">
-                    <i data-lucide="bar-chart"></i><span>Results</span>
-                  </button>
-                ` : `
-                  <button class="btn btn-primary btn-sm" onclick="app.startQuiz(${Number(q.id)})">
-                    <i data-lucide="play"></i><span>Take quiz</span>
-                  </button>
-                `}
-                <button class="icon-btn" title="Export as PDF" onclick="app.exportQuizPdf(${Number(q.id)})">
-                  <i data-lucide="file-down" style="width:18px;height:18px;"></i>
-                </button>
-              </div>
-            </div>
-          `).join('')}
-        </div>
-      </section>
-    `;
-  }
-
-  // =========================================================================
+  // MOTION
   // MOTION
   // =========================================================================
 

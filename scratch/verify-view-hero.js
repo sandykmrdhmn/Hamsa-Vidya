@@ -39,13 +39,12 @@ const sw = read('sw.js');
 
 /** Views that must open with a shared hero, and the accent each one claims. */
 const HERO_VIEWS = [
-  { file: 'js/views/create-quiz.js', accent: 'emerald' },
+  { file: 'js/views/quiz.js', accent: 'indigo' },
   { file: 'js/views/study-notes.js', accent: 'violet' },
   { file: 'js/views/flashcards.js', accent: 'amber' },
   { file: 'js/views/answer-writing.js', accent: 'pink' },
   { file: 'js/views/exam-alerts.js', accent: 'orange' },
-  { file: 'js/views/library.js', accent: 'amber' },
-  { file: 'js/views/quiz-history.js', accent: 'indigo' },
+  { file: 'js/views/library.js', accent: 'emerald' },
   { file: 'js/views/tools.js', accent: 'cyan' },
   { file: 'js/views/settings.js', accent: 'slate' }
 ];
@@ -54,16 +53,7 @@ const HERO_VIEWS = [
  * Views that must NOT get a hero, and why. Asserted explicitly so that adding
  * one later is a deliberate decision rather than a reflex.
  */
-const NO_HERO_VIEWS = [
-  {
-    file: 'js/views/quiz-player.js',
-    reason: 'a timed question screen — a banner would push the question below the fold'
-  },
-  {
-    file: 'js/views/quiz-result.js',
-    reason: 'already opens with a purposeful score summary card'
-  }
-];
+const NO_HERO_VIEWS = [];
 
 /** The two reference heroes keep their own bespoke markup. */
 const REFERENCE_HEROES = [
@@ -90,8 +80,9 @@ console.log('\n=== Stylesheet wiring ===');
     'css/components/10-tools.css',
     'css/exam-alerts.css',
     'css/answer-writing.css',
-    'css/quiz.css',
+    'css/preferences.css',
     'css/dashboard.css',
+    'css/quiz.css',
     'css/ai-teacher/07-print-and-responsive.css'
   ];
   for (const sheet of mustPrecede) {
@@ -138,7 +129,7 @@ console.log('\n=== Every view is accounted for ===');
 
     // A hero that is built but never interpolated is the classic silent miss.
     check(`${name} interpolates the hero into its markup`,
-      /\$\{heroHtml\}/.test(src) || /\$\{UIUtils\.buildViewHero\(\{/.test(src) ||
+      /\$\{hero(?:Html)?\}/.test(src) || /\$\{[^}]*this\.hero\(\)[^}]*\}/.test(src) || /\$\{UIUtils\.buildViewHero\(\{/.test(src) ||
       /\$\{await this\._buildHero\(\)\}/.test(src) || /\$\{this\._buildHero/.test(src) ||
       /heroHtml = /.test(src) && /\$\{heroHtml\}/.test(src));
 
@@ -172,9 +163,7 @@ console.log('\n=== Old duplicated headers are gone ===');
     ['js/views/study-notes.js', 'study-hero-actions', 'CTA moved into the hero'],
     ['js/views/flashcards.js', 'hero-greeting', 'borrowed dashboard header dropped'],
     ['js/views/answer-writing.js', 'aw-header-row', 'title block moved into the hero'],
-    ['js/views/quiz-history.js', 'Quiz History & Attempt Log', 'old h2 title'],
     ['js/views/library.js', 'Study Library & Knowledge Base', 'old h2 title'],
-    ['js/views/create-quiz.js', 'Create New AI Mastery Quiz', 'old h2 title'],
     ['js/views/settings.js', 'Settings & Preferences', 'old h2 title']
   ];
   for (const [file, token, why] of removed) {

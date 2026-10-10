@@ -5,7 +5,7 @@ const assert = require('assert/strict');
 const { JSDOM } = require('jsdom');
 const read = file => fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
-const DEFAULT = 'gemini-3.6-flash';
+const DEFAULT = 'gemini-2.5-flash';
 let passed = 0, failed = 0;
 
 async function test(name, run) {
@@ -110,22 +110,63 @@ async function test(name, run) {
     assert.equal(w.localStorage.getItem('hamsa_gemini_api_key'), null);
     assert.ok(toasts.at(-1)[0].includes('removed'));
   });
-  await test('Personal key tests go directly to Google even with an enabled proxy; normal generation still uses proxy', async ({ view, input, calls, w }) => {
+  await test('Successful personal key tests save the verified connection and generation uses the same key', async ({ view, input, calls, w, svc }) => {
     await view.render(); input().value = 'fake-personal'; await view.testApiKey();
     const testCalls = calls.filter(call => !call.url.endsWith('/status'));
     assert.equal(testCalls.length, 2);
-    assert.ok(testCalls.every(call => call.url.startsWith('https://generativelanguage.googleapis.com/') && call.url.includes('key=fake-personal')));
+    assert.ok(testCalls.every(call => call.url.startsWith('https://generativelanguage.googleapis.com/') && !call.url.includes('key=') && !call.url.includes('fake-personal') && call.init.headers['x-goog-api-key'] === 'fake-personal'));
+    assert.equal(svc.getApiKey(), 'fake-personal');
     await w.aiClient.fetchGenerateContent(DEFAULT, { contents: [] });
-    assert.equal(calls.at(-1).url, `/api/gemini/${DEFAULT}`);
+    assert.ok(calls.at(-1).url.startsWith('https://generativelanguage.googleapis.com/') && !calls.at(-1).url.includes('key=') && !calls.at(-1).url.includes('fake-personal'));
+    assert.equal(calls.at(-1).init.headers['x-goog-api-key'], 'fake-personal');
+  });
+  await test('Failed verified-model persistence restores the previous key, model and candidates without reporting success', async ({ view, input, calls, w, svc, result }) => {
+    const alternative = 'gemini-3.5-flash';
+    svc.activateVerifiedConnection('old-working-fake-key', {
+      success: true, transport: 'DIRECT', model: alternative, availableModels: [DEFAULT, alternative]
+    });
+    const previousMetadata = w.localStorage.getItem('hamsa_gemini_verified_models');
+    const previousModels = Array.from(svc.candidateModels);
+    await view.render(); input().value = 'new-working-fake-key';
+    const originalSet = w.Storage.prototype.setItem;
+    let rejected = false;
+    w.Storage.prototype.setItem = function(name, value) {
+      if (name === 'hamsa_gemini_verified_models' && !rejected) {
+        rejected = true;
+        throw new Error('Storage full while saving verified model.');
+      }
+      return originalSet.call(this, name, value);
+    };
+    await view.testApiKey();
+    assert.equal(rejected, true);
+    assert.equal(svc.getApiKey(), 'old-working-fake-key');
+    assert.equal(svc.getActiveModel(), alternative);
+    assert.deepEqual(Array.from(svc.candidateModels), previousModels);
+    assert.equal(w.localStorage.getItem('hamsa_gemini_verified_models'), previousMetadata);
+    assert.ok(result().querySelector('.badge-error'));
+    assert.ok(result().textContent.includes('Storage full'));
+    assert.equal(input().value, 'new-working-fake-key');
+    await w.aiClient.fetchGenerateContent(undefined, { contents: [] });
+    assert.ok(!calls.at(-1).url.includes('key=') && !calls.at(-1).url.includes('old-working-fake-key'));
+    assert.equal(calls.at(-1).init.headers['x-goog-api-key'], 'old-working-fake-key');
   });
   await test('A cached successful proxy discovery cannot validate a bad personal key', async ({ view, svc, input, w, result }) => {
     await view.render(); await svc.discoverAvailableModels('');
+    svc.activateVerifiedConnection('old-working-fake-key', {
+      success: true, transport: 'DIRECT', model: DEFAULT, availableModels: [DEFAULT]
+    });
+    const previousMetadata = w.localStorage.getItem('hamsa_gemini_verified_models');
+    const previousModels = Array.from(svc.candidateModels);
     const original = w.fetch;
-    w.fetch = (url, init) => String(url).includes('key=invalid-fake')
+    w.fetch = (url, init) => init?.headers?.['x-goog-api-key'] === 'invalid-fake'
       ? Promise.resolve(Response.json({ error: { message: 'API key invalid' } }, { status: 400 })) : original(url, init);
     input().value = 'invalid-fake'; await view.testApiKey();
-    assert.ok(result().textContent.includes('invalid'));
+    assert.match(result().textContent, /Google rejected the Gemini API key or its permissions/i);
     assert.ok(result().querySelector('.badge-error'));
+    assert.equal(svc.getApiKey(), 'old-working-fake-key');
+    assert.equal(svc.getActiveModel(), DEFAULT);
+    assert.deepEqual(Array.from(svc.candidateModels), previousModels);
+    assert.equal(w.localStorage.getItem('hamsa_gemini_verified_models'), previousMetadata);
   });
   await test('Blank test input never silently uses an older saved key', async ({ w, svc, calls }) => {
     await w.aiClient.probeServerKey(); calls.length = 0;
@@ -135,7 +176,7 @@ async function test(name, run) {
   await test('Blank input with server credentials tests the proxy without leaking a saved key', async ({ svc, calls, w }) => {
     svc.setApiKey('old-fake-key'); await w.aiClient.probeServerKey();
     const res = await svc.testApiKey(''); assert.equal(res.success, true); assert.equal(res.transport, 'PROXY');
-    assert.ok(calls.every(call => !call.url.includes('old-fake-key')));
+    assert.ok(calls.every(call => !call.url.includes('old-fake-key') && !JSON.stringify(call.init).includes('old-fake-key') && !call.init.headers?.['x-goog-api-key']));
   });
   await test('HTTP 200 with empty, blocked, thinking-only, truncated or malformed content is not a verified connection', async ({ w, svc }) => {
     await w.aiClient.probeServerKey();
@@ -150,20 +191,20 @@ async function test(name, run) {
     w.aiClient.fetchGenerateContent = async () => new Response('not json', { status: 200 });
     assert.equal((await svc.testApiKey('')).success, false);
   });
-  await test('Changing spare personal-key test model does not overwrite the proxy model', async ({ view, svc, input, w }) => {
+  await test('Personal-key testing selects the first working discovered model', async ({ view, svc, input, w }) => {
     await view.render(); svc.setActiveModel(DEFAULT); input().value = 'fake';
     w.aiClient.fetchGenerateContent = async model => model === DEFAULT
       ? Response.json({ error: { message: 'Not available' } }, { status: 404 })
       : Response.json({ candidates: [{ finishReason: 'STOP', content: { parts: [{ text: 'PONG' }] } }] });
     svc.discoverAvailableModels = async () => [DEFAULT, 'gemini-3.5-flash'];
-    await view.testApiKey(); assert.equal(svc.getActiveModel(), DEFAULT);
+    await view.testApiKey(); assert.equal(svc.getActiveModel(), 'gemini-3.5-flash');
   });
   await test('Duplicate clicks start one test; re-render keeps pending state and places result in the current box', async ({ view, svc, w, result }) => {
     await view.render(); const pending = deferred(); let calls = 0;
     svc.testApiKey = () => { calls++; return pending.promise; };
     const work = view.testApiKey(); await view.testApiKey(); assert.equal(calls, 1);
     await view.setFontSize('LARGE'); assert.equal(w.document.getElementById('api-test-button').disabled, true);
-    pending.resolve({ success: true, message: 'Verified', model: DEFAULT, transport: 'PROXY' }); await work;
+    pending.resolve({ success: true, message: 'Verified', model: DEFAULT, availableModels: [DEFAULT], transport: 'PROXY' }); await work;
     assert.ok(result().textContent.includes('Verified'));
     assert.equal(w.document.getElementById('api-test-button').disabled, false);
   });
@@ -172,6 +213,17 @@ async function test(name, run) {
     const work = view.testApiKey(); input().value = 'changed'; input().dispatchEvent(new w.Event('input'));
     pending.resolve({ success: true, message: 'Old response', model: 'gemini-3.5-flash', transport: 'PROXY' }); await work;
     assert.equal(svc.getActiveModel(), DEFAULT); assert.equal(result().style.display, 'none');
+    assert.equal(svc.getApiKey(), '');
+    assert.equal(w.localStorage.getItem('hamsa_gemini_verified_models'), null);
+  });
+  await test('Programmatic key edits without input events cannot commit a stale successful test', async ({ view, svc, input, w }) => {
+    await view.render(); input().value = 'first-fake-key';
+    const pending = deferred(); svc.testApiKey = () => pending.promise;
+    const work = view.testApiKey(); input().value = 'second-fake-key';
+    pending.resolve({ success: true, message: 'Verified', model: DEFAULT, availableModels: [DEFAULT], transport: 'DIRECT' });
+    await work;
+    assert.equal(svc.getApiKey(), '');
+    assert.equal(w.localStorage.getItem('hamsa_gemini_verified_models'), null);
   });
   await test('Leaving Settings cancels its test and ignores a late response', async ({ view, svc, result }) => {
     await view.render(); const pending = deferred(); let signal;
@@ -189,6 +241,18 @@ async function test(name, run) {
     pending.resolve(Response.json({ candidates: [{ content: { parts: [{ text: 'PONG' }] } }] }));
     await assert.rejects(work, error => error.name === 'AbortError');
     assert.ok(calls <= 1); assert.equal(svc.getActiveModel(), DEFAULT);
+  });
+  await test('A connection test has an overall deadline including a stalled probe and does not save credentials', async ({ w, svc }) => {
+    const pending = deferred();
+    w.aiClient.probeServerKey = () => pending.promise;
+    const res = await svc.testApiKey('never-verified-fake-key', { testDeadlineMs: 20 });
+    assert.equal(res.success, false);
+    assert.ok(res.message.includes('timed out'));
+    assert.equal(svc.getApiKey(), '');
+    assert.equal(w.localStorage.getItem('hamsa_gemini_verified_models'), null);
+    pending.resolve(false);
+    await Promise.resolve();
+    assert.equal(svc.getApiKey(), '');
   });
   await test('Thrown test failures recover controls; API error text cannot inject HTML', async ({ view, svc, result, w }) => {
     await view.render(); svc.testApiKey = async () => { throw new Error('<img src=x onerror="bad()">'); };

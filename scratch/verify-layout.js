@@ -36,9 +36,9 @@ const sw = read('sw.js');
 
 /** Wrappers layout.css releases to 100% so they fill the shared column. */
 const RELEASED = [
-  'dash', 'ai-teacher-container', 'aw-container', 'tools-studio-wrapper',
-  'create-quiz-container', 'study-vault-container', 'settings-container',
-  'quiz-player-container', 'page-column'
+  'dash', 'quiz-workspace', 'ai-teacher-container', 'aw-container', 'tools-studio-wrapper',
+  'study-vault-container', 'settings-container',
+  'page-column'
 ];
 
 /**
@@ -57,17 +57,14 @@ const RELEASED = [
  */
 const VIEW_WRAPPERS = {
   'js/views/dashboard.js':      {},
+  'js/views/quiz.js':           {},
   'js/views/ai-teacher.js':     {},
-  'js/views/create-quiz.js':    {},
   'js/views/study-notes.js':    { accepted: ['textbook-sticky-bar'] },
   'js/views/flashcards.js':     { accepted: ['max-width: 1120px', 'max-width: 720px'] },
   'js/views/answer-writing.js': {},
   'js/views/library.js':        {},
-  'js/views/quiz-history.js':   {},
   'js/views/tools.js':          {},
   'js/views/settings.js':       { accepted: ['card p-6 text-center'] },
-  'js/views/quiz-player.js':    {},
-  'js/views/quiz-result.js':    { accepted: ['result-container'] },
   'js/views/exam-alerts.js':    { accepted: ['ea-error-state'], noWrapper: true }
 };
 
@@ -87,11 +84,11 @@ console.log('\n=== Stylesheet wiring ===');
   for (const sheet of [
     'css/main.css',
     'css/components/01-base-and-header.css',
-    'css/components/03-create-quiz.css',
+    'css/components/03-study-controls.css',
     'css/components/05-study-notes.css',
     'css/components/10-tools.css',
     'css/dashboard.css',
-    'css/quiz.css',
+    'css/preferences.css',
     'css/answer-writing.css',
     'css/ai-teacher/01-hero-and-input.css',
     'css/view-hero.css'
@@ -158,8 +155,7 @@ console.log('\n=== Every per-view width is released ===');
       '.teacher-book-folio', '.teacher-loading-card', '.teacher-actions-bar']
       .every(selector => teacherPanels[1].includes(selector)),
     'the generated answer must not have a narrower cap than the question');
-  check('the quiz report stays centred',
-    /\.result-container \{[\s\S]{0,120}margin-inline: auto/.test(layoutCss));
+
 
   check('print drops the column entirely',
     /@media print \{[\s\S]{0,400}max-width: none/.test(layoutCss));
@@ -171,7 +167,7 @@ console.log('\n=== No view reintroduces its own width ===');
 {
   // An inline style beats every stylesheet, so an inline max-width on a
   // top-level wrapper cannot be corrected from layout.css at all. This is the
-  // exact form the bug took in library, quiz-history and flashcards.
+  // exact form the bug took in library and flashcards.
   /**
    * First real element of every `container.innerHTML = ` template in a source.
    * Leading whitespace and HTML comments are skipped — several sub-views open
@@ -264,7 +260,7 @@ console.log('\n=== No view reintroduces its own width ===');
   // The three wrappers that had to become classes really did. Checked by class
   // presence only — flashcards legitimately keeps inline widths on its two
   // focused sub-views, so a blanket "no inline max-width" grep would be wrong.
-  for (const file of ['js/views/library.js', 'js/views/quiz-history.js', 'js/views/flashcards.js']) {
+  for (const file of ['js/views/library.js', 'js/views/flashcards.js']) {
     const src = read(file);
     check(`${path.basename(file)} uses .page-column instead of an inline width`,
       src.includes('class="page-column"') &&

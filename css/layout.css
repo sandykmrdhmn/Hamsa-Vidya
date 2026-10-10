@@ -10,10 +10,10 @@
      .aw-container            1720px   centred
      .ai-teacher-container    1200px   centred
      .tools-studio-wrapper    1440px   centred
-     .create-quiz-container    100%    full bleed
+
      .study-vault-container    100%    full bleed
      .settings-container       100%    full bleed
-     .quiz-player-container    100%    full bleed
+
      library / history /
      flashcards               inline `max-width:100%`
      exam-alerts              no wrapper at all
@@ -37,7 +37,7 @@
    part of the bug — they never stretched, and widening them would make long
    text harder to read:
 
-     .result-container     the quiz report
+
 
    AI Teacher panels share the full page column so question, lesson and
    navigation edges line up.
@@ -93,13 +93,14 @@
    ========================================================================== */
 
 .dash,                      /* was 1480px — css/dashboard.css */
+.quiz-workspace,
 .ai-teacher-container,      /* was 1200px — css/ai-teacher/01-hero-and-input.css */
 .aw-container,              /* was 1720px — css/answer-writing.css */
 .tools-studio-wrapper,      /* was 1440px — css/components/10-tools.css */
-.create-quiz-container,     /* was 100%   — css/components/03-create-quiz.css */
+
 .study-vault-container,     /* was 100%   — css/components/05-study-notes.css */
-.settings-container,        /* was 100%   — css/quiz.css */
-.quiz-player-container,     /* was 100%   — css/quiz.css */
+.settings-container,        /* was 100%   — css/preferences.css */
+
 .page-column {              /* new: replaces three inline max-width wrappers */
   width: 100%;
   max-width: 100%;
@@ -120,7 +121,7 @@
    3. READING MEASURES
 
    AI Teacher uses one width throughout its studio, including generated
-   lessons. The quiz report retains its focused reading column.
+   lessons.
    ========================================================================== */
 
 #view-ai-teacher :is(.teacher-hero, .teacher-tabs-nav, #teacher-tab-content,
@@ -133,11 +134,6 @@
   margin-inline: 0;
 }
 
-/* The quiz report keeps its own narrow column (css/quiz.css:491). Restated here
-   only so the next person sees it is intentional and not an oversight. */
-.result-container {
-  margin-inline: auto;
-}
 
 
 /* ==========================================================================
@@ -170,7 +166,7 @@
 .dash-primary-grid > *,
 .dash-secondary-grid > *,
 .dash-launchpad > *,
-.charts-grid > *,
+.dash-module-grid > *,
 .vhero-inner > * {
   min-width: 0;
 }
@@ -192,9 +188,7 @@
 
    That was invisible while `.main-content` ran the full width of the window.
    Section 1 capped it at `--page-max`, and from then on the two differed by the
-   centring margin — which is exactly how the quiz Question Palette, parked at
-   `right: -420px`, ended up visible in the right-hand gutter as a stray empty
-   panel. Six other overlays had the quieter version of the same bug: an
+   centring margin. Other overlays had the quieter version of the same bug: an
    `inset: 0` backdrop that covered the content column but not the header, and
    `z-index: 1050` drawers trapped under a `z-index: 100` header because their
    stacking context was the view section rather than the root.

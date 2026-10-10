@@ -2,7 +2,7 @@
  * Verify the two-tier site header.
  *
  * WHAT WENT WRONG BEFORE
- * One row carried a 72px logo, a two-line brand block, nine module tabs with
+ * One row carried a 72px logo, a two-line brand block, eight module tabs with
  * icons and labels, a search trigger with a keyboard hint, a streak chip, two
  * icon toggles and a profile pill — roughly 1730px of content in a 1560px
  * column. Everything from "Settings" rightward ran off the page edge.
@@ -34,9 +34,9 @@ const headerCss = read('css/header.css');
 const appJs = read('js/app.js');
 const sw = read('sw.js');
 
-/** The nine primary modules, in the order the rail presents them. */
+/** The primary modules, in the order the rail presents them. */
 const MODULES = [
-  'dashboard', 'ai-teacher', 'quiz', 'study-notes', 'flashcards',
+  'dashboard', 'quiz', 'ai-teacher', 'study-notes', 'flashcards',
   'answer-writing', 'exam-alerts', 'tools', 'settings'
 ];
 
@@ -225,7 +225,7 @@ console.log('\n=== Rail and utilities are styled for the new size ===');
 
       // ---- the tabs themselves
       const tabs = $$('.primary-nav-links .primary-module-btn');
-      check('all nine module tabs render', tabs.length === 9, `found ${tabs.length}`);
+      check('all nine module tabs render', tabs.length === MODULES.length, `found ${tabs.length}`);
       check('the tabs are in the expected order',
         JSON.stringify(tabs.map(b => b.getAttribute('data-module'))) === JSON.stringify(MODULES),
         tabs.map(b => b.getAttribute('data-module')).join(','));
@@ -236,7 +236,7 @@ console.log('\n=== Rail and utilities are styled for the new size ===');
         tabs.map(b => b.getAttribute('onclick')).filter(o => !/setModule/.test(o || '')).join(' | '));
       check('every tab has both an icon and a text label',
         tabs.every(b => b.querySelector('[data-lucide]') && b.querySelector('span')),
-        'icon-only tabs would make nine unlabelled glyphs');
+        'icon-only tabs would make eight unlabelled glyphs');
       check('exactly one tab starts active',
         tabs.filter(b => b.classList.contains('active')).length === 1);
       check('each tab is a real <button>',

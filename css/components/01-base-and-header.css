@@ -323,7 +323,6 @@
   transition: all var(--transition-normal);
 }
 
-.in-active-quiz .module-subnav-bar,
 .in-study-notes .module-subnav-bar {
   display: none !important;
 }

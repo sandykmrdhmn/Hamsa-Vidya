@@ -2090,3 +2090,28 @@
   color: #34D399;
 }
 
+/* Keep toolbar controls inside narrow screens; tables retain their own scroll. */
+@media (max-width: 768px) {
+  .ea-sort-and-view {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+
+  .ea-sort-box {
+    flex: 1 1 160px;
+    min-width: 0;
+  }
+
+  .ea-sort-box select {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .ea-govt-toggle-group {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    max-width: 100%;
+    border-radius: var(--radius-md);
+  }
+}
+

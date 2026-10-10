@@ -184,6 +184,9 @@ function seed(db) {
     store.set('hamsa_theme_mode', 'MIDNIGHT_BLUE');
     store.set('hamsa_exam_profile', JSON.stringify({ fullName: 'Aditi Sharma', category: 'OBC' }));
     store.set('hamsa_streak_days', '12');
+    store.set('hamsa_ai_provider','openai');
+    store.set('hamsa_openai_model','gpt-4.1-mini');
+    store.set('hamsa_openai_api_key','fake-key-never-export');
 
     const summary = await sandbox.exportDatabaseBackup();
     backupJson = blobs[blobs.length - 1];
@@ -201,6 +204,8 @@ function seed(db) {
     check('theme preference exported', parsed.preferences.hamsa_theme_mode === 'MIDNIGHT_BLUE');
     check('summary counts match', summary.questions === 3 && summary.customCards === 2);
     check('API key NOT included in backup', !backupJson.includes('hamsa_gemini_api_key'));
+    check('retired provider and model preferences are excluded',!('hamsa_ai_provider' in parsed.preferences)&&!('hamsa_openai_model' in parsed.preferences));
+    check('OpenAI credential is excluded even if present in legacy browser storage',!backupJson.includes('hamsa_openai_api_key')&&!backupJson.includes('fake-key-never-export'));
   }
 
   // ----------------------------------------------------- 2. REPLACE restore
@@ -213,6 +218,7 @@ function seed(db) {
     const report = await sandbox.importDatabaseBackup(backupJson, { mode: 'REPLACE' });
 
     check('mode reported as REPLACE', report.mode === 'REPLACE');
+    check('retired provider configuration is never restored',!store.has('hamsa_ai_provider')&&!store.has('hamsa_openai_model')&&!store.has('hamsa_openai_api_key'));
     check('pre-existing quiz removed', !db.quizzes.rows.some(q => q.id === 99));
     check('backup quizzes restored', db.quizzes.rows.length === 2);
     check('original ids preserved', db.quizzes.rows.map(q => q.id).sort().join(',') === '1,2');
@@ -372,7 +378,7 @@ function seed(db) {
   }
 
   // --------------------------------------------------------- 7. clearDatabase
-  console.log('\n=== clearDatabase wipes every table ===');
+  console.log('\n=== clearDatabase resets active modules while retaining archives ===');
   {
     const { sandbox, db, store } = buildSandbox();
     seed(db);
@@ -380,8 +386,8 @@ function seed(db) {
 
     const removed = await sandbox.clearDatabase();
     const leftover = TABLE_NAMES.filter(t => db[t].rows.length > 0);
-    check('all 12 tables emptied', leftover.length === 0, `left: ${leftover.join(',')}`);
-    check('reports per-table counts', removed.customCards === 2 && removed.questions === 3);
+    check('active tables emptied and archived records kept', leftover.sort().join(',') === 'attempts,questions,quizzes', `left: ${leftover.join(',')}`);
+    check('reports per-table counts', removed.customCards === 2 && !('questions' in removed));
     check('profile preserved by default', store.get('hamsa_exam_profile') === '{"fullName":"Keep Me"}');
 
     seed(db);
@@ -391,7 +397,7 @@ function seed(db) {
 
   console.log('\n=== Module resets are isolated and atomic ===');
   for (const [moduleId, erased, reviewPrefix] of [
-    ['QUIZZES',['quizzes','questions','attempts'],'q:'], ['NOTES',['notes'],'note_'],
+    ['NOTES',['notes'],'note_'],
     ['FLASHCARDS',['customDecks','customCards','cardReviews'],null], ['ANSWERS',['answers','answerDrafts'],null],
     ['TEACHER',['aiTeacherExplanations'],null], ['EXAMS',['exams','savedExams'],null]
   ]) {
@@ -408,8 +414,8 @@ function seed(db) {
   {
     const { sandbox, db } = buildSandbox(); seed(db);
     const before = JSON.stringify(TABLE_NAMES.map(key => db[key].rows));
-    db.questions.clear = async () => { throw new Error('injected clear failure'); };
-    let rejected = false; try { await sandbox.clearModuleData('QUIZZES'); } catch { rejected = true; }
+    db.customCards.clear = async () => { throw new Error('injected clear failure'); };
+    let rejected = false; try { await sandbox.clearModuleData('FLASHCARDS'); } catch { rejected = true; }
     check('failed module reset reports failure and rolls back all stores', rejected && JSON.stringify(TABLE_NAMES.map(key => db[key].rows)) === before);
     rejected = false; try { await sandbox.clearModuleData('UNKNOWN'); } catch { rejected = true; }
     check('unknown module never erases data', rejected && JSON.stringify(TABLE_NAMES.map(key => db[key].rows)) === before);

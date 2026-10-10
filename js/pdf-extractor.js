@@ -42,7 +42,7 @@ class PdfExtractorService {
     return text.replace(/[\uFFFD\u0000]/g,' ').trim();
   }
   formatFileSize(bytes) { return bytes<1024 ? `${bytes} B` : bytes<1048576 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1048576).toFixed(1)} MB`; }
-  async loadPdfFile(file, {draftPdfId=null}={}) {
+  async loadPdfFile(file) {
     if(!file || file.size>200*1048576) throw new Error('Choose a PDF up to 200 MB.');
     if(file.type!=='application/pdf' && !/\.pdf$/i.test(file.name||'')) throw new Error('Choose a PDF document.');
     const version=++this._loadVersion;
@@ -59,23 +59,19 @@ class PdfExtractorService {
     try {
       doc=await this.waitForRead(task.promise,null,'PDF loading took too long. Retry with this file or a smaller PDF.');
       if(version!==this._loadVersion) { await doc.destroy();throw new DOMException('PDF load cancelled.','AbortError'); }
-      const previous=this.currentDoc;this.currentDoc=doc;this.currentFile=file;this._draftPdfId=draftPdfId;this._textCache=null;this._pageTextCache.clear();
+      const previous=this.currentDoc;this.currentDoc=doc;this.currentFile=file;this._textCache=null;this._pageTextCache.clear();
       this.metadata={fileName:file.name,fileSizeBytes:file.size,formattedSize:this.formatFileSize(file.size),pageCount:doc.numPages};
       previous?.destroy().catch(()=>{});return this.metadata;
     } catch(error) { if(!doc) await task.destroy().catch(()=>{});throw error; }
     finally { if(this._loadingTask===task) this._loadingTask=null; }
   }
-  bindDraftFile(id, file) {
-    if(!id || this.currentFile!==file)return false;
-    this._draftPdfId=id;return true;
-  }
   pageCacheVersion() {
-    const model=window.geminiService?.constructor?.DEFAULT_MODEL || 'gemini-3.6-flash';
-    return `pdf-text-v1|ocr-study-v1|${model}`;
+    const provider=window.aiClient?.getProvider?.() || 'gemini';
+    const model=window.geminiService?.getActiveModel?.() || window.geminiService?.constructor?.DEFAULT_MODEL || 'gemini-2.5-flash';
+    return `pdf-text-v1|ocr-study-v1|${provider==='gemini'?model:`${provider}:${model}`}`;
   }
-  async extractTextFromPageRange(fromPage,toPage,onProgress=()=>{}, {signal,ocr=false,skipUnreadable=false,draftPdfId=null,isCurrent=()=>true,jobId=null}={}) {
+  async extractTextFromPageRange(fromPage,toPage,onProgress=()=>{}, {signal,ocr=false,skipUnreadable=false,isCurrent=()=>true,jobId=null}={}) {
     const doc=this.currentDoc;if(!doc) throw new Error('Upload a PDF first.');
-    if(draftPdfId && this._draftPdfId!==draftPdfId)throw new Error('This PDF does not match the saved quiz draft. Resume from the saved source.');
     const abort=()=>{ if(signal?.aborted || this.currentDoc!==doc || !isCurrent()) throw new DOMException('PDF extraction cancelled.','AbortError'); };
     const from=Math.max(1,Math.min(Math.floor(Number(fromPage)||1),doc.numPages));
     const to=Math.max(from,Math.min(Math.floor(Number(toPage)||from),doc.numPages));
@@ -85,23 +81,8 @@ class PdfExtractorService {
     if(this._pageCacheDoc!==doc || this._pageCacheVersion!==cacheVersion) {
       this._pageTextCache.clear();this._pageCacheDoc=doc;this._pageCacheVersion=cacheVersion;this._textCache=null;
     }
-    const durable=Boolean(draftPdfId && typeof getQuizDraftPages==='function' && typeof saveQuizDraftPage==='function');
-    const savedPages=durable ? await getQuizDraftPages(draftPdfId,cacheVersion) : [];
-    abort();
-    for(const page of savedPages)if(page.pageNumber<=doc.numPages && (page.extractionMethod!=='OCR' || ocr) && this.readableText(page.text))this._pageTextCache.set(page.pageNumber,{...page});
-    const savedNumbers=new Set(savedPages.filter(page=>page.extractionMethod!=='OCR' || ocr).map(page=>page.pageNumber));
-    const checkpoint=async page=>{
-      abort();
-      if(!durable || savedNumbers.has(page.pageNumber))return;
-      let saved;const startedAt=Date.now();
-      try {saved=await saveQuizDraftPage(draftPdfId,cacheVersion,page,signal);}
-      catch(error) {abort();const paused=new Error('This page was read, but its recovery checkpoint could not be saved. Free browser storage and continue this draft before reading more scanned pages.');paused.code='PDF_CHECKPOINT_FAILED';throw paused;}
-      finally {window.aiClient?.recordStageTiming?.('pdf-page-checkpoint',startedAt,{jobId,pages:1,outcome:saved?'saved':'failed'});}
-      abort();if(!saved)throw new DOMException('PDF draft was discarded.','AbortError');
-      savedNumbers.add(page.pageNumber);
-    };
     const cached=this._textCache;
-    if(!durable && cached?.doc===doc && cached.from===from && cached.to===to && cached.ocr===ocr) {
+    if(cached?.doc===doc && cached.from===from && cached.to===to && cached.ocr===ocr) {
       onProgress(to-from+1,to-from+1,'Reusing the selected PDF pages already read…');abort();
       return JSON.parse(JSON.stringify(cached.result));
     }
@@ -111,7 +92,6 @@ class PdfExtractorService {
       if(cachedPage && (cachedPage.extractionMethod!=='OCR' || ocr)) {
         abort();size+=cachedPage.text.length;
         if(size>1000000) throw new Error('Selected pages exceed 1 million text characters. Choose a smaller range.');
-        await checkpoint(cachedPage);abort();
         window.aiClient?.recordStageTiming?.('pdf-page-cache',Date.now(),{jobId,pages:1,cacheHits:1,outcome:'reused'});
         extractedPages.push({...cachedPage});onProgress(number-from+1,to-from+1,`Reusing page ${number} already read…`);continue;
       }
@@ -152,7 +132,6 @@ class PdfExtractorService {
       size+=text.length;if(size>1000000) throw new Error('Selected pages exceed 1 million text characters. Choose a smaller range.');
       extractedPages.push({pageNumber:number,text,fileName:this.metadata?.fileName||'document.pdf',extractionMethod});
       this._pageTextCache.set(number,{...extractedPages.at(-1)});
-      await checkpoint(extractedPages.at(-1));
     }
     abort();
     if(!extractedPages.length&&skipUnreadable) {const error=new Error(`No readable pages remain. Skipped PDF pages: ${skippedPages.map(page=>page.pageNumber).join(', ')}.`);error.skippedPages=skippedPages;throw error;}
@@ -163,7 +142,7 @@ class PdfExtractorService {
     if(!skippedPages.length)this._textCache={doc,from,to,ocr,result:JSON.parse(JSON.stringify(result))};
     return result;
   }
-  clear() { ++this._loadVersion;this._loadingTask?.destroy().catch(()=>{});this._loadingTask=null;this.currentDoc?.destroy().catch(()=>{});this.currentDoc=null;this.currentFile=null;this._draftPdfId=null;this.metadata=null;this._textCache=null;this._pageTextCache.clear(); }
+  clear() { ++this._loadVersion;this._loadingTask?.destroy().catch(()=>{});this._loadingTask=null;this.currentDoc?.destroy().catch(()=>{});this.currentDoc=null;this.currentFile=null;this.metadata=null;this._textCache=null;this._pageTextCache.clear(); }
 }
 PdfExtractorService.readerURL=new URL('pdf-reader.js?v=20261002-pdf2',document.currentScript?.src || new URL('js/pdf-extractor.js',document.baseURI)).href;
 window.pdfExtractor=new PdfExtractorService();

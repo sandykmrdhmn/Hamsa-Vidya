@@ -41,6 +41,12 @@ const AUTH_JS = read('js/auth-gate.js');
 const APP_JS = read('js/app.js');
 const SW = read('sw.js');
 
+// Cache-busting query parameters do not change the local asset's identity.
+const assetPath = (src) => {
+  const url = new URL(src, 'http://hamsa-fixture/');
+  return url.origin === 'http://hamsa-fixture' ? url.pathname.slice(1) : src;
+};
+
 // ===========================================================================
 console.log('\n=== The gate is hidden by default and starts above every layer ===');
 // ===========================================================================
@@ -238,14 +244,16 @@ console.log('\n=== SVG icons render inline, without an extra network request ===
 console.log('\n=== app.js boots the app only after the gate resolves ===');
 // ===========================================================================
 {
+  const scripts = [...HTML.matchAll(/<script\b[^>]*\bsrc=["']([^"']+)["']/g)]
+    .map(m => assetPath(m[1]));
+  const authIndex = scripts.indexOf('js/auth-gate.js');
+  const appIndex = scripts.indexOf('js/app.js');
   check('js/auth-gate.js is linked',
-    /<script src="js\/auth-gate\.js"><\/script>/.test(HTML));
+    authIndex !== -1);
 
-  const scripts = [...HTML.matchAll(/<script src="([^"]+)"/g)].map(m => m[1]);
   check('it is parsed before js/app.js, so `window.authGate` exists when app.js reads it',
-    scripts.indexOf('js/auth-gate.js') !== -1 &&
-    scripts.findIndex(src => src.split('?')[0] === 'js/auth-gate.js') < scripts.findIndex(src => src.split('?')[0] === 'js/app.js'),
-    `auth=${scripts.findIndex(src => src.split('?')[0] === 'js/auth-gate.js')} app=${scripts.findIndex(src => src.split('?')[0] === 'js/app.js')}`);
+    authIndex !== -1 && appIndex !== -1 && authIndex < appIndex,
+    `auth=${authIndex} app=${appIndex}`);
 
   // The boot conditional. Deleting either half of this branch is what would
   // let a hostile localStorage bypass the gate, or lock the app forever.
@@ -265,10 +273,13 @@ console.log('\n=== app.js boots the app only after the gate resolves ===');
 console.log('\n=== Service worker precaches the new files ===');
 // ===========================================================================
 {
+  const shellBlock = SW.match(/const\s+SHELL_ASSETS\s*=\s*\[([\s\S]*?)\];/);
+  const shellAssets = [...(shellBlock?.[1] || '').matchAll(/["']([^"']+)["']/g)]
+    .map(m => assetPath(m[1]));
   check('css/auth-gate.css is in SHELL_ASSETS',
-    /'css\/auth-gate\.css'/.test(SW));
+    shellAssets.includes('css/auth-gate.css'));
   check('js/auth-gate.js is in SHELL_ASSETS',
-    /'js\/auth-gate\.js'/.test(SW));
+    shellAssets.includes('js/auth-gate.js'));
   check('the cache version was bumped past v8 for this change',
     /CACHE_VERSION\s*=\s*'v[9-9]|CACHE_VERSION\s*=\s*'v[1-9][0-9]+'/.test(SW),
     'a fresh CSS + JS pair without a version bump leaves clients on the old shell');

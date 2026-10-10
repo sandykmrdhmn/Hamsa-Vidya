@@ -58,684 +58,234 @@ db.version(9).stores({
   examDetails: null
 });
 
-/**
- * v10 normalises every `isBookmarked` field to the numbers 1 and 0.
- *
- * THE BUG THIS REPAIRS
- * `isBookmarked` is declared as an INDEX — on `questions` in version(1), and on
- * `aiTeacherExplanations` in version(7). IndexedDB cannot index boolean values:
- * a record whose indexed property is `true` or `false` is left out of that index
- * entirely. Every write site stored a JavaScript boolean, so the Library's
- * `where('isBookmarked')` query matched nothing and saved questions never
- * appeared. (`.equals(true)` is worse than useless: a boolean is not a valid
- * IndexedDB key at all, so the query rejected with a DataError and the Library
- * render threw before painting anything.)
- *
- * The dashboard's bookmark count kept working the whole time because it reads
- * with an in-memory `filter()`, never the index — which is why the data was
- * provably on disk and counted in one place while invisible in another.
- *
- * `aiTeacherExplanations` is included even though nothing queries its index
- * today. Leaving half the database in an un-indexable representation just
- * preserves the trap for whoever writes that query next.
- *
- * `? 1 : 0` preserves truthiness, so `true` becomes 1 and every existing
- * bookmark survives. `toCollection().modify()` walks the PRIMARY key, not the
- * broken index — an index query here would skip exactly the rows needing repair.
- */
-db.version(10).stores({}).upgrade(async (tx) => {
-  for (const tableName of ['questions', 'aiTeacherExplanations']) {
-    await tx.table(tableName).toCollection().modify((row) => {
-      row.isBookmarked = row.isBookmarked ? 1 : 0;
-    });
-  }
+// Retired stores remain in the schema so upgrading never deletes browser data.
+// They are available only to portable backup/restore compatibility below.
+db.version(10).stores({}).upgrade(async tx => {
+  await tx.table('aiTeacherExplanations').toCollection().modify(row => {
+    row.isBookmarked = row.isBookmarked ? 1 : 0;
+  });
+});
+db.version(11).stores({ quizDraftFiles: 'id, savedAt' });
+db.version(12).stores({});
+db.version(13).stores({
+  pdfQuizzes: '++id, title, difficulty, createdAt',
+  pdfQuizAttempts: '++id, quizId, completedAt'
 });
 
-// Temporary source blobs are not library records and are excluded from JSON
-// backups. Completed quizzes already contain their captured original source.
-db.version(11).stores({ quizDraftFiles: 'id, savedAt' });
+function validatePdfQuizRecord(quiz) {
+  const source = quiz?.source;
+  const string = (value, limit) => typeof value === 'string' && value.trim().length > 0 && value.length <= limit;
+  if (!quiz || !string(quiz.title, 200) || !['EASY', 'MEDIUM', 'HARD', 'MIXED'].includes(quiz.difficulty) || !string(quiz.language, 40) || !string(quiz.model, 120) || !Number.isFinite(Date.parse(quiz.createdAt))) throw new Error('The quiz has invalid metadata.');
+  for (const field of ['subject', 'chapter', 'exam']) if (quiz[field] != null && (typeof quiz[field] !== 'string' || quiz[field].length > 120)) throw new Error('The quiz has invalid study context.');
+  const sourceType = source?.type || 'PDF';
+  if (!source || !['PDF','TOPIC','TEXT'].includes(sourceType)) throw new Error('The quiz has an invalid source.');
+  if (sourceType === 'PDF' && (!string(source.fileName, 500) || !Number.isSafeInteger(source.pageCount) || source.pageCount < 1 || source.pageCount > 1000 || !Number.isSafeInteger(source.fromPage) || !Number.isSafeInteger(source.toPage) || source.fromPage < 1 || source.toPage < source.fromPage || source.toPage > source.pageCount)) throw new Error('The quiz has an invalid PDF page range.');
+  if (source.excerptedPages != null && (sourceType !== 'PDF' || !Array.isArray(source.excerptedPages) || source.excerptedPages.length > 1000 || source.excerptedPages.some(page => !Number.isSafeInteger(page) || page < source.fromPage || page > source.toPage) || new Set(source.excerptedPages).size !== source.excerptedPages.length)) throw new Error('The quiz has invalid PDF excerpt references.');
+  if (source.ocrPages != null && (sourceType !== 'PDF' || !Array.isArray(source.ocrPages) || source.ocrPages.length > 1000 || Array.from(source.ocrPages).some(page => !Number.isSafeInteger(page) || page < source.fromPage || page > source.toPage) || new Set(source.ocrPages).size !== source.ocrPages.length)) throw new Error('The quiz has invalid scanned PDF page references.');
+  if (sourceType !== 'PDF' && !string(source.text, sourceType === 'TOPIC' ? 2000 : 20000)) throw new Error('The quiz has invalid topic or study text.');
+  if (!Array.isArray(quiz.questions) || quiz.questions.length < 1 || quiz.questions.length > 200) throw new Error('The quiz must contain 1 to 200 questions.');
+  if (quiz.generationId != null && !string(quiz.generationId,100)) throw new Error('The quiz generation ID is invalid.');
+  const seen = new Set();
+  for (const question of quiz.questions) {
+    if (!question || !string(question.question, 2000) || !string(question.explanation, 3000) || !Array.isArray(question.options) || question.options.length !== 4 || Array.from(question.options).some(option => !string(option, 1000)) || !Number.isInteger(question.answerIndex) || question.answerIndex < 0 || question.answerIndex > 3 || sourceType === 'PDF' && (!Number.isSafeInteger(question.sourcePage) || question.sourcePage < source.fromPage || question.sourcePage > source.toPage) || sourceType !== 'PDF' && question.sourcePage != null) throw new Error('The quiz contains an invalid question.');
+    if (question.optionExplanations != null && (!Array.isArray(question.optionExplanations) || question.optionExplanations.length !== 4 || Array.from(question.optionExplanations).some(reason => !string(reason, 1500)))) throw new Error('The quiz contains invalid option explanations.');
+    if (question.difficulty != null && !['EASY', 'MEDIUM', 'HARD'].includes(question.difficulty)) throw new Error('The question difficulty is invalid.');
+    if (question.topic != null && (typeof question.topic !== 'string' || question.topic.length > 120)) throw new Error('The question topic is invalid.');
+    const key = question.question.normalize('NFKC').toLowerCase().replace(/[\p{P}\p{S}\s]+/gu, '');
+    // In mathematics and code, signs, punctuation and case change an answer.
+    const optionKeys = question.options.map(value => value.normalize('NFKC').trim().replace(/\s+/g, ' '));
+    if (!key || seen.has(key) || optionKeys.some(option => !/[\p{L}\p{N}]/u.test(option)) || new Set(optionKeys).size !== 4) throw new Error('The quiz contains duplicate questions or options.');
+    seen.add(key);
+  }
+  return quiz;
+}
 
-async function saveQuizDraftFile(id, file) {
-  if (typeof id !== 'string' || !id || !(file instanceof Blob)) throw new Error('Invalid draft PDF.');
-  await db.transaction('rw', db.quizDraftFiles, async () => {
-    // A recovery ID always identifies the same immutable source file.
-    if (await db.quizDraftFiles.get(id)) throw new Error('This draft PDF is already saved.');
-    await db.quizDraftFiles.put({id, file, name:file.name || 'Source.pdf', savedAt:Date.now()});
+function scorePdfQuizAttempt(quiz, input) {
+  if (!Array.isArray(input?.answers) || input.answers.length !== quiz.questions.length || Array.from(input.answers).some(answer => answer !== null && (!Number.isInteger(answer) || answer < 0 || answer > 3))) throw new Error('The answer list does not match this quiz.');
+  const answers = input.answers.slice();
+  const allIndices = quiz.questions.map((_, index) => index);
+  const questionIndices = input.questionIndices == null ? allIndices : validateQuizQuestionIndices(input.questionIndices, quiz.questions.length);
+  const questionOrder = input.questionOrder == null ? questionIndices.slice() : validateQuizQuestionIndices(input.questionOrder, quiz.questions.length);
+  const active = new Set(questionIndices);
+  if (answers.some((answer, index) => !active.has(index) && answer !== null)) throw new Error('Questions outside this revision must be unanswered.');
+  if (questionOrder.length !== questionIndices.length || questionOrder.some(index => !active.has(index))) throw new Error('The question order does not match the selected questions.');
+  const optionOrder = input.optionOrder == null ? allIndices.map(() => [0, 1, 2, 3]) : input.optionOrder;
+  if (!Array.isArray(optionOrder) || optionOrder.length !== answers.length || Array.from(optionOrder).some(order => !Array.isArray(order) || order.length !== 4 || Array.from(order).some(index => !Number.isInteger(index) || index < 0 || index > 3) || new Set(order).size !== 4)) throw new Error('The option order is invalid.');
+  const confidence = input.confidence == null ? answers.map(() => null) : input.confidence;
+  if (!Array.isArray(confidence) || confidence.length !== answers.length || Array.from(confidence).some(value => value !== null && !['LOW', 'MEDIUM', 'HIGH'].includes(value))) throw new Error('The confidence list does not match this quiz.');
+  const marked = input.marked == null ? [] : input.marked;
+  if (!Array.isArray(marked) || Array.from(marked).some(index => !Number.isInteger(index) || !active.has(index)) || new Set(marked).size !== marked.length) throw new Error('The marked questions are invalid.');
+  const mode = input.mode == null ? 'PRACTICE' : input.mode;
+  if (!['PRACTICE', 'EXAM'].includes(mode)) throw new Error('The attempt mode is invalid.');
+  const settings = validateQuizAttemptSettings(input.settings);
+  if (input.attemptKey != null && (typeof input.attemptKey !== 'string' || !input.attemptKey.trim() || input.attemptKey.length > 160)) throw new Error('The attempt key is invalid.');
+  if (input.parentAttemptId != null && (!Number.isSafeInteger(input.parentAttemptId) || input.parentAttemptId < 1)) throw new Error('The parent attempt is invalid.');
+  if (input.expired != null && typeof input.expired !== 'boolean') throw new Error('The timer expiry flag is invalid.');
+  const correct = questionIndices.filter(index => answers[index] === quiz.questions[index].answerIndex).length;
+  const skipped = questionIndices.filter(index => answers[index] === null).length;
+  const incorrect = questionIndices.length - correct - skipped;
+  const score = Number((correct * settings.marksPerQuestion - incorrect * settings.negativeMarks).toFixed(6));
+  const maxMarks = Number((questionIndices.length * settings.marksPerQuestion).toFixed(6));
+  const completedAt = input.completedAt || new Date().toISOString();
+  if (!Number.isFinite(Date.parse(completedAt))) throw new Error('The completion date is invalid.');
+  return { answers, questionIndices: questionIndices.slice(), questionOrder: questionOrder.slice(), optionOrder: optionOrder.map(order => order.slice()),
+    confidence: confidence.slice(), marked: marked.slice(), mode, settings, ...(input.attemptKey ? {attemptKey:input.attemptKey} : {}),
+    ...(input.parentAttemptId != null ? {parentAttemptId:input.parentAttemptId} : {}), ...(input.expired != null ? {expired:input.expired} : {}),
+    correct, skipped, incorrect, score, maxMarks, marksPercentage: Math.round(score / maxMarks * 100),
+    totalQuestions: questionIndices.length, percentage: Math.round(correct / questionIndices.length * 100),
+    accuracy: correct + incorrect ? Math.round(correct / (correct + incorrect) * 100) : 0, completedAt,
+    durationSeconds: Number.isFinite(input.durationSeconds) && input.durationSeconds >= 0 ? input.durationSeconds : 0 };
+}
+
+function validateQuizQuestionIndices(indices, length) {
+  if (!Array.isArray(indices) || !indices.length || indices.length > length || Array.from(indices).some(index => !Number.isInteger(index) || index < 0 || index >= length) || new Set(indices).size !== indices.length) throw new Error('The selected quiz questions are invalid.');
+  return indices.slice();
+}
+
+function validateQuizAttemptSettings(input) {
+  if (input != null && (typeof input !== 'object' || Array.isArray(input))) throw new Error('The exam settings are invalid.');
+  const settings = {durationMinutes:0, marksPerQuestion:1, negativeMarks:0, shuffleQuestions:false, shuffleOptions:false, presetId:'CUSTOM', ...input};
+  if (!Number.isFinite(settings.durationMinutes) || settings.durationMinutes < 0 || settings.durationMinutes > 720 || !Number.isFinite(settings.marksPerQuestion) || settings.marksPerQuestion <= 0 || settings.marksPerQuestion > 100 || !Number.isFinite(settings.negativeMarks) || settings.negativeMarks < 0 || settings.negativeMarks > settings.marksPerQuestion || typeof settings.shuffleQuestions !== 'boolean' || typeof settings.shuffleOptions !== 'boolean' || typeof settings.presetId !== 'string' || settings.presetId.length > 80) throw new Error('The exam settings are invalid.');
+  return {durationMinutes:settings.durationMinutes, marksPerQuestion:settings.marksPerQuestion, negativeMarks:settings.negativeMarks,
+    shuffleQuestions:settings.shuffleQuestions, shuffleOptions:settings.shuffleOptions, presetId:settings.presetId};
+}
+
+let quizStorageBlocked = false;
+if (typeof db.on === 'function') db.on('blocked', () => { quizStorageBlocked = true; });
+
+async function ensureQuizStorage() {
+  if (db.isOpen?.()) return;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(Object.assign(new Error(quizStorageBlocked
+      ? 'Quiz storage is waiting for another Hamsa Vidya tab. Close the other tabs, reload this page and try again.'
+      : 'Quiz storage took too long to open. Close other Hamsa Vidya tabs, reload this page and try again.'), {code: 'QUIZ_STORAGE_TIMEOUT'})), window.quizStore.STORAGE_TIMEOUT_MS);
   });
+  // Only opening is raced. No write can begin after this wait has failed.
+  try { await Promise.race([db.open(), timeout]); quizStorageBlocked = false; }
+  finally { clearTimeout(timer); }
 }
-async function getQuizDraftFile(id) {
-  if (typeof id !== 'string' || !id) return null;
-  const row = await db.quizDraftFiles.get(id);
-  if (!(row?.file instanceof Blob)) return null;
-  return new File([row.file], row.name || 'Source.pdf', {type:'application/pdf'});
-}
-async function getQuizDraftPages(id, version) {
-  if (typeof id !== 'string' || !id || typeof version !== 'string' || !version) return [];
-  const row = await db.quizDraftFiles.get(id);
-  if (!(row?.file instanceof Blob) || row.recoveryVersion !== version) return [];
-  return Object.values(row.recoveryPages || {}).filter(page => Number.isSafeInteger(page?.pageNumber) && page.pageNumber > 0 &&
-    typeof page.text === 'string' && !!page.text.trim() && ['TEXT','OCR'].includes(page.extractionMethod)).map(page => ({...page}));
-}
-async function saveQuizDraftPage(id, version, page, signal) {
-  if (typeof id !== 'string' || !id || typeof version !== 'string' || !version ||
-      !Number.isSafeInteger(page?.pageNumber) || page.pageNumber < 1 || typeof page.text !== 'string' || !page.text.trim() ||
-      !['TEXT','OCR'].includes(page.extractionMethod)) throw new Error('Invalid PDF page checkpoint.');
-  return db.transaction('rw', db.quizDraftFiles, async () => {
-    const row = await db.quizDraftFiles.get(id);
-    // Discard/reset cannot resurrect a deleted source or write into another draft.
-    if (signal?.aborted || !(row?.file instanceof Blob)) return false;
-    const recoveryPages = row.recoveryVersion === version ? {...row.recoveryPages} : {};
-    recoveryPages[page.pageNumber] = {pageNumber:page.pageNumber,text:page.text,fileName:row.name || 'Source.pdf',extractionMethod:page.extractionMethod};
-    return !!await db.quizDraftFiles.update(id, {recoveryVersion:version,recoveryPages});
-  });
-}
-async function deleteQuizDraftFile(id) {
-  if (typeof id === 'string' && id) await db.quizDraftFiles.delete(id);
-}
-async function clearQuizDrafts() {
-  if (db.quizDraftFiles) await db.quizDraftFiles.clear();
+
+async function quizStorageTransaction(mode, tables, operation) {
+  await ensureQuizStorage();
+  let timer, timedOut = false;
   try {
-    localStorage.removeItem('hamsa_quiz_generation_draft');
-    localStorage.removeItem('hamsa_quiz_form_draft');
-  } catch { /* Storage can be unavailable even when IndexedDB succeeds. */ }
-  const view = window.createQuizView;
-  if (view) {
-    view.dispose();
-    window.createQuizView = new view.constructor();
-    window.pdfExtractor?.clear();
-  }
+    return await db.transaction(mode, tables, async () => {
+      const transaction = Dexie.currentTransaction;
+      if (typeof transaction?.abort === 'function') timer = setTimeout(() => {
+        timedOut = true;
+        try { transaction.abort(); } catch {}
+      }, window.quizStore.STORAGE_TIMEOUT_MS);
+      return await operation();
+    });
+  } catch (error) {
+    if (timedOut) throw Object.assign(new Error('Quiz storage took too long and the transaction was cancelled. Reload the page and try again.'), {code: 'QUIZ_STORAGE_TIMEOUT'});
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 
-
-
-// =========================================================================
-// EXAM SCORING PATTERNS
-//
-// Real competitive exams deduct marks for wrong answers, which changes strategy
-// completely: a blind guess has negative expected value, so "skip" and "wrong"
-// must not score the same. Scoring these quizzes without negative marking
-// trained the opposite instinct.
-// =========================================================================
-const EXAM_SCORING_PRESETS = {
-  NONE: {
-    id: 'NONE',
-    label: 'Practice (no negative marking)',
-    marksPerCorrect: 1,
-    negativeMarkPerWrong: 0,
-    note: 'Every correct answer scores 1. Wrong answers cost nothing.'
+window.quizStore = {
+  STORAGE_TIMEOUT_MS: 15000,
+  async save(quiz) {
+    validatePdfQuizRecord(quiz);
+    const saved = JSON.parse(JSON.stringify(quiz));
+    delete saved.id;
+    saved.questions = saved.questions.map((question, index) => ({...question, id: `q${index + 1}`}));
+    return quizStorageTransaction('rw', [db.pdfQuizzes], async () => {
+      // A checkpoint may survive a successful final save. Retrying must not duplicate the quiz.
+      if (saved.generationId) {
+        const existing = (await db.pdfQuizzes.toArray()).find(row => row.generationId === saved.generationId);
+        if (existing) return existing;
+      }
+      saved.id = await db.pdfQuizzes.add(saved);
+      return saved;
+    });
   },
-  UPSC_PRELIMS: {
-    id: 'UPSC_PRELIMS',
-    label: 'UPSC Prelims GS (+2 / −1/3)',
-    marksPerCorrect: 2,
-    negativeMarkPerWrong: 2 / 3,
-    note: 'One-third of the allotted marks is deducted for each wrong answer.'
+  async list() { return (await quizStorageTransaction('r', [db.pdfQuizzes], () => db.pdfQuizzes.toArray())).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt) || b.id - a.id); },
+  async get(id) { return await quizStorageTransaction('r', [db.pdfQuizzes], () => db.pdfQuizzes.get(Number(id))) || null; },
+  async remove(id) {
+    const quizId = Number(id);
+    return quizStorageTransaction('rw', [db.pdfQuizzes, db.pdfQuizAttempts], async () => {
+      await db.pdfQuizAttempts.where('quizId').equals(quizId).delete();
+      await db.pdfQuizzes.delete(quizId);
+    });
   },
-  SSC: {
-    id: 'SSC',
-    label: 'SSC CGL / CHSL Tier-I (+2 / −0.5)',
-    marksPerCorrect: 2,
-    negativeMarkPerWrong: 0.5,
-    note: '0.50 marks deducted per wrong answer.'
+  async saveAttempt(id, input) {
+    const quizId = Number(id);
+    return quizStorageTransaction('rw', [db.pdfQuizzes, db.pdfQuizAttempts], async () => {
+      const quiz = await db.pdfQuizzes.get(quizId);
+      if (!quiz) throw new Error('This quiz no longer exists.');
+      validatePdfQuizRecord(quiz);
+      const attempt = {quizId, ...scorePdfQuizAttempt(quiz, input)};
+      if (attempt.attemptKey) {
+        const existing = (await db.pdfQuizAttempts.where('quizId').equals(quizId).toArray()).find(row => row.attemptKey === attempt.attemptKey);
+        if (existing) return existing;
+      }
+      attempt.id = await db.pdfQuizAttempts.add(attempt);
+      return attempt;
+    });
   },
-  BANKING: {
-    id: 'BANKING',
-    label: 'IBPS / SBI Banking (+1 / −0.25)',
-    marksPerCorrect: 1,
-    negativeMarkPerWrong: 0.25,
-    note: 'One-fourth mark deducted per wrong answer.'
+  async convertToFlashcards(quiz, questionIndices) {
+    const quizId = Number(quiz?.id);
+    if (!Number.isSafeInteger(quizId) || quizId < 1) throw new Error('Save this quiz before converting it into flashcards.');
+    return quizStorageTransaction('rw', [db.pdfQuizzes, db.customDecks, db.customCards], async () => {
+      const canonical = await db.pdfQuizzes.get(quizId);
+      if (!canonical) throw new Error('This quiz no longer exists.');
+      validatePdfQuizRecord(canonical);
+      const indices = validateQuizQuestionIndices(questionIndices ?? canonical.questions.map((_, index) => index), canonical.questions.length).sort((a,b) => a-b);
+      const conversionKey = `quiz:${quizId}:${canonical.createdAt}:${indices.join(',')}`;
+      const existing = (await db.customDecks.toArray()).find(deck => deck.quizConversionKey === conversionKey);
+      if (existing) return {deckId:existing.id, count:await db.customCards.where('deckId').equals(existing.id).count(), reused:true, deck:existing};
+      const now = new Date().toISOString();
+      const deck = {title:`${canonical.title} — Revision`.slice(0,200), subject:canonical.subject || canonical.chapter || 'General Study',
+        description:`${indices.length} revision flashcards from ${canonical.title}`, createdAt:now, updatedAt:now,
+        sourceQuizId:quizId, sourceQuizCreatedAt:canonical.createdAt, sourceQuestionIndices:indices, quizConversionKey:conversionKey};
+      deck.id = await db.customDecks.add(deck);
+      for (const index of indices) {
+        const question = canonical.questions[index];
+        const optionReasons = (question.optionExplanations || []).map((reason, option) => `${'ABCD'[option]}. ${question.options[option]}: ${reason}`).join('\n');
+        await db.customCards.add({deckId:deck.id, front:question.question, back:question.options[question.answerIndex],
+          explanation:question.explanation + (optionReasons ? `\n\nOption explanations:\n${optionReasons}` : ''),
+          options:question.options.slice(), optionExplanations:(question.optionExplanations || []).slice(), correctAnswerIndex:question.answerIndex,
+          sourceReferences:question.sourcePage ? [{fileName:canonical.source.fileName, page:question.sourcePage}] : [],
+          sourceTitle:canonical.title, sourcePage:question.sourcePage || null, sourceQuestionIndex:index,
+          topic:question.topic || canonical.chapter || '', difficulty:question.difficulty || canonical.difficulty, badge:'Quiz revision', createdAt:now});
+      }
+      return {deckId:deck.id, count:indices.length, reused:false, deck};
+    });
   },
-  NEET: {
-    id: 'NEET',
-    label: 'NEET (+4 / −1)',
-    marksPerCorrect: 4,
-    negativeMarkPerWrong: 1,
-    note: 'Four marks per correct answer, one mark deducted per wrong answer.'
-  }
+  async listAttempts(id) { return (await quizStorageTransaction('r', [db.pdfQuizAttempts], () => db.pdfQuizAttempts.where('quizId').equals(Number(id)).toArray())).sort((a, b) => Date.parse(b.completedAt) - Date.parse(a.completedAt) || b.id - a.id); }
 };
 
-/** Resolve a preset id (or explicit overrides) into a scoring config. */
-function resolveScoringConfig(meta = {}) {
-  const preset = EXAM_SCORING_PRESETS[meta.scoringPreset] || EXAM_SCORING_PRESETS.NONE;
-  const marksPerCorrect = Number(
-    meta.marksPerCorrect ?? preset.marksPerCorrect
-  ) || 1;
-  const negativeMarkPerWrong = Math.max(0, Number(
-    meta.negativeMarkPerWrong ?? preset.negativeMarkPerWrong
-  ) || 0);
+function toBookmarkFlag(value) { return value ? 1 : 0; }
 
-  return {
-    scoringPreset: preset.id,
-    marksPerCorrect,
-    negativeMarkPerWrong
-  };
+function isActiveCardReview(review) {
+  return /^(?:custom:\d+|note(?:_|:)\d+:.+)$/.test(String(review?.cardKey || ''));
 }
 
-/**
- * Score an attempt under the quiz's marking scheme.
- *
- * @param {Array}  questions    question records with correctAnswerIndex
- * @param {Object} userAnswers  { questionId: selectedOptionIndex }
- * @param {Object} scoring      { marksPerCorrect, negativeMarkPerWrong }
- */
-function computeQuizScore(questions, userAnswers, scoring) {
-  const { marksPerCorrect, negativeMarkPerWrong } = resolveScoringConfig(scoring);
-
-  let correct = 0;
-  let incorrect = 0;
-  let skipped = 0;
-
-  for (const q of questions) {
-    const chosen = userAnswers ? userAnswers[q.id] : undefined;
-    if (chosen === undefined || chosen === null || chosen === -1) skipped++;
-    else if (chosen === q.correctAnswerIndex) correct++;
-    else incorrect++;
-  }
-
-  const total = questions.length;
-  const maxMarks = round2(total * marksPerCorrect);
-  const positiveMarks = round2(correct * marksPerCorrect);
-  const marksLostToNegative = round2(incorrect * negativeMarkPerWrong);
-  const marksObtained = round2(positiveMarks - marksLostToNegative);
-
-  // Accuracy over attempted questions — unaffected by the marking scheme.
-  const attempted = correct + incorrect;
-  const accuracy = attempted > 0 ? Math.round((correct / attempted) * 100) : 0;
-
-  // Percentage of the paper. Can legitimately be negative under heavy penalties;
-  // display layers clamp it rather than hiding the real number here.
-  const percentage = maxMarks > 0 ? Math.round((marksObtained / maxMarks) * 100) : 0;
-
-  return {
-    correct,
-    incorrect,
-    skipped,
-    total,
-    attempted,
-    accuracy,
-    marksPerCorrect,
-    negativeMarkPerWrong,
-    positiveMarks,
-    marksLostToNegative,
-    marksObtained,
-    maxMarks,
-    percentage,
-    // `score` historically held the raw correct count; it now holds real marks,
-    // which is what the result screen and analytics should reason about.
-    score: marksObtained
-  };
-}
-
-function round2(n) {
-  return Math.round(Number(n) * 100) / 100;
-}
-
-// Exposed explicitly so views don't depend on cross-script lexical scoping.
-if (typeof window !== 'undefined') {
-  window.EXAM_SCORING_PRESETS = EXAM_SCORING_PRESETS;
-  window.resolveScoringConfig = resolveScoringConfig;
-  window.computeQuizScore = computeQuizScore;
-}
-
-/**
- * Save a newly created quiz and its questions into IndexedDB
- */
-async function saveNewQuiz(quizMeta, questionsList) {
-  if (Array.isArray(questionsList) && questionsList.some(q=>q?.reviewIssue)) throw new Error('Correct questions marked as needing review before saving a playable quiz.');
-  if (!Array.isArray(questionsList) || !questionsList.length) throw new Error('A quiz needs at least one valid question.');
-  if (window.QuizQuality) {
-    const invalid = window.QuizQuality.preview(questionsList);
-    if (invalid.length) throw new Error(`Question ${invalid[0].index + 1}: ${invalid[0].error}`);
-    questionsList = questionsList.map(question => window.QuizQuality.normalize(question));
-  }
-  return await db.transaction('rw', db.quizzes, db.questions, async () => {
-    const quizId = await db.quizzes.add({
-      title: quizMeta.title || 'Untitled Quiz',
-      subject: quizMeta.subject || 'General Knowledge',
-      difficulty: quizMeta.difficulty || 'MEDIUM',
-      quizMode: quizMeta.quizMode || 'PRACTICE',
-      language: quizMeta.language || 'ENGLISH',
-      sourceType: quizMeta.sourceType || 'TEXT_NOTES',
-      sourceTitle: quizMeta.sourceTitle || 'Direct Ingestion',
-      pageRangeText: quizMeta.pageRangeText || null,
-      coverage: quizMeta.coverage || null,
-      originalSource: quizMeta.originalSource || null,
-      distribution: window.QuizQuality?.distribution(questionsList) || null,
-      skippedPdfPages: Array.isArray(quizMeta.skippedPdfPages) ? quizMeta.skippedPdfPages.map(page=>({pageNumber:page.pageNumber,reason:page.reason})) : [],
-      requestedCount: quizMeta.requestedCount || questionsList.length,
-      generationSettings: quizMeta.generationSettings || null,
-      generationModel: quizMeta.generationModel || null,
-      totalQuestions: questionsList.length,
-      // Time ALREADY SPENT on the attempt, written at submit. Not a limit.
-      durationSeconds: 0,
-      // The exam window ALLOWED for this quiz, chosen at creation time and
-      // frozen here so re-attempts are timed identically — the same lifecycle
-      // as the marking scheme below. `null` means "not specified", and the
-      // player falls back to its per-question heuristic.
-      //
-      // Deliberately not added to the version(1) `stores()` index string: that
-      // declares indexes only, and an unindexed property needs no migration.
-      examDurationSeconds: Number(quizMeta.examDurationSeconds) > 0
-        ? Math.round(Number(quizMeta.examDurationSeconds))
-        : null,
-      // Marking scheme chosen at creation time, so re-attempts score identically.
-      ...resolveScoringConfig(quizMeta),
-      score: 0,
-      correct: 0,
-      incorrect: 0,
-      skipped: 0,
-      percentage: 0,
-      marksObtained: 0,
-      maxMarks: round2(questionsList.length * resolveScoringConfig(quizMeta).marksPerCorrect),
-      marksLostToNegative: 0,
-      accuracy: 0,
-      createdAt: new Date().toISOString(),
-      completedAt: null
-    });
-
-    const formattedQuestions = questionsList.map((q, idx) => ({
-      ...q,
-      id: undefined,
-      quizId: quizId,
-      sourceQuizId: q.sourceQuizId || q.quizId || quizId,
-      questionText: q.questionText,
-      options: q.options || [],
-      correctAnswerIndex: Number(q.correctAnswerIndex ?? 0),
-      explanation: q.explanation || 'No explanation provided.',
-      sourcePage: q.sourcePage ?? null,
-      // 0, not false — see toBookmarkFlag() and the v10 migration.
-      isBookmarked: BOOKMARK_OFF,
-      userSelectedOptionIndex: null
-    }));
-
-    formattedQuestions.forEach(question => { delete question.id; });
-    await db.questions.bulkAdd(formattedQuestions);
-    return quizId;
-  });
-}
-
-/**
- * Fetch a Quiz along with all its Questions
- */
-async function getQuizWithQuestions(quizId) {
-  const quiz = await db.quizzes.get(Number(quizId));
-  if (!quiz) return null;
-  const questions = await db.questions.where('quizId').equals(Number(quizId)).toArray();
-  return { ...quiz, questions };
-}
-
-/**
- * Alias for getQuizWithQuestions - provides fail-safe compatibility across modules
- */
-async function getQuizById(quizId) {
-  return await getQuizWithQuestions(quizId);
-}
-
-/**
- * Fetch all quizzes ordered by creation date descending
- */
-async function getAllQuizzes() {
-  return await db.quizzes.orderBy('id').reverse().toArray();
-}
-
-/**
- * Fetch all completed quizzes for Quiz History view, sorted by completedAt descending
- */
-async function getCompletedQuizHistory() {
-  const allQuizzes = await db.quizzes.toArray();
-  const completed = allQuizzes.filter(q => q.completedAt !== null && q.completedAt !== undefined);
-  return completed.sort((a, b) => new Date(b.completedAt) - new Date(a.completedAt));
-}
-
-/**
- * Delete a quiz and its questions
- */
-async function deleteQuiz(quizId) {
-  await db.transaction('rw', [db.quizzes, db.questions, db.attempts, db.cardReviews], async () => {
-    const questions = await db.questions.where('quizId').equals(Number(quizId)).toArray();
-    const keys = new Set(questions.map(question => `q:${question.id}`));
-    if (db.cardReviews) {
-      const reviews = await db.cardReviews.toArray();
-      for (const review of reviews) if (keys.has(review.cardKey)) await db.cardReviews.delete(review.id);
-    }
-    await db.questions.where('quizId').equals(Number(quizId)).delete();
-    await db.attempts.where('quizId').equals(Number(quizId)).delete();
-    await db.quizzes.delete(Number(quizId));
-  });
-  try {
-    localStorage.removeItem(`hamsa_active_quiz_attempt:${Number(quizId)}`);
-    const raw=localStorage.getItem('hamsa_active_quiz_attempt');
-    if(raw && Number(JSON.parse(raw)?.quizId)===Number(quizId))localStorage.removeItem('hamsa_active_quiz_attempt');
-  } catch { /* Quiz deletion succeeds even when browser storage is unavailable. */ }
-}
-
-/**
- * The only two values `questions.isBookmarked` may ever hold.
- *
- * NOT `true`/`false`. The field is an IndexedDB index (see the v10 migration
- * above) and IndexedDB silently omits boolean-valued records from an index, so
- * a boolean here makes the row unfindable. Route every write through
- * `toBookmarkFlag()` rather than assigning a raw value.
- */
-const BOOKMARK_ON = 1;
-const BOOKMARK_OFF = 0;
-
-/** Coerce anything truthy to 1 and anything else to 0. */
-function toBookmarkFlag(value) {
-  return value ? BOOKMARK_ON : BOOKMARK_OFF;
-}
-
-/**
- * Toggle or update question bookmark state.
- */
-async function updateQuestionBookmark(questionId, isBookmarked) {
-  const updated = await db.questions.update(Number(questionId), {
-    isBookmarked: toBookmarkFlag(isBookmarked)
-  });
-  if (!updated) throw new Error('Question no longer exists.');
-  return updated;
-}
-
-/**
- * Fetch all bookmarked questions across all quizzes, newest first.
- *
- * WHY THIS SCANS INSTEAD OF USING THE INDEX
- * An indexed `where('isBookmarked').equals(1)` would be faster, and after the
- * v10 migration it would even be correct. It is deliberately not used, because
- * this query has exactly one job — never lose a bookmark — and the index cannot
- * promise that:
- *
- *   • A backup file written by an older build contains boolean values. Import
- *     writes rows through `bulkPut` largely verbatim, so one restore would make
- *     those bookmarks invisible again.
- *   • Any future write site that forgets `toBookmarkFlag()` reintroduces the
- *     original bug, silently, with no error anywhere.
- *
- * A predicate on the row itself is immune to the representation. The table is
- * a few questions per quiz for a single student, so the scan is not the
- * bottleneck — the N+1 it replaces was.
- */
-async function getBookmarkedQuestions() {
-  const bookmarks = await db.questions.filter(q => !!q.isBookmarked).toArray();
-
-  // One read of the quizzes table, then a Map lookup. This used to issue a
-  // separate `db.quizzes.get()` for EVERY bookmark — and the Library re-renders
-  // on every keystroke of its search box, so a student with 60 bookmarks was
-  // firing 60 IndexedDB reads per character typed.
-  const allQuizzes = await db.quizzes.toArray();
-  const quizById = new Map(allQuizzes.map(qz => [qz.id, qz]));
-
-  const enriched = bookmarks.map((q) => {
-    const parentQuiz = quizById.get(q.quizId);
-    return {
-      ...q,
-      quizTitle: parentQuiz ? parentQuiz.title : 'Study Quiz',
-      language:parentQuiz?.language||null,
-      // `questions` rows carry no subject of their own; it lives on the parent
-      // quiz. The Library groups by this value, so the fallback has to be a
-      // stable string rather than undefined or an empty bucket label.
-      subject: (parentQuiz && parentQuiz.subject) ? parentQuiz.subject : 'Uncategorised'
-    };
-  });
-
-  // Most recently added first — question ids are auto-increment, so a higher id
-  // is a later insert.
-  enriched.sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
-  return enriched;
-}
-
-/**
- * Group bookmarked questions by the subject of their parent quiz.
- *
- * Returns `[{ subject, questions[] }]` sorted by count descending, then
- * alphabetically, so the subject a student has actually been working on leads.
- * Kept here rather than in the view because the Library needs both the grouped
- * shape and the per-subject counts, and deriving them twice would let the
- * filter chips disagree with the sections they filter.
- */
-function groupBookmarksBySubject(bookmarks) {
-  const groups = new Map();
-
-  for (const q of (bookmarks || [])) {
-    const subject = (q && q.subject) ? String(q.subject) : 'Uncategorised';
-    if (!groups.has(subject)) groups.set(subject, []);
-    groups.get(subject).push(q);
-  }
-
-  return [...groups.entries()]
-    .map(([subject, questions]) => ({ subject, questions }))
-    .sort((a, b) =>
-      b.questions.length - a.questions.length ||
-      a.subject.localeCompare(b.subject)
-    );
-}
-
-/**
- * Update quiz completion record and save attempt history
- */
-async function updateQuizCompletion(quizId, resultData, questionsState) {
-  return await db.transaction('rw', db.quizzes, db.questions, db.attempts, async () => {
-    const numId = Number(quizId);
-    const quizRecord = await db.quizzes.get(numId);
-    if (!quizRecord) throw new Error('This quiz was deleted. Export or copy your answers before leaving.');
-    if (resultData.attemptToken) {
-      const existing = (await db.attempts.where('quizId').equals(numId).toArray()).find(attempt => attempt.attemptToken === resultData.attemptToken);
-      if (existing) return existing.id;
-    }
-    
-    // 1. Update questions state (user selections)
-    for (const q of questionsState) {
-      if (q.id) {
-        await db.questions.update(q.id, {
-          userSelectedOptionIndex: q.userSelectedOptionIndex ?? null,
-          // Submitting a quiz rewrites every one of its question rows. Writing a
-          // boolean here would un-index that quiz's bookmarks again on each
-          // submit, which is how the original bug kept coming back even for
-          // rows that had been saved correctly moments earlier.
-          isBookmarked: toBookmarkFlag(q.isBookmarked)
-        });
-      }
-    }
-
-    // 2. Update Quiz record (reflects the most recent attempt)
-    await db.quizzes.update(numId, {
-      completedAt: new Date().toISOString(),
-      score: resultData.score,
-      correct: resultData.correct,
-      incorrect: resultData.incorrect,
-      skipped: resultData.skipped,
-      percentage: resultData.percentage,
-      durationSeconds: resultData.durationSeconds,
-      marksObtained: resultData.marksObtained ?? resultData.score,
-      maxMarks: resultData.maxMarks ?? null,
-      marksLostToNegative: resultData.marksLostToNegative ?? 0,
-      accuracy: resultData.accuracy ?? null
-    });
-
-    // 3. Log attempt — the full, immutable history lives here, so retakes never
-    //    erase an earlier score even though the quiz row is overwritten.
-    return await db.attempts.add({
-      quizId: numId,
-      attemptToken: resultData.attemptToken || null,
-      quizSnapshot: { title: quizRecord.title, subject: quizRecord.subject, difficulty: quizRecord.difficulty, language: quizRecord.language, quizMode: resultData.quizMode || quizRecord.quizMode, ...resolveScoringConfig(quizRecord), examDurationSeconds: quizRecord.examDurationSeconds },
-      questionsSnapshot: JSON.parse(JSON.stringify(questionsState)),
-      attemptedAt: new Date().toISOString(),
-      score: resultData.score,
-      correct: resultData.correct,
-      incorrect: resultData.incorrect,
-      skipped: resultData.skipped,
-      percentage: resultData.percentage,
-      durationSeconds: resultData.durationSeconds,
-      marksObtained: resultData.marksObtained ?? resultData.score,
-      maxMarks: resultData.maxMarks ?? null,
-      marksLostToNegative: resultData.marksLostToNegative ?? 0,
-      accuracy: resultData.accuracy ?? null
-    });
-  });
-}
-
-/** Read the selected immutable attempt; old logs never pretend to have answer snapshots. */
-async function getQuizAttemptResult(quizId, attemptId = null) {
-  const quiz = await getQuizWithQuestions(quizId);
-  if (!quiz) return null;
-  if (attemptId == null) {
-    const attempts = await getAttemptsForQuiz(quizId);
-    if (!attempts.length) {
-      return {...quiz,questions:quiz.questions.map(q=>window.QuizQuality?.normalize(q)||{...q,options:Array.isArray(q.options)?q.options.map(String):Object.values(q.options||{}).map(String),correctAnswerIndex:-1,explanation:q.explanation||'This question needs a verified key and explanation before use.',reviewIssue:true})};
-    }
-    attemptId = attempts[0].id;
-  }
-  const attempt = await db.attempts.get(Number(attemptId));
-  if (!attempt || attempt.quizId !== Number(quizId)) return null;
-  const snapshots = Array.isArray(attempt.questionsSnapshot) ? attempt.questionsSnapshot : [];
-  const validSnapshots = snapshots.map(question => window.QuizQuality ? window.QuizQuality.normalize({ ...question, explanation: question?.explanation || 'No detailed explanation was saved for this question.' }) : question).filter(question=>question && Array.isArray(question.options));
-  const questions = validSnapshots.map((question,index) => {
-    const live = quiz.questions.find(item => item.id === question.id && item.questionText === question.questionText);
-    return { ...question, id:live?.id ?? -(index+1), originalQuestionId:question.id, bookmarkUnavailable:!live, isBookmarked: live ? live.isBookmarked : 0 };
-  });
-  return { ...quiz, ...attempt.quizSnapshot, ...attempt, id: quiz.id, attemptId: attempt.id,
-    completedAt: attempt.attemptedAt, questions, invalidSnapshotCount: snapshots.length-validSnapshots.length, legacySnapshotMissing: !Array.isArray(attempt.questionsSnapshot) };
-}
-
-/** Delete attempt results only; preserve the quiz, questions and bookmarks. */
-async function deleteQuizAttempts(keys) {
-  return await db.transaction('rw', [db.quizzes, db.questions, db.attempts], async () => {
-    const affected = new Set();
-    for (const key of keys) {
-      const [kind, rawId] = String(key).split(':'); const id = Number(rawId);
-      if (!Number.isInteger(id) || id < 1) throw new Error('Invalid attempt selected.');
-      if (kind === 'attempt') {
-        const attempt = await db.attempts.get(id);
-        if (attempt) { affected.add(attempt.quizId); await db.attempts.delete(id); }
-      } else if (kind === 'legacy') affected.add(id);
-      else throw new Error('Invalid attempt selected.');
-    }
-    for (const quizId of affected) {
-      const attempts = await db.attempts.where('quizId').equals(quizId).toArray();
-      const latest = attempts.sort((a,b) => new Date(b.attemptedAt)-new Date(a.attemptedAt) || Number(b.id)-Number(a.id))[0];
-      const fields = ['score','correct','incorrect','skipped','percentage','durationSeconds','marksObtained','marksLostToNegative','accuracy'];
-      const summary = { completedAt: latest?.attemptedAt || null };
-      fields.forEach(field => { summary[field] = latest?.[field] ?? 0; });
-      await db.quizzes.update(quizId, summary);
-      const answers = new Map((latest?.questionsSnapshot || []).map(question => [question.id, question.userSelectedOptionIndex]));
-      for (const question of await db.questions.where('quizId').equals(quizId).toArray()) await db.questions.update(question.id, { userSelectedOptionIndex: answers.get(question.id) ?? null });
-    }
-  });
-}
-
-async function updateQuizQuestion(questionId, changes) {
-  return await db.transaction('rw', [db.questions,db.quizzes], async () => {
-    const question = await db.questions.get(Number(questionId));
-    if (!question) throw new Error('Question no longer exists.');
-    const revised = { ...question, ...changes, answerOrigin: 'STUDENT_EDITED', aiReviewed: false };
-    const error = window.QuizQuality?.validate(revised);
-    if (error) throw new Error(error);
-    const normalized = window.QuizQuality ? window.QuizQuality.normalize(revised) : revised;
-    await db.questions.update(question.id, { ...normalized, answerOrigin: 'STUDENT_EDITED', aiReviewed:false, sourceMatched:false });
-  });
-}
-
-async function getQuizQuestion(questionId) {
-  return await db.questions.get(Number(questionId));
-}
-
-/**
- * Calculate the 8 learning metric statistics for Dashboard
- */
+/** Counters for the active study modules. */
 async function getDashboardStats() {
-  const allQuizzes = await db.quizzes.toArray();
-  const allQuestions = await db.questions.toArray();
-  const bookmarkedQuestions = allQuestions.filter(q => q.isBookmarked);
-
-  // Statistics come from the attempts log, not the quizzes table. The quiz row
-  // only holds the latest attempt, so a retake used to overwrite the earlier
-  // score and every metric silently under-counted the work actually done.
-  const allAttempts = await db.attempts.toArray();
-
-  // Older records predate the attempts log; fall back to the quiz row for those
-  // so historical stats don't vanish.
-  const quizzesWithoutAttempts = allQuizzes.filter(
-    q => q.completedAt && !allAttempts.some(a => a.quizId === q.id)
-  );
-  const attempts = [
-    ...allAttempts,
-    ...quizzesWithoutAttempts.map(q => ({
-      quizId: q.id,
-      attemptedAt: q.completedAt,
-      correct: q.correct || 0,
-      incorrect: q.incorrect || 0,
-      skipped: q.skipped || 0,
-      percentage: q.percentage || 0,
-      durationSeconds: q.durationSeconds || 0
-    }))
-  ];
-
-  const totalQuizzesTaken = attempts.length;
-  const questionsCompleted = attempts.reduce((acc, a) => acc + ((a.correct || 0) + (a.incorrect || 0)), 0);
-  const correctAnswers = attempts.reduce((acc, a) => acc + (a.correct || 0), 0);
-
-  const overallAccuracy = questionsCompleted > 0
-    ? Math.round((correctAnswers / questionsCompleted) * 100)
-    : 0;
-
-  const totalPercentages = attempts.reduce((acc, a) => acc + (a.percentage || 0), 0);
-  const averageScore = attempts.length > 0
-    ? Math.round(totalPercentages / attempts.length)
-    : 0;
-
-  const bestScore = attempts.length > 0
-    ? Math.max(...attempts.map(a => a.percentage || 0))
-    : 0;
-
-  const savedInLibrary = allQuizzes.length;
-
-  // Day streak from localStorage
-  const streakDays = Number(localStorage.getItem('hamsa_streak_days') || 1);
-
-  // Cross-module stats for full dashboard
-  const [
-    totalNotesCount, totalFlashcardDecks, totalCustomCards, totalCardReviews, dueCardsToday,
-    answerCount, teacherCount, savedExamCount
-  ] = await Promise.all([
+  const [totalNotesCount, totalFlashcardDecks, totalCustomCards, totalCardReviews, dueCardsToday, answerCount, teacherCount, savedExamCount] = await Promise.all([
     db.notes.count().catch(() => 0),
     db.customDecks.count().catch(() => 0),
     db.customCards.count().catch(() => 0),
-    db.cardReviews.count().catch(() => 0),
-    getDueCardsCount().catch(() => 0),
+    db.cardReviews.filter(isActiveCardReview).count().catch(() => 0),
+    typeof getDueCardsCount === 'function' ? getDueCardsCount().catch(() => 0) : 0,
     db.answers.count().catch(() => 0),
     db.aiTeacherExplanations.count().catch(() => 0),
     db.savedExams.count().catch(() => 0)
   ]);
-
-  return {
-    totalQuizzesTaken,
-    questionsCompleted,
-    correctAnswers,
-    overallAccuracy,
-    averageScore,
-    bestScore,
-    savedInLibrary,
-    savedBookmarksCount: bookmarkedQuestions.length,
-    dayStreak: streakDays,
-    totalNotesCount,
-    totalFlashcardDecks,
-    totalCustomCards,
-    totalCardReviews,
-    dueCardsToday,
-    // Written answers, AI Teacher lessons and saved exam alerts — surfaced as
-    // secondary dashboard tiles so every module reports real usage.
-    answerCount,
-    teacherCount,
-    savedExamCount
-  };
+  return { totalNotesCount, totalFlashcardDecks, totalCustomCards, totalCardReviews, dueCardsToday,
+    answerCount, teacherCount, savedExamCount, dayStreak: Number(localStorage.getItem('hamsa_streak_days') || 1),
+    totalLearningActivities: totalNotesCount + totalCardReviews + answerCount + teacherCount };
 }
 
 /**
  * Daily activity counts for the dashboard heatmap.
  *
- * Aggregates every kind of study action — quiz attempts, notes created/edited,
+ * Aggregates notes created/edited,
  * flashcard reviews, written answers and AI Teacher lessons — so the grid
- * reflects real effort rather than just quizzes.
+ * reflects activity in the current study modules.
  *
  * @param {number} days how far back to look (default 12 weeks)
  * @returns {Promise<{cells: Array, totalActive: number, maxCount: number, total: number}>}
@@ -759,17 +309,15 @@ async function getActivityHeatmap(days = 84) {
   };
 
   try {
-    const [attempts, notes, reviews, answers, lessons] = await Promise.all([
-      db.attempts.toArray().catch(() => []),
+    const [notes, reviews, answers, lessons] = await Promise.all([
       db.notes.toArray().catch(() => []),
       db.cardReviews.toArray().catch(() => []),
       db.answers.toArray().catch(() => []),
       db.aiTeacherExplanations.toArray().catch(() => [])
     ]);
 
-    attempts.forEach(a => bump(a.attemptedAt));
     notes.forEach(n => bump(n.updatedAt || n.createdAt));
-    reviews.forEach(r => bump(r.lastReviewedAt));
+    reviews.filter(isActiveCardReview).forEach(r => bump(r.lastReviewedAt));
     answers.forEach(a => bump(a.createdAt));
     lessons.forEach(l => bump(l.createdAt));
   } catch (err) {
@@ -808,278 +356,35 @@ async function getActivityHeatmap(days = 84) {
  * rather than only absolute totals.
  */
 async function getStudyMomentum() {
-  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
-  const now = new Date();
-  const thisWeekStart = startOfDay(new Date(now.getTime() - 6 * 86400000));
-  const lastWeekStart = startOfDay(new Date(now.getTime() - 13 * 86400000));
-
-  const inRange = (value, from, to) => {
-    if (!value) return false;
-    const d = new Date(value);
-    return !isNaN(d.getTime()) && d >= from && d < to;
-  };
-
-  try {
-    const attempts = await db.attempts.toArray().catch(() => []);
-
-    const thisWeek = attempts.filter(a => inRange(a.attemptedAt, thisWeekStart, new Date(now.getTime() + 86400000)));
-    const lastWeek = attempts.filter(a => inRange(a.attemptedAt, lastWeekStart, thisWeekStart));
-
-    const avg = (list) => {
-      if (!list.length) return 0;
-      return Math.round(list.reduce((s, a) => s + (a.percentage || 0), 0) / list.length);
-    };
-
-    const thisAvg = avg(thisWeek);
-    const lastAvg = avg(lastWeek);
-
-    return {
-      attemptsThisWeek: thisWeek.length,
-      attemptsLastWeek: lastWeek.length,
-      accuracyThisWeek: thisAvg,
-      accuracyLastWeek: lastAvg,
-      // null when there is no prior week to compare against, so the UI can stay
-      // silent instead of implying a 0% baseline.
-      accuracyDelta: lastWeek.length ? thisAvg - lastAvg : null,
-      attemptsDelta: lastWeek.length ? thisWeek.length - lastWeek.length : null,
-      minutesThisWeek: Math.round(thisWeek.reduce((s, a) => s + (a.durationSeconds || 0), 0) / 60)
-    };
-  } catch (err) {
-    console.warn('Could not compute study momentum:', err);
-    return {
-      attemptsThisWeek: 0, attemptsLastWeek: 0,
-      accuracyThisWeek: 0, accuracyLastWeek: 0,
-      accuracyDelta: null, attemptsDelta: null, minutesThisWeek: 0
-    };
+  const now = new Date(), end = new Date(now);
+  end.setHours(24, 0, 0, 0);
+  const thisWeekStart = new Date(end); thisWeekStart.setDate(end.getDate() - 7);
+  const lastWeekStart = new Date(thisWeekStart); lastWeekStart.setDate(thisWeekStart.getDate() - 7);
+  const inRange = (value, from, to) => { const date = new Date(value); return value && Number.isFinite(date.getTime()) && date >= from && date < to; };
+  const [notes, reviews, answers] = await Promise.all([
+    db.notes.toArray().catch(() => []), db.cardReviews.filter(isActiveCardReview).toArray().catch(() => []), db.answers.toArray().catch(() => [])
+  ]);
+  const momentum = {};
+  for (const [name, rows, date] of [['notes', notes, row => row.updatedAt || row.createdAt], ['reviews', reviews, row => row.lastReviewedAt], ['answers', answers, row => row.createdAt]]) {
+    const current = rows.filter(row => inRange(date(row), thisWeekStart, end)).length;
+    const previous = rows.filter(row => inRange(date(row), lastWeekStart, thisWeekStart)).length;
+    momentum[name + 'ThisWeek'] = current;
+    momentum[name + 'LastWeek'] = previous;
+    momentum[name + 'Delta'] = previous ? current - previous : null;
   }
+  return momentum;
 }
 
-/**
- * Calculate chart analytics data
- */
-async function getAnalyticsData() {
-  const allQuizzes = await db.quizzes.toArray();
-  const quizById = new Map(allQuizzes.map(q => [q.id, q]));
-  const allAttempts = await db.attempts.toArray();
-
-  // Analytics are driven by the attempts log so that re-attempting a quiz adds a
-  // data point instead of replacing one. Quizzes completed before the log existed
-  // are back-filled from the quiz row.
-  const legacy = allQuizzes
-    .filter(q => q.completedAt && !allAttempts.some(a => a.quizId === q.id))
-    .map(q => ({
-      quizId: q.id,
-      attemptedAt: q.completedAt,
-      correct: q.correct || 0,
-      incorrect: q.incorrect || 0,
-      skipped: q.skipped || 0,
-      percentage: q.percentage || 0
-    }));
-
-  const attempts = [...allAttempts, ...legacy]
-    .sort((a, b) => new Date(a.attemptedAt) - new Date(b.attemptedAt));
-
-  // 1. Donut Chart Data (Correct vs Incorrect vs Skipped)
-  const totalCorrect = attempts.reduce((sum, a) => sum + (a.correct || 0), 0);
-  const totalIncorrect = attempts.reduce((sum, a) => sum + (a.incorrect || 0), 0);
-  const totalSkipped = attempts.reduce((sum, a) => sum + (a.skipped || 0), 0);
-
-  // 2. Trend Line (last 10 attempts, so improvement across retakes is visible)
-  const recent10 = attempts.slice(-10);
-
-  // Number repeat attempts of the same quiz so the tooltip distinguishes them.
-  const seenCounts = new Map();
-  const trendPoints = recent10.map((a, idx) => {
-    const quiz = quizById.get(a.quizId);
-    const n = (seenCounts.get(a.quizId) || 0) + 1;
-    seenCounts.set(a.quizId, n);
-    const baseTitle = quiz ? quiz.title : 'Deleted quiz';
-    return {
-      label: `Q${idx + 1}`,
-      title: n > 1 ? `${baseTitle} (attempt ${n})` : baseTitle,
-      percentage: a.percentage || 0,
-      date: new Date(a.attemptedAt).toLocaleDateString()
-    };
-  });
-
-  // 3. Subject Mastery — aggregated across every attempt
-  const subjectMap = {};
-  attempts.forEach(a => {
-    const quiz = quizById.get(a.quizId);
-    const subj = (quiz && quiz.subject) || 'General Knowledge';
-    if (!subjectMap[subj]) {
-      subjectMap[subj] = { correct: 0, total: 0 };
-    }
-    subjectMap[subj].correct += (a.correct || 0);
-    subjectMap[subj].total += ((a.correct || 0) + (a.incorrect || 0));
-  });
-
-  const subjectMastery = Object.keys(subjectMap).map(subj => {
-    const item = subjectMap[subj];
-    const acc = item.total > 0 ? Math.round((item.correct / item.total) * 100) : 0;
-    return {
-      subject: subj,
-      accuracy: acc,
-      questionsAttempted: item.total
-    };
-  }).sort((a, b) => b.accuracy - a.accuracy).slice(0, 6);
-
-  return {
-    donut: {
-      correct: totalCorrect,
-      incorrect: totalIncorrect,
-      skipped: totalSkipped,
-      total: totalCorrect + totalIncorrect + totalSkipped
-    },
-    trend: trendPoints,
-    subjects: subjectMastery
-  };
-}
-
-/**
- * Get comprehensive database storage counts for Settings & Management
- */
+/** Summary counts exclude archived stores. */
 async function getDatabaseSummaryCounts() {
-  const [
-    quizzesCount, questionsCount, attemptsCount, notesCount,
-    deckCount, cardCount, reviewCount, answerCount, teacherCount, savedExamCount
-  ] = await Promise.all([
-    db.quizzes.count().catch(() => 0),
-    db.questions.count().catch(() => 0),
-    db.attempts.count().catch(() => 0),
-    db.notes.count().catch(() => 0),
-    db.customDecks.count().catch(() => 0),
-    db.customCards.count().catch(() => 0),
-    db.cardReviews.count().catch(() => 0),
-    db.answers.count().catch(() => 0),
-    db.aiTeacherExplanations.count().catch(() => 0),
-    db.savedExams.count().catch(() => 0)
+  const [notesCount, deckCount, cardCount, reviewCount, answerCount, teacherCount, savedExamCount, quizCount, quizAttemptCount] = await Promise.all([
+    db.notes.count().catch(() => 0), db.customDecks.count().catch(() => 0), db.customCards.count().catch(() => 0),
+    db.cardReviews.filter(isActiveCardReview).count().catch(() => 0), db.answers.count().catch(() => 0),
+    db.aiTeacherExplanations.count().catch(() => 0), db.savedExams.count().catch(() => 0),
+    db.pdfQuizzes.count().catch(() => 0), db.pdfQuizAttempts.count().catch(() => 0)
   ]);
-
-  return {
-    quizzesCount, questionsCount, attemptsCount, notesCount,
-    deckCount, cardCount, reviewCount, answerCount, teacherCount, savedExamCount,
-    totalRecords: quizzesCount + questionsCount + attemptsCount + notesCount +
-      deckCount + cardCount + reviewCount + answerCount + teacherCount + savedExamCount
-  };
-}
-
-/**
- * Flat, newest-first log of every attempt across all quizzes, enriched with the
- * parent quiz's metadata.
- *
- * The History view previously showed one row per quiz, so retaking a quiz
- * replaced the earlier entry and the log under-reported how much practice had
- * actually happened. `id` stays the quiz id so existing row actions (results,
- * retake, export, delete) keep working unchanged.
- */
-async function getAttemptHistory() {
-  const [allQuizzes, allAttempts] = await Promise.all([
-    db.quizzes.toArray(),
-    db.attempts.toArray()
-  ]);
-  const quizById = new Map(allQuizzes.map(q => [q.id, q]));
-
-  // Back-fill quizzes completed before the attempts log existed.
-  const legacy = allQuizzes
-    .filter(q => q.completedAt && !allAttempts.some(a => a.quizId === q.id))
-    .map(q => ({
-      id: undefined,
-      quizId: q.id,
-      attemptedAt: q.completedAt,
-      score: q.score,
-      correct: q.correct || 0,
-      incorrect: q.incorrect || 0,
-      skipped: q.skipped || 0,
-      percentage: q.percentage || 0,
-      durationSeconds: q.durationSeconds || 0,
-      marksObtained: q.marksObtained ?? null,
-      maxMarks: q.maxMarks ?? null,
-      marksLostToNegative: q.marksLostToNegative ?? 0,
-      accuracy: q.accuracy ?? null
-    }));
-
-  const combined = [...allAttempts, ...legacy];
-
-  // Number attempts per quiz in chronological order.
-  const perQuiz = new Map();
-  combined
-    .slice()
-    .sort((a, b) => new Date(a.attemptedAt) - new Date(b.attemptedAt))
-    .forEach(a => {
-      const list = perQuiz.get(a.quizId) || [];
-      list.push(a);
-      perQuiz.set(a.quizId, list);
-    });
-
-  const rows = [];
-  for (const [quizId, list] of perQuiz) {
-    const quiz = quizById.get(quizId);
-    list.forEach((a, idx) => {
-      rows.push({
-        ...a,
-        attemptId: a.id ?? null,
-        attemptNumber: idx + 1,
-        totalAttempts: list.length,
-        // Row actions operate on the quiz, so expose the quiz id as `id`.
-        id: quizId,
-        quizId,
-        title: a.quizSnapshot?.title || (quiz ? quiz.title : 'Deleted quiz'),
-        subject: a.quizSnapshot?.subject || (quiz ? quiz.subject : 'General'),
-        difficulty: a.quizSnapshot?.difficulty || (quiz ? quiz.difficulty : 'MEDIUM'),
-        totalQuestions: a.questionsSnapshot?.length ?? (quiz ? quiz.totalQuestions : (a.correct + a.incorrect + a.skipped)),
-        quizMode: quiz ? quiz.quizMode : null,
-        scoringPreset: quiz ? quiz.scoringPreset : null,
-        // Kept so existing templates reading completedAt still render.
-        completedAt: a.attemptedAt,
-        quizExists: Boolean(quiz)
-      });
-    });
-  }
-
-  return rows.sort((a, b) => new Date(b.attemptedAt) - new Date(a.attemptedAt));
-}
-
-/**
- * Every attempt of a single quiz, newest first, with an attempt number.
- * Lets the result screen show "attempt 3 of 5" and compare against earlier tries.
- */
-async function getAttemptsForQuiz(quizId) {
-  const numId = Number(quizId);
-  const rows = await db.attempts.where('quizId').equals(numId).toArray();
-
-  const ordered = rows.sort((a, b) => new Date(a.attemptedAt) - new Date(b.attemptedAt));
-  const total = ordered.length;
-
-  return ordered
-    .map((a, idx) => ({ ...a, attemptNumber: idx + 1, totalAttempts: total }))
-    .reverse();
-}
-
-/**
- * Best and latest attempt for a quiz, plus the change between them.
- */
-async function getQuizAttemptSummary(quizId) {
-  const attempts = await getAttemptsForQuiz(quizId);
-  if (attempts.length === 0) return null;
-
-  const latest = attempts[0];
-  const best = attempts.reduce(
-    (acc, a) => ((a.percentage || 0) > (acc.percentage || 0) ? a : acc),
-    attempts[0]
-  );
-  const previous = attempts[1] || null;
-
-  return {
-    totalAttempts: latest.totalAttempts,
-    latest,
-    best,
-    previous,
-    improvementFromPrevious: previous
-      ? Math.round(((latest.percentage || 0) - (previous.percentage || 0)) * 10) / 10
-      : null,
-    isPersonalBest: (latest.percentage || 0) >= (best.percentage || 0)
-  };
+  return { notesCount, deckCount, cardCount, reviewCount, answerCount, teacherCount, savedExamCount, quizCount, quizAttemptCount,
+    totalRecords: notesCount + deckCount + cardCount + reviewCount + answerCount + teacherCount + savedExamCount + quizCount + quizAttemptCount };
 }
 
 // =========================================================================
@@ -1105,14 +410,16 @@ async function getQuizAttemptSummary(quizId) {
  *  isCache    — regenerable data; excluded from "user data" counts
  */
 const BACKUP_TABLE_SPECS = [
-  { key: 'quizzes',               label: 'Quizzes',                autoId: true,  required: ['title'] },
+  { key: 'pdfQuizzes', label: 'PDF Quizzes', autoId: true, required: ['title', 'source', 'questions', 'difficulty', 'language', 'model', 'createdAt'] },
+  { key: 'pdfQuizAttempts', label: 'Quiz Attempts', autoId: true, required: ['answers', 'completedAt'], parentRef: {field: 'quizId', table: 'pdfQuizzes'} },
+  { key: 'quizzes', legacy: true,  label: 'Archived data',                autoId: true,  required: ['title'] },
   // `normalise` runs on every imported row before it is written. Backups taken
   // from a build older than v10 hold `isBookmarked: true/false`, and a boolean
   // in an indexed field is invisible to IndexedDB — restoring one verbatim would
   // silently hide those bookmarks all over again.
-  { key: 'questions',             label: 'Questions',              autoId: true,  required: ['questionText'], parentRef: { field: 'quizId', table: 'quizzes' },
+  { key: 'questions', legacy: true, label: 'Archived entries',              autoId: true,  required: ['questionText'], parentRef: { field: 'quizId', table: 'quizzes' },
     normalise: (row) => { row.isBookmarked = row.isBookmarked ? 1 : 0; } },
-  { key: 'attempts',              label: 'Quiz Attempts',          autoId: true,  required: [],               parentRef: { field: 'quizId', table: 'quizzes' } },
+  { key: 'attempts', legacy: true, label: 'Archived activity',          autoId: true,  required: [],               parentRef: { field: 'quizId', table: 'quizzes' } },
   { key: 'notes',                 label: 'Study Notes',            autoId: true,  required: ['title'] },
   { key: 'customDecks',           label: 'Flashcard Decks',        autoId: true,  required: ['title'] },
   { key: 'customCards',           label: 'Flashcards',             autoId: true,  required: ['front'],        parentRef: { field: 'deckId', table: 'customDecks' } },
@@ -1139,11 +446,33 @@ const BACKUP_PREFERENCE_KEYS = [
   'hamsa_textbook_theme',
   'hamsa_textbook_font',
   'hamsa_textbook_size',
-  'hamsa_exam_profile'
+  'hamsa_exam_profile',
+  'hamsa_saved_questions_v1'
 ];
 
+/** Saved questions are portable snapshots; they remain usable after deleting their source quiz. */
+function normaliseSavedQuizBookmarks(value) {
+  let list;
+  try { list = typeof value === 'string' && value.length <= 12 * 1024 * 1024 ? JSON.parse(value) : null; } catch { return null; }
+  if (!Array.isArray(list) || list.length > 10000) return null;
+  const saved = new Map();
+  const text = (value, max, empty = false) => typeof value === 'string' && value.length <= max && (empty || value.trim().length > 0);
+  for (const item of list) {
+    if (!item || !text(item.key, 100) || !text(item.question, 2000) || !Array.isArray(item.options) || item.options.length !== 4 || Array.from(item.options).some(option => !text(option, 1000) || !/[\p{L}\p{N}]/u.test(option)) || !Number.isInteger(item.answerIndex) || item.answerIndex < 0 || item.answerIndex > 3 || item.explanation != null && !text(item.explanation, 3000, true) || item.sourcePage != null && (!Number.isSafeInteger(item.sourcePage) || item.sourcePage < 1 || item.sourcePage > 1000) || item.quizTitle != null && !text(item.quizTitle, 200, true) || item.savedAt != null && !Number.isFinite(Date.parse(item.savedAt))) continue;
+    const options = item.options.map(option => option.normalize('NFKC').trim().replace(/\s+/g, ' '));
+    if (new Set(options).size !== 4 || item.optionExplanations != null && (!Array.isArray(item.optionExplanations) || item.optionExplanations.length !== 4 || Array.from(item.optionExplanations).some(reason => !text(reason, 1500)))) continue;
+    if (item.difficulty != null && !['EASY','MEDIUM','HARD','MIXED'].includes(item.difficulty) || ['topic','subject','chapter','exam'].some(key => item[key] != null && !text(item[key],120,true))) continue;
+    const bookmark = {key:item.key, question:item.question, options:item.options.slice(), answerIndex:item.answerIndex,
+      explanation:item.explanation || '', sourcePage:item.sourcePage ?? null, quizTitle:item.quizTitle || '', savedAt:item.savedAt || null};
+    for (const key of ['difficulty','topic','subject','chapter','exam']) if (item[key] != null) bookmark[key] = item[key];
+    if (item.optionExplanations) bookmark.optionExplanations = item.optionExplanations.slice();
+    if (!saved.has(bookmark.key)) saved.set(bookmark.key, bookmark);
+  }
+  return JSON.stringify([...saved.values()]);
+}
+
 const DATA_MODULES = {
-  QUIZZES: { label: 'Quizzes & attempts', tables: ['quizzes', 'questions', 'attempts'], reviewPrefix: 'q:' },
+  QUIZ: { label: 'PDF quizzes & attempts', tables: ['pdfQuizzes', 'pdfQuizAttempts'] },
   NOTES: { label: 'Study Notes', tables: ['notes'], reviewPrefix: 'note_' },
   FLASHCARDS: { label: 'Flashcards & revision progress', tables: ['customDecks', 'customCards', 'cardReviews'] },
   ANSWERS: { label: 'Answer Writing', tables: ['answers', 'answerDrafts'] },
@@ -1157,7 +486,10 @@ async function clearModuleData(moduleId) {
   if (!module) throw new Error('Unknown data module.');
   const tables = [...module.tables, ...(module.reviewPrefix ? ['cardReviews'] : [])].map(key => db[key]);
   const removed = {};
-  await db.transaction('rw', tables, async () => {
+  const savedQuestionsSnapshot = moduleId === 'QUIZ' ? localStorage.getItem('hamsa_saved_questions_v1') : null;
+  let bookmarksRemoved = false;
+  if (moduleId === 'QUIZ') removed.savedQuestions = JSON.parse(normaliseSavedQuizBookmarks(savedQuestionsSnapshot) || '[]').length;
+  try { await db.transaction('rw', tables, async () => {
     for (const key of module.tables) {
       removed[key] = await db[key].count();
       await db[key].clear();
@@ -1168,8 +500,13 @@ async function clearModuleData(moduleId) {
       for (const review of matching) await db.cardReviews.delete(review.id);
       removed.cardReviews = matching.length;
     }
-  });
-  if (moduleId === 'QUIZZES') await clearQuizDrafts();
+    // A storage failure rejects the database transaction too. Restore the
+    // bookmark snapshot if IndexedDB subsequently refuses the commit.
+    if (moduleId === 'QUIZ') { localStorage.removeItem('hamsa_saved_questions_v1'); bookmarksRemoved = true; }
+  }); } catch (error) {
+    if (bookmarksRemoved && savedQuestionsSnapshot !== null) localStorage.setItem('hamsa_saved_questions_v1', savedQuestionsSnapshot);
+    throw error;
+  }
   return removed;
 }
 
@@ -1194,11 +531,31 @@ async function _readAllTables() {
  */
 async function exportDatabaseBackup() {
   const tables = await _readAllTables();
+  // JSON cannot represent Blobs. Encode only for an explicit portable backup;
+  // archived records may still contain their original PDF as a Blob handle.
+  for (let index=0;index<tables.quizzes.length;index++) {
+    const quiz=tables.quizzes[index], source=quiz.originalSource;
+    if (!Array.isArray(source?.files) || !source.files.some(file=>file?.blob instanceof Blob)) continue;
+    const files=[];
+    for (const file of source.files) {
+      if (!(file?.blob instanceof Blob)) { files.push(file);continue; }
+      const data=await new Promise((resolve,reject)=>{
+        const reader=new FileReader();reader.onload=()=>resolve(reader.result);
+        reader.onerror=()=>reject(new Error('The original PDF could not be included in the backup. Retry the backup.'));
+        reader.readAsDataURL(new Blob([file.blob],{type:'application/pdf'}));
+      });
+      const {blob,...metadata}=file;files.push({...metadata,data});
+    }
+    tables.quizzes[index]={...quiz,originalSource:{...source,files}};
+  }
 
   const preferences = {};
   for (const key of BACKUP_PREFERENCE_KEYS) {
     const val = localStorage.getItem(key);
-    if (val !== null) preferences[key] = val;
+    if (val !== null) {
+      const safeValue = key === 'hamsa_saved_questions_v1' ? normaliseSavedQuizBookmarks(val) : val;
+      if (safeValue !== null) preferences[key] = safeValue;
+    }
   }
 
   const summary = {};
@@ -1258,7 +615,10 @@ function _normaliseBackupPayload(parsed) {
   for (const [k, v] of Object.entries(rawPrefs)) {
     if (v === null || v === undefined) continue;
     const storageKey = BACKUP_PREFERENCE_KEYS.includes(k) ? k : legacyPrefMap[k];
-    if (storageKey) preferences[storageKey] = String(v);
+    if (storageKey) {
+      const safeValue = storageKey === 'hamsa_saved_questions_v1' ? normaliseSavedQuizBookmarks(typeof v === 'string' ? v : JSON.stringify(v)) : String(v);
+      if (safeValue !== null) preferences[storageKey] = safeValue;
+    }
   }
 
   return { tables, preferences };
@@ -1282,6 +642,21 @@ function _validateBackupTables(tables) {
 
       const missing = spec.required.filter(f => row[f] === undefined || row[f] === null || row[f] === '');
       if (missing.length > 0) { skipped++; continue; }
+      if (spec.key === 'pdfQuizzes') {
+        try { validatePdfQuizRecord(row); } catch { skipped++; continue; }
+        if (row.id !== undefined) {
+          if (!Number.isSafeInteger(Number(row.id)) || Number(row.id) < 1) { skipped++; continue; }
+          row.id = Number(row.id);
+        }
+      }
+      if (spec.key === 'pdfQuizAttempts' && (!Number.isSafeInteger(Number(row.quizId)) || Number(row.quizId) < 1 || !Array.isArray(row.answers) || !Number.isFinite(Date.parse(row.completedAt)))) { skipped++; continue; }
+      if (spec.key === 'pdfQuizAttempts') {
+        row.quizId = Number(row.quizId);
+        if (row.id !== undefined) {
+          if (!Number.isSafeInteger(Number(row.id)) || Number(row.id) < 1) { skipped++; continue; }
+          row.id = Number(row.id);
+        }
+      }
       if (spec.key === 'customDecks' && (typeof row.title !== 'string' || !row.title.trim() || row.title.length > 200 || row.subject != null && typeof row.subject !== 'string')) { skipped++; continue; }
       if (spec.key === 'customCards' && (typeof row.front !== 'string' || !row.front.trim() || row.front.length > 12000 || typeof row.back !== 'string' || !row.back.trim() || row.back.length > 12000 || row.explanation != null && (typeof row.explanation !== 'string' || row.explanation.length > 20000) || !Number.isSafeInteger(Number(row.deckId)) || Number(row.deckId) < 1)) { skipped++; continue; }
       if (spec.key === 'cardReviews') {
@@ -1321,6 +696,16 @@ function _validateBackupTables(tables) {
   const orphans=cards.length-validCards.length;
   tables.customCards=validCards;
   report.customCards.imported-=orphans;report.customCards.skipped+=orphans;totalValid-=orphans;
+  const quizzes = new Map((tables.pdfQuizzes || []).map(row => [Number(row.id), row]));
+  const attempts = tables.pdfQuizAttempts || [], validAttempts = [];
+  for (const attempt of attempts) {
+    const quiz = quizzes.get(Number(attempt.quizId));
+    try {
+      if (!quiz) throw new Error('Missing parent quiz.');
+      validAttempts.push({...attempt, ...scorePdfQuizAttempt(quiz, attempt)});
+    } catch { report.pdfQuizAttempts.imported--; report.pdfQuizAttempts.skipped++; totalValid--; }
+  }
+  tables.pdfQuizAttempts = validAttempts;
   return { report, totalValid };
 }
 
@@ -1376,12 +761,13 @@ async function importDatabaseBackup(jsonString, options = {}) {
   const { tables, preferences } = _normaliseBackupPayload(parsed);
   const { report, totalValid } = _validateBackupTables(tables);
   let importedTotal=totalValid;
+  const savedQuestionsCount = preferences.hamsa_saved_questions_v1 ? JSON.parse(preferences.hamsa_saved_questions_v1).length : 0;
 
   const hasAnyKnownTable = BACKUP_TABLE_SPECS.some(s => Array.isArray(tables[s.key]) && tables[s.key].length > 0);
-  if (!hasAnyKnownTable) {
-    throw new Error('No recognisable Hamsa Vidya data found in this file. Expected at least one of: quizzes, notes, flashcard decks, answers or AI Teacher entries.');
+  if (!hasAnyKnownTable && !savedQuestionsCount) {
+    throw new Error('No recognisable Hamsa Vidya data found in this file. Expected notes, flashcard decks, answers, AI Teacher entries or archived backup data.');
   }
-  if (totalValid === 0) {
+  if (totalValid === 0 && !savedQuestionsCount) {
     throw new Error('Every record in this backup failed validation, so nothing would be restored. Your existing data has been left untouched.');
   }
 
@@ -1443,6 +829,13 @@ async function importDatabaseBackup(jsonString, options = {}) {
           }
 
           if (spec.key === 'questions' && incoming.sourceQuizId) incoming.sourceQuizId = idMaps.quizzes?.get(Number(incoming.sourceQuizId)) || incoming.quizId;
+          if (spec.key === 'customDecks' && incoming.sourceQuizId && incoming.quizConversionKey) {
+            const mappedQuiz = idMaps.pdfQuizzes?.get(Number(incoming.sourceQuizId));
+            if (mappedQuiz) {
+              incoming.sourceQuizId = mappedQuiz;
+              if (Array.isArray(incoming.sourceQuestionIndices)) incoming.quizConversionKey = `quiz:${mappedQuiz}:${incoming.sourceQuizCreatedAt}:${incoming.sourceQuestionIndices.join(',')}`;
+            } else { delete incoming.sourceQuizId; delete incoming.quizConversionKey; }
+          }
           if (spec.key === 'attempts' && Array.isArray(incoming.questionsSnapshot)) incoming.questionsSnapshot = incoming.questionsSnapshot.map(question => ({ ...question, id: idMaps.questions?.get(Number(question?.id)) ?? null, quizId: incoming.quizId, sourceQuizId:idMaps.quizzes?.get(Number(question?.sourceQuizId)) || incoming.quizId }));
           if (spec.key === 'cardReviews') {
             const key=String(incoming.cardKey||''),match=key.match(/^(q:|custom:|note:|note_)(\d+)(.*)$/);
@@ -1487,8 +880,16 @@ async function importDatabaseBackup(jsonString, options = {}) {
   // ---- 5. Preferences (non-fatal — data is already safely in) ------------
   let preferencesRestored = 0;
   try {
+    if (mode === 'REPLACE' && !preferences.hamsa_saved_questions_v1) localStorage.removeItem('hamsa_saved_questions_v1');
     for (const [key, val] of Object.entries(preferences)) {
-      localStorage.setItem(key, val);
+      let restoredValue = val;
+      if (key === 'hamsa_saved_questions_v1' && mode === 'MERGE') {
+        const current = JSON.parse(normaliseSavedQuizBookmarks(prefSnapshot[key]) || '[]');
+        const merged = new Map(current.map(item => [item.key,item]));
+        for (const item of JSON.parse(val)) if (!merged.has(item.key)) merged.set(item.key,item);
+        restoredValue = JSON.stringify([...merged.values()]);
+      }
+      localStorage.setItem(key, restoredValue);
       preferencesRestored++;
     }
   } catch (err) {
@@ -1512,6 +913,7 @@ async function importDatabaseBackup(jsonString, options = {}) {
     exportedAt: parsed.exportedAt || null,
     totalImported: importedTotal,
     preferencesRestored,
+    savedQuestionsRestored:preferencesRestored ? savedQuestionsCount : 0,
     profileRestored: Boolean(preferences.hamsa_exam_profile),
     tables: report
   };
@@ -1537,6 +939,7 @@ async function inspectDatabaseBackup(jsonString) {
     totalRecords: totalValid,
     hasProfile: Boolean(preferences.hamsa_exam_profile),
     preferenceCount: Object.keys(preferences).length,
+    savedQuestionsCount: preferences.hamsa_saved_questions_v1 ? JSON.parse(preferences.hamsa_saved_questions_v1).length : 0,
     tables: report
   };
 }
@@ -1592,7 +995,6 @@ function migrateLegacyNote(note) {
     ],
     glossaryTerms: note.glossaryTerms || [],
     annotations: note.annotations || { highlights: [], bookmarks: [], personalNotes: [] },
-    quizzes: note.quizzes || [],
     metadata: {
       wordCount: words,
       charCount: (note.content || '').length,
@@ -1653,7 +1055,6 @@ async function saveNewNote(noteData) {
     editHistory: Array.isArray(noteData.editHistory) ? noteData.editHistory : [],
     recallAnswers: noteData.recallAnswers || {},
     readingPosition: noteData.readingPosition || null,
-    quizzes: Array.isArray(noteData.quizzes) ? noteData.quizzes : [],
     annotations: noteData.annotations || { highlights: [], bookmarks: [], personalNotes: [] },
     content: contentText,
     metadata: {
@@ -1796,6 +1197,7 @@ async function clearDatabase(options = {}) {
   const removed = {};
 
   for (const spec of BACKUP_TABLE_SPECS) {
+    if (spec.legacy) continue;
     const table = db[spec.key];
     if (!table) continue;
     try {
@@ -1807,7 +1209,9 @@ async function clearDatabase(options = {}) {
     }
   }
 
-  await clearQuizDrafts();
+  // Bookmarks belong to quiz data even when display preferences are retained.
+  try { localStorage.removeItem('hamsa_saved_questions_v1'); } catch { /* database removal still succeeds */ }
+
   if (options.includePreferences) {
     for (const key of BACKUP_PREFERENCE_KEYS) {
       try { localStorage.removeItem(key); } catch { /* ignore */ }
@@ -1820,75 +1224,21 @@ async function clearDatabase(options = {}) {
 /**
  * =========================================================================
  * GLOBAL SEARCH ENGINE (Cross-Module Unified Content Indexer)
- * Searches seamlessly across Quizzes, Individual Questions, and Study Notes.
+ * Searches saved Study Notes.
  * =========================================================================
  */
 async function searchGlobalContent(rawQuery) {
   if (!rawQuery || typeof rawQuery !== 'string') {
-    return { quizzes: [], questions: [], notes: [], totalCount: 0 };
+    return { notes: [], totalCount: 0 };
   }
 
   const query = rawQuery.trim().toLowerCase();
   if (!query) {
-    return { quizzes: [], questions: [], notes: [], totalCount: 0 };
+    return { notes: [], totalCount: 0 };
   }
 
   try {
-    const [allQuizzes, allQuestions, allNotes] = await Promise.all([
-      db.quizzes.toArray().catch(() => []),
-      db.questions.toArray().catch(() => []),
-      getAllNotes().catch(() => [])
-    ]);
-
-    const quizMap = new Map();
-    allQuizzes.forEach(q => quizMap.set(q.id, q));
-
-    // 1. Search Quizzes (Title, Subject, Source)
-    const matchedQuizzes = [];
-    for (const quiz of allQuizzes) {
-      const titleMatch = quiz.title && quiz.title.toLowerCase().includes(query);
-      const subjectMatch = quiz.subject && quiz.subject.toLowerCase().includes(query);
-      const sourceMatch = quiz.sourceTitle && quiz.sourceTitle.toLowerCase().includes(query);
-
-      if (titleMatch || subjectMatch || sourceMatch) {
-        matchedQuizzes.push({
-          id: quiz.id,
-          title: quiz.title,
-          subject: quiz.subject || 'General Knowledge',
-          difficulty: quiz.difficulty || 'MEDIUM',
-          totalQuestions: quiz.totalQuestions || 0,
-          percentage: quiz.percentage ?? null,
-          completedAt: quiz.completedAt || null,
-          matchField: titleMatch ? 'Title' : (subjectMatch ? 'Subject' : 'Source')
-        });
-        if (matchedQuizzes.length >= 25) break;
-      }
-    }
-
-    // 2. Search Questions (Question Stem, Options, Explanation)
-    const matchedQuestions = [];
-    for (const q of allQuestions) {
-      const qTextMatch = q.questionText && q.questionText.toLowerCase().includes(query);
-      const optMatch = Array.isArray(q.options) && q.options.some(opt => opt && opt.toLowerCase().includes(query));
-      const expMatch = q.explanation && q.explanation.toLowerCase().includes(query);
-
-      if (qTextMatch || optMatch || expMatch) {
-        const parentQuiz = quizMap.get(q.quizId);
-        matchedQuestions.push({
-          id: q.id,
-          quizId: q.quizId,
-          questionText: q.questionText,
-          quizTitle: parentQuiz ? parentQuiz.title : 'Study Quiz',
-      language:parentQuiz?.language||null,
-          subject: parentQuiz ? parentQuiz.subject : 'General',
-          explanation: q.explanation || '',
-          matchField: qTextMatch ? 'Question' : (optMatch ? 'Options' : 'Explanation')
-        });
-        if (matchedQuestions.length >= 35) break;
-      }
-    }
-
-    // 3. Search Study Notes (Title, Subject, Description, Sections & Content)
+    const allNotes = await getAllNotes();
     const matchedNotes = [];
     for (const note of allNotes) {
       const titleMatch = note.title && note.title.toLowerCase().includes(query);
@@ -1937,14 +1287,12 @@ async function searchGlobalContent(rawQuery) {
     }
 
     return {
-      quizzes: matchedQuizzes,
-      questions: matchedQuestions,
       notes: matchedNotes,
-      totalCount: matchedQuizzes.length + matchedQuestions.length + matchedNotes.length
+      totalCount: matchedNotes.length
     };
   } catch (err) {
     console.error('Error during searchGlobalContent:', err);
-    return { quizzes: [], questions: [], notes: [], totalCount: 0 };
+    return { notes: [], totalCount: 0 };
   }
 }
 
@@ -2190,7 +1538,7 @@ async function saveAiTeacherExplanation(data) {
     // version(7) declaration), and IndexedDB omits boolean-valued records from
     // an index. The AI Teacher library happens to read with an in-memory
     // filter, so it works either way — but storing an un-indexable value leaves
-    // the same landmine the questions table already stepped on.
+    // inconsistent bookmark indexing in older records.
     isBookmarked: toBookmarkFlag(data.isBookmarked),
     createdAt: data.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
@@ -2309,7 +1657,3 @@ async function toggleBookmarkAiTeacherExplanation(id) {
 async function deleteAiTeacherExplanation(id) {
   return await db.aiTeacherExplanations.delete(Number(id));
 }
-
-
-
-

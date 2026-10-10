@@ -1242,10 +1242,8 @@ class ToolsView {
       return;
     }
 
-    if (!window.PDFLib) {
-      window.app && window.app.showToast('PDF-Lib engine is loading. Please retry in 1 second.', 'warning');
-      return;
-    }
+    try { await window.UIUtils.ensurePdfEngine('editing'); }
+    catch(error) { window.app?.showToast(error.message,'error');return; }
 
     window.app && window.app.showToast(`Loading ${validFiles.length} PDF file(s)...`, 'info');
 
@@ -1360,6 +1358,7 @@ class ToolsView {
     }
 
     try {
+      await window.UIUtils.ensurePdfEngine('editing');
       const mergedPdf = await window.PDFLib.PDFDocument.create();
       const addPageNums = document.getElementById('pdf-merge-add-page-nums')?.checked;
 
@@ -1530,6 +1529,7 @@ class ToolsView {
     }
 
     try {
+      await window.UIUtils.ensurePdfEngine('editing');
       const arrayBuffer = await file.arrayBuffer();
       const pdfDoc = await window.PDFLib.PDFDocument.load(arrayBuffer, { ignoreEncryption: true });
       const totalPages = pdfDoc.getPageCount();
@@ -1719,6 +1719,7 @@ class ToolsView {
     }
 
     try {
+      await window.UIUtils.ensurePdfEngine('editing');
       const newDoc = await window.PDFLib.PDFDocument.create();
       const zeroIndexedPages = pages.map(p => p - 1);
       const copiedPages = await newDoc.copyPages(this.pdfSplitState.pdfDoc, zeroIndexedPages);

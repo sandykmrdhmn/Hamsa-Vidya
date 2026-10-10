@@ -4,8 +4,7 @@
 
    Paired with js/views/dashboard.js. Every class here is namespaced `.dash-*`
    so it cannot collide with the legacy dashboard rules still living in
-   css/components/02-dashboard.css (which that file's byte-identity check
-   forbids us from editing).
+   css/components/02-dashboard.css.
 
    LAYOUT INTENT
    The old dashboard rendered eight identically sized metric cards and nine
@@ -17,7 +16,7 @@
      launchpad   three intent columns, each with its own accent
      consistency full-bleed heatmap, the widest element on the page
      metrics     4 ringed primaries, then 8 compact secondaries
-     charts      existing .charts-grid, unchanged
+     modules     saved notes and spaced-repetition activity
 
    MOTION
    All motion is additive. Counters, rings and scroll reveals each degrade to a
@@ -25,7 +24,7 @@
    prefers-reduced-motion. Decorative layers are aria-hidden in the markup.
 
    LOAD ORDER
-   Linked after css/components/10-tools.css and before css/quiz.css.
+   Linked after css/components/10-tools.css and before the study controls.
    ========================================================================== */
 
 
@@ -1660,30 +1659,41 @@
 
 
 /* ==========================================================================
-   9. CHARTS — the existing .charts-grid / .chart-card pattern is reused, so
-   only the full-width subject card needs an adjustment here.
-   ========================================================================== */
-
-.dash-charts .charts-grid {
-  margin-bottom: clamp(0.85rem, 2vw, 1.35rem);
-}
-
-.dash-subject-card {
-  width: 100%;
-}
-
-/* Recent quizzes reuses .quiz-cards-list; only the rhythm needs adjusting so
-   it matches the gaps used everywhere else on this page. */
-.dash-recent .quiz-cards-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-
-/* ==========================================================================
    10. MODULE ACTIVITY (notes + spaced repetition)
    ========================================================================== */
+
+.dash-module-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 1.5rem;
+}
+
+.dash-module-card {
+  background: var(--glass-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-xl);
+  padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.dash-module-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.dash-module-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+@media (max-width: 960px) {
+  .dash-module-grid { grid-template-columns: 1fr; }
+}
 
 .dash-note-list,
 .dash-srs-list {

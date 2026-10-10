@@ -1,454 +1,77 @@
-/**
- * HAMSA VIDYA (हंस विद्या) — Library & Saved Knowledge Base Controller
- * Dynamic Tabs: Tab 1 (All Quizzes with search/sort/filter) & Tab 2 (Saved Bookmarks with dynamic practice CTA)
- */
-
+/** Saved Study Notes library. Uses the same local notes as the textbook reader. */
 class LibraryView {
   constructor() {
     this.container = document.getElementById('view-library');
-    this.activeTab = 'QUIZZES'; // 'QUIZZES' or 'BOOKMARKS'
-
-    // Search & Filter State
     this.searchQuery = '';
-    this.selectedDifficulty = 'ALL';
     this.selectedSort = 'NEWEST';
-    this.revealedBookmarkIds = new Set();
-
-    // Saved-questions subject switch. 'ALL' shows every subject, grouped under
-    // its own heading; any other value narrows to that one subject.
-    this.bookmarkSubject = 'ALL';
-    this.page=0;
+    this.subject = 'ALL';
+    this.page = 0;
+    this.pageSize = 12;
+    this._renderVersion = 0;
   }
 
-  async render(initialTab) {
-    if (initialTab) {
-      this.activeTab = initialTab.toUpperCase();
-    }
+  escape(value) { return SecurityUtils.escapeHtml(String(value ?? '')); }
+
+  async render() {
+    this.container = document.getElementById('view-library');
     if (!this.container) return;
-
-    const version=this._renderVersion=(this._renderVersion||0)+1;
-    const [allQuizzes,bookmarks]=await Promise.all([getAllQuizzes(),getBookmarkedQuestions()]);
-    if(version!==this._renderVersion) return;
-
-    // Subject buckets for the saved-questions switch. Derived from the same
-    // helper the sections render from, so a chip's count can never disagree
-    // with the number of cards it reveals.
-    const bookmarkGroups = groupBookmarksBySubject(bookmarks);
-
-    // A subject the user had selected can disappear — they removed its last
-    // bookmark, or deleted the parent quiz. Falling back to ALL avoids an empty
-    // screen with an active filter the chips no longer offer.
-    if (this.bookmarkSubject !== 'ALL' &&
-        !bookmarkGroups.some(g => g.subject === this.bookmarkSubject)) {
-      this.bookmarkSubject = 'ALL';
-    }
-
-    const visibleGroups = this.bookmarkSubject === 'ALL'
-      ? bookmarkGroups
-      : bookmarkGroups.filter(g => g.subject === this.bookmarkSubject);
-
-    const visibleBookmarkCount = visibleGroups.reduce((n, g) => n + g.questions.length, 0);
-
-    // Filter & sort quizzes
-    let filteredQuizzes = allQuizzes.filter(q => {
-      const matchSearch = (q.title || '').toLowerCase().includes(this.searchQuery.toLowerCase()) ||
-                          (q.subject || '').toLowerCase().includes(this.searchQuery.toLowerCase());
-      const matchDiff = this.selectedDifficulty === 'ALL' || q.difficulty === this.selectedDifficulty;
-      return matchSearch && matchDiff;
-    });
-
-    if (this.selectedSort === 'NEWEST') {
-      filteredQuizzes.sort((a, b) => (b.id || 0) - (a.id || 0));
-    } else if (this.selectedSort === 'OLDEST') {
-      filteredQuizzes.sort((a, b) => (a.id || 0) - (b.id || 0));
-    } else if (this.selectedSort === 'HIGHEST') {
-      filteredQuizzes.sort((a, b) => (b.percentage || 0) - (a.percentage || 0));
-    } else if (this.selectedSort === 'LOWEST') {
-      filteredQuizzes.sort((a, b) => (a.percentage || 0) - (b.percentage || 0));
-    }
-
-    // Hero counters: what is actually in the library, and how much of it has
-    // been attempted — the two things a student opens this tab to check.
-    const completedCount = allQuizzes.filter(q => q.completedAt).length;
-    const subjectCount = new Set(allQuizzes.map(q => q.subject).filter(Boolean)).size;
-
-    const heroHtml = UIUtils.buildViewHero({
-      accent: 'amber',
-      icon: 'library',
-      eyebrow: 'Knowledge Base',
-      title: 'Everything you have',
-      titleAccent: 'built and saved.',
-      hindi: 'ज्ञान संग्रह — आपका निजी पुस्तकालय',
-      tagline: 'Every generated quiz and every bookmarked question in one place. Search, re-attempt, export as a printable paper, or send a set straight to flashcards.',
-      stats: [
-        { value: allQuizzes.length, label: 'Quizzes saved' },
-        { value: completedCount, label: 'Attempted' },
-        { value: bookmarks.length, label: 'Bookmarked Qs' },
-        { value: subjectCount, label: 'Subjects' }
-      ],
-      actions: [
-        { label: 'Create New Quiz', icon: 'plus', onclick: "app.navigate('create-quiz')" },
-        { label: 'View History', icon: 'history', onclick: "app.navigate('quiz-history')", variant: 'ghost' }
-      ]
-    });
-
-    const focused=document.activeElement?.id==='quiz-library-search';const start=document.activeElement?.selectionStart,end=document.activeElement?.selectionEnd;
-    const visibleCount=this.activeTab==='QUIZZES'?filteredQuizzes.length:visibleBookmarkCount;
-    this.page=Math.min(this.page,Math.max(0,Math.ceil(visibleCount/20)-1));
-    const visibleIds=new Set(visibleGroups.flatMap(g=>g.questions).slice(this.page*20,this.page*20+20).map(q=>q.id));
-    this.container.innerHTML = `
-      <div class="page-column">
-        ${heroHtml}
-
-        <!-- Library Source Tabs -->
-        <div class="source-tabs">
-          <button class="source-tab-btn ${this.activeTab === 'QUIZZES' ? 'active' : ''}" onclick="libraryView.setTab('QUIZZES')">
-            <i data-lucide="layers"></i>
-            <span>Tab 1: All Quizzes (${allQuizzes.length})</span>
-          </button>
-          <button class="source-tab-btn ${this.activeTab === 'BOOKMARKS' ? 'active' : ''}" onclick="libraryView.setTab('BOOKMARKS')">
-            <i data-lucide="bookmark"></i>
-            <span>Tab 2: Saved Questions (${bookmarks.length})</span>
-          </button>
-        </div>
-
-        <div class="quiz-pagination"><button class="btn btn-secondary btn-sm" ${this.page===0?'disabled':''} onclick="libraryView.page--;libraryView.render()">Previous</button><span>Page ${this.page+1} / ${Math.max(1,Math.ceil(visibleCount/20))}</span><button class="btn btn-secondary btn-sm" ${(this.page+1)*20>=visibleCount?'disabled':''} onclick="libraryView.page++;libraryView.render()">Next</button></div>
-        <!-- ================================================================= -->
-        <!-- TAB 1: ALL QUIZZES -->
-        <!-- ================================================================= -->
-        ${this.activeTab === 'QUIZZES' ? `
-          <!-- Search & Filter Toolbar -->
-          <div class="glass-panel" style="padding:1rem 1.25rem; display:flex; flex-direction:column; gap:0.85rem;">
-            <div style="display:flex; gap:0.75rem; align-items:center; flex-wrap:wrap;">
-              <div style="flex:1; min-width:240px; position:relative;">
-                <input id="quiz-library-search" type="text" class="study-textarea" style="min-height:42px; padding:0.4rem 0.85rem 0.4rem 2.2rem;"
-                  placeholder="Search quizzes by title or subject..." value="${SecurityUtils.escapeHtml(this.searchQuery)}" oninput="libraryView.onSearchChange(this.value)">
-                <i data-lucide="search" style="position:absolute; left:10px; top:12px; width:16px; height:16px; color:var(--text-muted);"></i>
-              </div>
-
-              <!-- Sort Dropdown -->
-              <select class="study-textarea" style="width:auto; min-height:42px; padding:0.4rem 1rem; cursor:pointer;" onchange="libraryView.onSortChange(this.value)">
-                <option value="NEWEST" ${this.selectedSort === 'NEWEST' ? 'selected' : ''}>Newest First</option>
-                <option value="OLDEST" ${this.selectedSort === 'OLDEST' ? 'selected' : ''}>Oldest First</option>
-                <option value="HIGHEST" ${this.selectedSort === 'HIGHEST' ? 'selected' : ''}>Highest Score</option>
-                <option value="LOWEST" ${this.selectedSort === 'LOWEST' ? 'selected' : ''}>Lowest Score</option>
-              </select>
-            </div>
-
-            <!-- Difficulty Filter Chips -->
-            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-              <span style="font-size:0.82rem; font-weight:600; color:var(--text-muted);">Difficulty:</span>
-              ${['ALL', 'EASY', 'MEDIUM', 'HARD'].map(d => `
-                <div class="select-chip ${this.selectedDifficulty === d ? 'active' : ''}" style="padding:0.25rem 0.75rem; font-size:0.8rem;" onclick="libraryView.setDifficultyFilter('${d}')">
-                  ${d === 'ALL' ? 'All Difficulties' : d}
-                </div>
-              `).join('')}
-            </div>
-          </div>
-
-          <!-- Quizzes List -->
-          <div class="quiz-cards-list">
-            ${filteredQuizzes.length === 0 ? `
-              <div class="glass-panel" style="padding:3rem 2rem; text-align:center; color:var(--text-muted);">
-                <i data-lucide="folder-x" style="width:48px;height:48px;margin-bottom:0.75rem;opacity:0.5;"></i>
-                <p style="font-size:1.05rem; font-weight:600;">No quizzes found</p>
-                <p style="font-size:0.85rem; margin-top:0.25rem;">Try adjusting your search query or generate a new quiz.</p>
-              </div>
-            ` : filteredQuizzes.slice(this.page*20,this.page*20+20).map(q => `
-              <div class="quiz-list-item">
-                <div class="quiz-info">
-                  <div class="quiz-item-title">${SecurityUtils.escapeHtml(q.title)}</div>
-                  <div class="quiz-meta-row">
-                    <span class="badge badge-primary">${SecurityUtils.escapeHtml(q.subject)}</span>
-                    <span class="badge badge-muted">${SecurityUtils.escapeHtml(q.difficulty)}</span>
-                    <span class="badge badge-muted">${SecurityUtils.escapeHtml(q.quizMode)}</span>
-                    <span>${Number(q.totalQuestions)||0} Questions</span>
-                    ${q.pageRangeText ? `<span>• ${SecurityUtils.escapeHtml(q.pageRangeText)}</span>` : ''}
-                    <span>• ${new Date(q.createdAt).toLocaleDateString()}</span>
-                  </div>
-                </div>
-
-                <div class="quiz-item-actions">
-                  ${q.completedAt ? `
-                    <span class="badge ${q.percentage >= 70 ? 'badge-success' : 'badge-warning'}">
-                      Score: ${Number(q.percentage)||0}%
-                    </span>
-                    <button class="btn btn-secondary btn-sm" onclick="app.viewQuizResult(${Number(q.id)})">
-                      <i data-lucide="bar-chart"></i>
-                      <span>Results</span>
-                    </button>
-                  ` : `
-                    <span class="badge badge-muted">Not Attempted</span>
-                    <button class="btn btn-primary btn-sm" onclick="app.startQuiz(${Number(q.id)})">
-                      <i data-lucide="play"></i>
-                      <span>Take Quiz</span>
-                    </button>
-                  `}
-
-                  <button class="btn btn-secondary btn-sm" title="Retake Quiz" onclick="app.startQuiz(${Number(q.id)})">
-                    <i data-lucide="rotate-ccw" style="width:16px;height:16px;"></i>
-                  </button>
-
-                  <button class="icon-btn" title="Export A4 PDF" onclick="app.exportQuizPdf(${Number(q.id)})">
-                    <i data-lucide="file-down" style="width:18px;height:18px;"></i>
-                  </button>
-
-                  <button class="icon-btn" style="color:var(--color-error);" title="Delete Quiz" onclick="libraryView.confirmDelete(${Number(q.id)})">
-                    <i data-lucide="trash-2" style="width:18px;height:18px;"></i>
-                  </button>
-                </div>
-              </div>
-            `).join('')}
-          </div>
-        ` : `
-          <!-- ================================================================= -->
-          <!-- TAB 2: SAVED QUESTIONS (BOOKMARKS) -->
-          <!-- ================================================================= -->
-          <div>
-            ${bookmarks.length > 0 ? `
-              <!-- CTA to Launch Practice Drill from Bookmarks -->
-              <div class="export-pdf-banner" style="margin-bottom:1.5rem;">
-                <div class="export-banner-text">
-                  <div class="export-banner-icon" style="background:#F59E0B;">
-                    <i data-lucide="sparkles" style="width:26px;height:26px;"></i>
-                  </div>
-                  <div>
-                    <div style="font-weight:700; font-size:1.1rem; color:var(--text-main);">
-                      Bookmarks Mastery Practice Drill
-                    </div>
-                    <div style="font-size:0.85rem; color:var(--text-secondary);">
-                      Launch a custom dynamic practice session featuring all your ${bookmarks.length} saved high-yield questions.
-                    </div>
-                  </div>
-                </div>
-
-                <button class="btn btn-primary" onclick="libraryView.startBookmarksDrill()">
-                  <i data-lucide="play"></i>
-                  <span>🚀 Start Bookmarks Drill</span>
-                </button>
-              </div>
-            ` : ''}
-
-            <!-- Subject switch. One chip per subject that actually has saved
-                 questions, so the row never offers an empty bucket. -->
-            ${bookmarkGroups.length > 0 ? `
-              <div class="bm-subject-switch" role="group" aria-label="Filter saved questions by subject">
-                <span class="bm-switch-label">
-                  <i data-lucide="folder-tree" style="width:15px;height:15px;"></i>
-                  <span>Subject</span>
-                </span>
-
-                <button type="button"
-                  class="select-chip bm-subject-chip ${this.bookmarkSubject === 'ALL' ? 'active' : ''}"
-                  aria-pressed="${this.bookmarkSubject === 'ALL' ? 'true' : 'false'}"
-                  onclick="libraryView.setBookmarkSubject('ALL')">
-                  <span>All Subjects</span>
-                  <span class="bm-chip-count">${bookmarks.length}</span>
-                </button>
-
-                ${bookmarkGroups.map(g => `
-                  <button type="button"
-                    class="select-chip bm-subject-chip ${this.bookmarkSubject === g.subject ? 'active' : ''}"
-                    aria-pressed="${this.bookmarkSubject === g.subject ? 'true' : 'false'}"
-                    onclick="libraryView.setBookmarkSubject('${SecurityUtils.escapeHtml(UIUtils.escapeJs(g.subject))}')">
-                    <span>${SecurityUtils.escapeHtml(g.subject)}</span>
-                    <span class="bm-chip-count">${g.questions.length}</span>
-                  </button>
-                `).join('')}
-              </div>
-            ` : ''}
-
-            <!-- Bookmarks List, grouped by subject -->
-            <div style="display:flex; flex-direction:column; gap:1.75rem;">
-              ${bookmarks.length === 0 ? `
-                <div class="glass-panel" style="padding:3rem 2rem; text-align:center; color:var(--text-muted);">
-                  <i data-lucide="bookmark" style="width:48px;height:48px;margin-bottom:0.75rem;opacity:0.5;"></i>
-                  <p style="font-size:1.05rem; font-weight:600;">No saved questions yet</p>
-                  <p style="font-size:0.85rem; margin-top:0.25rem;">Tap the bookmark icon on any question — during a quiz or on the results screen — and it lands here, filed under its subject.</p>
-                </div>
-              ` : visibleGroups.filter(group=>group.questions.some(q=>visibleIds.has(q.id))).map(group => `
-                <section class="bm-subject-group" aria-label="${SecurityUtils.escapeHtml(group.subject)}">
-                  <header class="bm-group-header">
-                    <h3 class="bm-group-title">${SecurityUtils.escapeHtml(group.subject)}</h3>
-                    <span class="badge badge-primary">${group.questions.length} saved</span>
-                    <span class="bm-group-rule" aria-hidden="true"></span>
-                    <button type="button" class="btn btn-secondary btn-sm"
-                      onclick="libraryView.startBookmarksDrill('${SecurityUtils.escapeHtml(UIUtils.escapeJs(group.subject))}')"
-                      title="Practise only the ${SecurityUtils.escapeHtml(group.subject)} questions">
-                      <i data-lucide="play" style="width:14px;height:14px;"></i>
-                      <span>Drill this subject</span>
-                    </button>
-                  </header>
-
-                  <div style="display:flex; flex-direction:column; gap:1rem;">
-                    ${group.questions.filter(q=>visibleIds.has(q.id)).map((q, idx) => {
-                      const isRevealed = this.revealedBookmarkIds.has(q.id);
-                      const letters = ['A', 'B', 'C', 'D'];
-                      const correct = (q.options || [])[q.correctAnswerIndex];
-
-                      return `
-                        <div class="review-item-card">
-                          <div style="display:flex; align-items:center; justify-content:space-between; gap:0.75rem;">
-                            <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
-                              <span class="badge badge-primary">${SecurityUtils.escapeHtml(q.subject)}</span>
-                              ${q.sourcePage ? `<span class="badge badge-muted">Page ${Number(q.sourcePage)}</span>` : ''}
-                              <span style="font-size:0.8rem; color:var(--text-muted);">From: ${SecurityUtils.escapeHtml(q.quizTitle)}</span>
-                            </div>
-
-                            <button class="bookmark-toggle-btn bookmarked" title="Remove Bookmark" onclick="libraryView.removeBookmark(${Number(q.id)})">
-                              <i data-lucide="bookmark" style="width:20px;height:20px;fill:currentColor;"></i>
-                            </button>
-                          </div>
-
-                          <div style="font-size:1.08rem; font-weight:700; color:var(--text-main);">
-                            ${idx + 1}. ${SecurityUtils.sanitizeHtml(q.questionText)}
-                          </div>
-
-                          <!-- Collapsible Reveal Accordion -->
-                          <div>
-                            <button class="btn btn-secondary btn-sm" onclick="libraryView.toggleReveal(${Number(q.id)})">
-                              <i data-lucide="${isRevealed ? 'chevron-up' : 'eye'}"></i>
-                              <span>${isRevealed ? 'Hide Answer & Explanation' : 'Reveal Answer & Explanation'}</span>
-                            </button>
-
-                            ${isRevealed ? `
-                              <div class="explanation-card" style="margin-top:0.75rem;">
-                                <div style="font-weight:700; color:var(--color-success);">
-                                  Correct Answer: Option (${letters[q.correctAnswerIndex] || '?'})${correct ? ` — ${SecurityUtils.escapeHtml(correct)}` : ''}
-                                </div>
-                                <div class="explanation-body" style="margin-top:0.35rem;">
-                                  ${SecurityUtils.sanitizeHtml(q.explanation)}
-                                </div>
-                              </div>
-                            ` : ''}
-                          </div>
-                        </div>
-                      `;
-                    }).join('')}
-                  </div>
-                </section>
-              `).join('')}
-            </div>
-
-            ${bookmarks.length > 0 && visibleBookmarkCount === 0 ? `
-              <div class="glass-panel" style="padding:2rem; text-align:center; color:var(--text-muted);">
-                No saved questions in this subject.
-              </div>
-            ` : ''}
-          </div>
-        `}
-      </div>
-    `;
-
-    if(focused){const input=document.getElementById('quiz-library-search');input?.focus();input?.setSelectionRange(start,end);}
-    if (window.app) window.app.refreshIcons();
-  }
-
-  setTab(tab) {
-    this.activeTab = tab;this.page=0;
-    this.render();
-  }
-
-  onSearchChange(val) {
-    this.searchQuery = val;this.page=0;this._renderVersion=(this._renderVersion||0)+1;
-    clearTimeout(this._debounce);this._debounce=setTimeout(()=>this.render(),200);
-  }
-
-  onSortChange(val) {
-    this.selectedSort = val;this.page=0;
-    this.render();
-  }
-
-  setDifficultyFilter(diff) {
-    this.selectedDifficulty = diff;this.page=0;
-    this.render();
-  }
-
-  /** Narrow the saved-questions list to one subject, or 'ALL' for every group. */
-  setBookmarkSubject(subject) {
-    this.bookmarkSubject = subject || 'ALL';this.page=0;
-    if (window.audioEngine) window.audioEngine.playClick();
-    this.render();
-  }
-
-  toggleReveal(qId) {
-    if (this.revealedBookmarkIds.has(qId)) {
-      this.revealedBookmarkIds.delete(qId);
-    } else {
-      this.revealedBookmarkIds.add(qId);
-    }
-    this.render();
-  }
-
-  async removeBookmark(qId) {
-    try{await updateQuestionBookmark(qId,false);app.showToast('Bookmark removed','info');this.render();}catch(error){app.showToast('Could not remove bookmark.','error');}
-  }
-
-  confirmDelete(quizId) {
-    app.showConfirmation({
-      title: 'Delete Quiz Permanently?',
-      message: 'This will remove the quiz, its questions, and your past evaluation records from your local storage. This action cannot be undone.',
-      confirmText: 'Delete Quiz',
-      onConfirm: async () => {
-        try{await deleteQuiz(quizId);app.showToast('Quiz deleted successfully','success');this.render();}catch(error){app.showToast(`Delete failed: ${error.message}`,'error');}
-      }
-    });
-  }
-
-  /**
-   * Build a practice quiz from saved questions.
-   *
-   * @param {string} [subject] restrict the drill to one subject. Omitted (or
-   *        'ALL') drills every saved question. A subject-specific drill is
-   *        titled and tagged with that subject, so it files itself back into the
-   *        right bucket instead of landing in a generic "Mixed" pile.
-   */
-  async startBookmarksDrill(subject) {
-    if(this._drillPending) return;this._drillPending=true;
-    try {
-    const all = await getBookmarkedQuestions();
-    const selected = (!subject || subject === 'ALL')
-      ? all
-      : all.filter(q => q.subject === subject);
-
-    const scoped=selected.filter(q=>!q.reviewIssue && (!window.QuizQuality || !QuizQuality.validate(q)));
-    const excluded=selected.length-scoped.length;
-    if (excluded) app.showToast(`${excluded} saved questions need correction and were excluded from the drill.`, 'warning');
-    if (scoped.length === 0) {
-      app.showToast(
-        subject && subject !== 'ALL'
-          ? `No saved questions in ${subject} yet.`
-          : 'You have no bookmarked questions.',
-        'error'
-      );
+    const version = ++this._renderVersion;
+    let notes;
+    try { notes = await getAllNotes(); }
+    catch {
+      if (version !== this._renderVersion) return;
+      this.container.innerHTML = '<div class="glass-panel" role="alert"><h2>Library could not be loaded</h2><p>Browser storage is unavailable. Your saved notes are still on this device.</p><button class="btn btn-primary" onclick="libraryView.render()">Retry</button></div>';
       return;
     }
-
-    const isScoped = !!subject && subject !== 'ALL';
-
-    const drillId = await saveNewQuiz({
-      title: isScoped
-        ? `⭐ ${subject} — Bookmarks Drill`
-        : '⭐ Saved Bookmarks Mastery Drill',
-      // Tagging the drill with the real subject keeps it grouped correctly if
-      // the student bookmarks questions from inside the drill itself. The old
-      // hard-coded 'Mixed Revisions' created a phantom subject bucket.
-      subject: isScoped ? subject : 'Mixed Revisions',
-      difficulty: 'MIXED',
-      quizMode: 'PRACTICE',
-      language: [...new Set(scoped.map(q=>q.language).filter(Boolean))].length===1?scoped.find(q=>q.language)?.language:(window.studyPreferences?.get().language||'BILINGUAL'),
-      sourceType: 'TEXT_NOTES',
-      sourceTitle: 'Saved Bookmarks'
-    }, scoped);
-
-    app.showToast(
-      `Created a ${scoped.length}-question drill from your saved ${isScoped ? subject : ''} questions!`.replace('  ', ' '),
-      'success'
-    );
-    app.startQuiz(drillId);
-    } catch(error){app.showToast(`Could not build bookmark drill: ${error.message}`,'error');}finally{this._drillPending=false;}
+    if (version !== this._renderVersion) return;
+    const subjects = [...new Set(notes.map(note => note.subject || 'General Study'))].sort();
+    if (this.subject !== 'ALL' && !subjects.includes(this.subject)) this.subject = 'ALL';
+    const term = this.searchQuery.toLocaleLowerCase().trim();
+    const filtered = notes.filter(note => (this.subject === 'ALL' || (note.subject || 'General Study') === this.subject) &&
+      (!term || [note.title, note.subject, note.description, note.content, ...(note.sections || []).map(section => `${section.heading || ''} ${section.content || ''}`)]
+        .some(value => String(value || '').toLocaleLowerCase().includes(term))));
+    filtered.sort(this.selectedSort === 'TITLE'
+      ? (a, b) => String(a.title || '').localeCompare(String(b.title || ''))
+      : (a, b) => {
+        const difference = String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''));
+        return this.selectedSort === 'OLDEST' ? -difference : difference;
+      });
+    this.page = Math.min(this.page, Math.max(0, Math.ceil(filtered.length / this.pageSize) - 1));
+    const input = this.container.querySelector('#library-search');
+    const focused = document.activeElement === input, start = input?.selectionStart, end = input?.selectionEnd;
+    const hero = UIUtils.buildViewHero({
+      accent: 'emerald', icon: 'library', eyebrow: 'Saved Study Notes', title: 'Your knowledge,', titleAccent: 'ready to revisit.',
+      hindi: 'अध्ययन संग्रह — पढ़ें, समझें और दोहराएँ',
+      tagline: 'Find your saved study notes, return to their textbook chapters, export a PDF or revise with flashcards.',
+      stats: [{ value: notes.length, label: 'Saved notes' }, { value: subjects.length, label: 'Subjects' },
+        { value: notes.filter(note => note.isFavorite).length, label: 'Favorites' }],
+      actions: [{ label: 'Create Study Notes', icon: 'plus', onclick: "app.navigate('study-notes')" },
+        { label: 'Flashcards', icon: 'layers', onclick: "app.navigate('flashcards')", variant: 'ghost' }]
+    });
+    this.container.innerHTML = `<div class="page-column">${hero}
+      <div class="glass-panel" style="padding:1rem;display:flex;gap:0.75rem;flex-wrap:wrap;">
+        <input id="library-search" class="study-textarea" style="min-height:44px;flex:1;min-width:180px;" aria-label="Search saved notes" placeholder="Search notes and chapter text…" value="${this.escape(this.searchQuery)}" oninput="libraryView.onSearchChange(this.value)">
+        <select class="vault-filter-select" aria-label="Subject" onchange="libraryView.setSubject(this.value)"><option value="ALL">All subjects</option>${subjects.map(subject => `<option value="${this.escape(subject)}" ${this.subject === subject ? 'selected' : ''}>${this.escape(subject)}</option>`).join('')}</select>
+        <select class="vault-filter-select" aria-label="Sort notes" onchange="libraryView.onSortChange(this.value)">${[['NEWEST','Recently updated'],['OLDEST','Oldest first'],['TITLE','Title']].map(([id,label]) => `<option value="${id}" ${this.selectedSort === id ? 'selected' : ''}>${label}</option>`).join('')}</select>
+      </div>
+      <p role="status">${filtered.length} saved ${filtered.length === 1 ? 'note' : 'notes'}</p>
+      <div class="fc-deck-grid">${filtered.slice(this.page * this.pageSize, (this.page + 1) * this.pageSize).map(note => {
+        const excerpt = note.description || note.sections?.[0]?.content || note.content || 'Open this note to continue reading.';
+        return `<article class="glass-panel" style="padding:1.25rem;"><span class="badge badge-primary">${this.escape(note.subject || 'General Study')}</span><h3>${this.escape(note.title || 'Untitled note')}</h3><p>${this.escape(String(excerpt).slice(0, 220))}</p><p>${(note.sections || []).length} sections${note.isFavorite ? ' · Favorite' : ''}</p><div style="display:flex;gap:0.5rem;flex-wrap:wrap;"><button class="btn btn-primary btn-sm" onclick="libraryView.openNote(${Number(note.id)})">Read</button><button class="btn btn-secondary btn-sm" onclick="libraryView.openFlashcards(${Number(note.id)})">Flashcards</button><button class="btn btn-secondary btn-sm" onclick="studyNotesView.exportStudyNotesPdf(${Number(note.id)})">Print PDF</button></div></article>`;
+      }).join('') || '<div class="glass-panel" style="padding:2rem;"><h3>No matching notes</h3><p>Create a study note or change the search and subject filter.</p><button class="btn btn-primary" onclick="app.navigate(\'study-notes\')">Open Study Notes</button></div>'}</div>
+      ${filtered.length > this.pageSize ? `<div style="display:flex;gap:1rem;align-items:center;"><button class="btn btn-secondary" onclick="libraryView.setPage(${this.page - 1})" ${this.page === 0 ? 'disabled' : ''}>Previous</button><span>Page ${this.page + 1} of ${Math.ceil(filtered.length / this.pageSize)}</span><button class="btn btn-secondary" onclick="libraryView.setPage(${this.page + 1})" ${(this.page + 1) * this.pageSize >= filtered.length ? 'disabled' : ''}>Next</button></div>` : ''}
+    </div>`;
+    if (focused) { const field = this.container.querySelector('#library-search'); field?.focus(); field?.setSelectionRange(start, end); }
+    window.app?.refreshIcons();
   }
-  onLeaveView(){this._renderVersion=(this._renderVersion||0)+1;clearTimeout(this._debounce);}
+
+  onSearchChange(value) { this.searchQuery = value; this.page = 0; ++this._renderVersion; clearTimeout(this._debounce); this._debounce = setTimeout(() => this.render(), 200); }
+  onSortChange(value) { this.selectedSort = ['NEWEST','OLDEST','TITLE'].includes(value) ? value : 'NEWEST'; this.page = 0; this.render(); }
+  setSubject(value) { this.subject = value || 'ALL'; this.page = 0; this.render(); }
+  setPage(value) { this.page = Math.max(0, Number(value) || 0); this.render(); }
+  async openNote(id) { await app.navigate('study-notes'); await window.studyNotesView?.openNote(Number(id)); }
+  async openFlashcards(id) { await app.navigate('flashcards'); await window.flashcardsView?.loadNotesDeck(Number(id)); }
+  onLeaveView() { ++this._renderVersion; clearTimeout(this._debounce); }
 }
 
 window.libraryView = new LibraryView();

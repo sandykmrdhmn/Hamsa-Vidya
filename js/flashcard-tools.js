@@ -145,32 +145,6 @@ class FlashcardTools {
     result.contentFingerprint = this.fingerprint(result);
     return result;
   }
-  static questionCard(raw, quiz = {}) {
-    const q = window.QuizQuality?.normalize(raw);
-    if (!q || q.reviewIssue || !this.id(raw.id)) return null;
-    return this.normalize({
-      id: raw.id,
-      cardKey: `q:${raw.id}`,
-      sourceDeckId: raw.quizId || quiz.id,
-      sourceDeckType: 'QUIZ',
-      front: q.questionText,
-      back: q.options[q.correctAnswerIndex],
-      options: q.options,
-      correctAnswerIndex: q.correctAnswerIndex,
-      explanation: q.explanation,
-      optionExplanations: q.optionExplanations,
-      memoryCue: q.memoryCue,
-      evidenceQuote: q.evidenceQuote,
-      sourcePage: q.sourcePage,
-      sourceReferences: this.references(q.sourceRefs),
-      answerOrigin: q.answerOrigin,
-      aiReviewed: q.aiReviewed,
-      sourceTitle: quiz.sourceTitle || quiz.title || '',
-      badge: quiz.subject || q.subject || 'Quiz',
-      subject: quiz.subject || q.subject || 'General Study',
-      isBookmarked: raw.isBookmarked,
-    });
-  }
   static customCard(raw, deck = {}) {
     if (!this.id(raw?.id)) return null;
     return this.normalize({
@@ -530,6 +504,16 @@ class FlashcardTools {
   static format(text, options = {}) {
     return window.StudyFormat ? StudyFormat.format(text, options).replaceAll('class="study-math"','class="study-math fc-math"') : SecurityUtils.escapeHtml(String(text ?? '')).replace(/\n/g, '<br>');
   }
+  // Typed card answers preserve mathematical symbols, units and code casing.
+  static answerIdentity(value) {
+    const text = String(value ?? '').normalize('NFC').trim().replace(/\u2212/g, '-').replace(/\s+/g, ' ');
+    return this.isTechnicalAnswer(text) ? text : text.toLocaleLowerCase();
+  }
+  static isTechnicalAnswer(text) {
+    if (/[\d_^=<>\\{}+*/-]|[⁰¹²³⁴⁵⁶⁷⁸⁹₀₁₂₃₄₅₆₇₈₉]/u.test(text) || /^[A-Za-z]{1,2}$/.test(text) || /[a-z][A-Z]/.test(text)) return true;
+    this._elementSymbols ||= new Set('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og'.split(' '));
+    return (text.match(/\b[A-Z][A-Za-z]*\b/g) || []).some(word => /^(?:[A-Z][a-z]?)+$/.test(word) && word.match(/[A-Z][a-z]?/g).every(symbol => this._elementSymbols.has(symbol)));
+  }
   static answerMatches(answer, target) {
     const plain = (value) =>
       String(value ?? '')
@@ -541,7 +525,7 @@ class FlashcardTools {
     const a = plain(answer),
       b = plain(target);
     // Case matters for symbols, chemistry, units and code. Prose can ignore case.
-    const technical = (v) => QuizQuality.isTechnicalAnswer(v);
+    const technical = (v) => this.isTechnicalAnswer(v);
     return (
       a !== '' &&
       (a === b ||
@@ -649,8 +633,8 @@ class FlashcardTools {
   }
   static customIdentity(card) {
     return JSON.stringify([
-      QuizQuality.answerIdentity(this.text(card.front)),
-      QuizQuality.answerIdentity(this.text(card.back)),
+      this.answerIdentity(this.text(card.front)),
+      this.answerIdentity(this.text(card.back)),
     ]);
   }
 }

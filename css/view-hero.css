@@ -5,12 +5,8 @@
    One banner design for every tab, built by UIUtils.buildViewHero().
 
    WHY THIS FILE EXISTS
-   Nine views each opened differently. Four (create-quiz, library, quiz-history,
-   settings) had no header styling at all — just an `<h2>` inside an
-   inline-styled flex div. Five had a header class used by exactly one view
-   (.study-vault-hero, .tools-hero-header, .aw-header-row, .ea-hero, and
-   flashcards borrowing the dashboard's .hero-card). So there was no shared
-   visual language and nine places to keep in sync.
+   A shared banner keeps the opening layout and typography consistent across
+   the study views.
 
    RELATIONSHIP TO THE TWO REFERENCE HEROES
    The Dashboard masthead (.dash-masthead, css/dashboard.css) and the AI Teacher

@@ -199,7 +199,7 @@ function loadUtils() {
     })());
 
     // No file should carry its own body-copy of escapeHtml any more.
-    const handRolled = ['js/views/study-notes.js', 'js/views/quiz-result.js',
+    const handRolled = ['js/views/study-notes.js',
       'js/views/exam-alerts.js', 'js/app.js']
       .filter(f => /replace\(\/&\/g,\s*'&amp;'\)/.test(read(f)));
     check('no hand-rolled escapeHtml bodies remain', handRolled.length === 0, handRolled.join(','));
@@ -266,7 +266,8 @@ function loadUtils() {
       (read('js/app.js').match(/_paintSpotlight/g) || []).length >= 2);
 
     // The narrowed selector must still match what the CSS actually uses.
-    const cssVars = ['css/main.css', 'css/components.css']
+    const cssVars = ['css/main.css', ...fs.readdirSync(path.join(ROOT, 'css/components'))
+      .filter(name => name.endsWith('.css')).map(name => `css/components/${name}`)]
       .map(read).join('\n')
       .match(/\.([\w-]+)::(?:before|after)\s*\{[^}]*--mouse-x/g) || [];
     check('CSS consumers are covered by the selector',

@@ -92,7 +92,7 @@ function loadSanitizer() {
   // ================================================================= M2
   console.log('\n=== M2: sanitizer is a hard dependency ===');
   {
-    const files = ['js/views/quiz-player.js', 'js/views/quiz-result.js', 'js/pdf-generator.js',
+    const files = ['js/pdf-generator.js', 'js/views/study-notes.js',
       'js/views/ai-teacher.js', 'js/views/answer-writing.js', 'js/views/flashcards.js'];
     let raw = 0;
     for (const f of files) {
@@ -195,21 +195,11 @@ function loadSanitizer() {
       /viewName !== this\.currentView && window\.aiClient\?\.inFlightCount > 0/.test(APP_SRC));
 
     // Callers must use the lifecycle rather than poking the overlay directly.
-    const cq = read('js/views/create-quiz.js');
-    check('create-quiz uses beginGeneration', /app\.beginGeneration\(/.test(cq));
-    check('create-quiz uses endGeneration', /app\.endGeneration\(jobId\)/.test(cq));
-    check('create-quiz suppresses the cancel "error" toast', /error.name==='AbortError' \|\| signal.aborted/.test(cq));
-    check('create-quiz no longer toggles the overlay directly',
-      !/overlay\.classList/.test(cq));
-    // Check within each method body rather than a fixed character window.
-    const bodyAfter = (marker) => {
-      const i = APP_SRC.indexOf(marker);
-      return i === -1 ? '' : APP_SRC.slice(i, i + 2500);
-    };
-    check('launchQuickDrill uses the lifecycle',
-      /beginGeneration\(/.test(bodyAfter('async launchQuickDrill()')));
-    check('launchMockTest uses the lifecycle',
-      /beginGeneration\(/.test(bodyAfter('async launchMockTest()')));
+    const notes = read('js/views/study-notes.js');
+    check('study notes uses beginGeneration', /app\.beginGeneration\(/.test(notes));
+    check('study notes uses endGeneration', /app\.endGeneration\(jobId\)/.test(notes));
+    check('study notes no longer toggles the overlay directly', !/overlay\.classList/.test(notes));
+    check('retired actions are removed from the application', !/launchQuickDrill|launchMockTest|startQuiz|viewQuizResult/.test(APP_SRC));
     // endGeneration() is the one legitimate place that touches the overlay.
     const overlayToggles = (APP_SRC.match(/overlay\.classList\.(add|remove)\('active'\)/g) || []).length;
     check('overlay toggling is centralised in begin/endGeneration',

@@ -39,7 +39,7 @@ class SettingsView {
     const store = window.studyPreferences;
     if (!store) return '<p>Reload the page to load Study Preferences.</p>';
     this._studyDraft ||= store.get();
-    return `<p class="settings-help">Defaults for new lessons, notes and quizzes. Choices made inside a study tab take priority; saved lessons keep their original settings. Quizzes use bilingual text for Hinglish.</p>
+    return `<p class="settings-help">Defaults for new lessons and notes. Choices made inside a study tab take priority; saved lessons keep their original settings.</p>
       <div class="settings-fields">
       ${this.preferenceSelect('language', 'Study language', store.languages)}
       ${this.preferenceSelect('level', 'Class / learning level', store.levels)}
@@ -139,11 +139,11 @@ class SettingsView {
     cards[4].insertAdjacentHTML('afterbegin', this.storageHTML());
     const resets = document.createElement('div'); resets.className = 'settings-module-resets';
     resets.innerHTML = '<h4>Reset one module</h4><p class="settings-help">Choose only the library you want to erase. Your profile, study defaults and API key are kept. Export a backup first.</p>'
-      + [['QUIZZES','Quizzes & attempts'],['NOTES','Study Notes'],['FLASHCARDS','Flashcards & revision'],['ANSWERS','Answer Writing'],['TEACHER','AI Teacher lessons'],['EXAMS','Saved exams & cache']].map(([id,label]) => `<button class="btn btn-secondary btn-sm" onclick="settingsView.confirmModuleReset('${id}')">${label}</button>`).join('');
+      + [['QUIZ','QUIZ & attempts'],['NOTES','Study Notes'],['FLASHCARDS','Flashcards & revision'],['ANSWERS','Answer Writing'],['TEACHER','AI Teacher lessons'],['EXAMS','Saved exams & cache']].map(([id,label]) => `<button class="btn btn-secondary btn-sm" onclick="settingsView.confirmModuleReset('${id}')">${label}</button>`).join('');
     cards[4].append(resets);
     const groups = [
       ['profile', 'user-check', 'Profile', 'Identity & academic background', [cards[0]]],
-      ['ai', 'key-round', 'AI Connection', 'Gemini key, model & connection test', [cards[1]]],
+      ['ai', 'key-round', 'AI Connection', 'Google Gemini key, model & connection test', [cards[1]]],
       ['appearance', 'palette', 'Appearance', 'Theme, typography & live preview', [cards[2],cards[3]]],
       ['study', 'graduation-cap', 'Study Preferences', 'Language, class, exam, depth & voice', [preferences]],
       ['data', 'database-backup', 'Data & Storage', 'Storage status, backups & module resets', [cards[4]]]
@@ -221,24 +221,28 @@ class SettingsView {
     const version = ++this._renderVersion;
 
     try {
-      const apiKey = (window.geminiService && typeof window.geminiService.getApiKey === 'function') 
-        ? window.geminiService.getApiKey() 
+      const apiKey = (window.aiClient && typeof window.aiClient.getUserKey === 'function')
+        ? window.aiClient.getUserKey('gemini')
+        : (window.geminiService && typeof window.geminiService.getApiKey === 'function')
+        ? window.geminiService.getApiKey('gemini')
         : (localStorage.getItem('hamsa_gemini_api_key') || '');
 
       // Resolve how AI requests are actually travelling before rendering, so the
       // card can tell the truth about where the key lives.
-      if (window.aiClient) await window.aiClient.probeServerKey();
-      const transportMode = window.geminiService?.getTransportMode?.() || (apiKey ? 'DIRECT' : 'UNCONFIGURED');
+      if (window.aiClient) {
+        await window.aiClient.probeServerKey('gemini');
+      }
+      const transportMode = window.aiClient?.getMode?.('gemini') || window.geminiService?.getTransportMode?.('gemini') || (apiKey ? 'DIRECT' : 'UNCONFIGURED');
       const usingProxy = transportMode === 'PROXY';
 
       const transportBadge = usingProxy
         ? { cls: 'badge-success', text: 'Secure Server Proxy' }
         : (apiKey ? { cls: 'badge-success', text: 'Personal Key Configured' } : { cls: 'badge-warning', text: 'Using Fallback Engine' });
 
-      const currentModel = (window.geminiService && typeof window.geminiService.getActiveModel === 'function')
-        ? window.geminiService.getActiveModel()
-        : 'gemini-3.6-flash';
-      const modelOptions = window.geminiService?.candidateModels || ['gemini-3.6-flash'];
+      const currentModel = window.geminiService?.getGeminiModel?.() || ((window.geminiService && typeof window.geminiService.getActiveModel === 'function')
+        ? window.geminiService.getActiveModel('gemini')
+        : 'gemini-2.5-flash');
+      const modelOptions = window.geminiService?._geminiCandidates || window.geminiService?.candidateModels || ['gemini-2.5-flash'];
 
       const currentTheme = localStorage.getItem('hamsa_theme_mode') || 'DARK';
       const currentPalette = localStorage.getItem('hamsa_theme_palette') || 'INDIGO';
@@ -247,12 +251,12 @@ class SettingsView {
 
       const dbStats = (typeof getDatabaseSummaryCounts === 'function') 
         ? await getDatabaseSummaryCounts() 
-        : { quizzesCount: 0, questionsCount: 0, notesCount: 0, attemptsCount: 0 };
+        : { notesCount: 0, cardCount: 0, deckCount: 0, reviewCount: 0, answerCount: 0, teacherCount: 0 };
       const storageStatus = await this.readStorageStatus();
       if (version !== this._renderVersion) return;
       this._storageStatus = storageStatus;
-      for (const key of ['quizzesCount', 'questionsCount', 'notesCount', 'attemptsCount', 'cardCount',
-        'deckCount', 'reviewCount', 'answerCount', 'teacherCount', 'savedExamCount']) {
+      for (const key of ['notesCount', 'cardCount',
+        'deckCount', 'reviewCount', 'answerCount', 'teacherCount', 'savedExamCount', 'quizCount', 'quizAttemptCount']) {
         dbStats[key] = Number.isFinite(Number(dbStats[key])) ? Number(dbStats[key]) : 0;
       }
 
@@ -282,8 +286,7 @@ class SettingsView {
       // honest framing for a tab whose main job is managing that data.
       const totalRecords = (dbStats.totalRecords != null)
         ? dbStats.totalRecords
-        : (dbStats.quizzesCount || 0) + (dbStats.questionsCount || 0)
-          + (dbStats.attemptsCount || 0) + (dbStats.notesCount || 0);
+        : ['notesCount','cardCount','deckCount','reviewCount','answerCount','teacherCount','savedExamCount','quizCount','quizAttemptCount'].reduce((sum, key) => sum + dbStats[key], 0);
 
       const heroHtml = UIUtils.buildViewHero({
         accent: 'slate',
@@ -292,10 +295,10 @@ class SettingsView {
         title: 'Your app,',
         titleAccent: 'on your terms.',
         hindi: 'व्यवस्था — आपका डेटा, आपके नियम',
-        tagline: 'Your library and preferences are stored on this device. When you use cloud AI, your submitted content is sent to Google through the configured connection. Manage your profile, appearance and backups here.',
+        tagline: 'Your library and preferences are stored on this device. When you use cloud AI, your submitted content is sent to Google through your configured Gemini connection. Manage your profile, appearance and backups here.',
         stats: [
           { value: Number(totalRecords).toLocaleString('en-IN'), label: 'Records stored' },
-          { value: dbStats.quizzesCount || 0, label: 'Quizzes' },
+          { value: dbStats.cardCount || 0, label: 'Flashcards' },
           { value: dbStats.notesCount || 0, label: 'Notes' },
           { value: backgroundThemes.length, label: 'Themes' }
         ],
@@ -357,7 +360,7 @@ class SettingsView {
           <!-- 1. Google Gemini AI Configuration -->
           <div class="form-group-card">
             <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
-              <div style="font-size:1.1rem; font-weight:700;">1. Google Gemini AI Configuration</div>
+              <div style="font-size:1.1rem; font-weight:700;">Google Gemini</div>
               <span class="badge ${transportBadge.cls}">${transportBadge.text}</span>
             </div>
 
@@ -387,6 +390,7 @@ class SettingsView {
               ${usingProxy
                 ? 'The server key is used while no personal key is saved. Saving a personal key switches requests to that key in direct mode; removing it restores the server proxy.'
                 : 'A saved personal key is used directly with Google. Remove it to use a configured server proxy. Project quota still applies; changing keys in the same project does not create extra quota.'}
+              Test Connection saves the entered key and selects its verified working model when successful. An empty input tests and activates the server proxy.
             </p>
 
             <div style="display:flex; gap:0.5rem; flex-direction:column;">
@@ -403,11 +407,11 @@ class SettingsView {
               <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:0.75rem; margin-top:0.5rem; padding:0.75rem 1rem; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-md);">
                 <div style="display:flex; flex-direction:column; gap:0.2rem;">
                   <span style="font-size:0.85rem; font-weight:700; color:var(--text-main);">Active Gemini Model</span>
-                  <span style="font-size:0.75rem; color:var(--text-muted);">Free-tier models · Usage limits apply</span>
+                  <span style="font-size:0.75rem; color:var(--text-muted);">Models available to the active connection · Usage limits apply</span>
                 </div>
 
                 <select id="gemini-model-select" aria-label="Active Gemini model" class="study-textarea" style="width:auto; max-width:100%; min-width:0; min-height:36px; padding:0.25rem 0.75rem; font-size:0.85rem; font-weight:600;" onchange="settingsView.onModelSelect(this.value)">
-                  ${modelOptions.map(m => `<option value="${this.escape(m)}" ${currentModel === m ? 'selected' : ''}>${this.escape(m)}${m === 'gemini-3.6-flash' ? ' (Recommended)' : ''}</option>`).join('')}
+                  ${modelOptions.map(m => `<option value="${this.escape(m)}" ${currentModel === m ? 'selected' : ''}>${m === 'gemini-2.5-flash' ? 'Gemini 2.5 Flash' : this.escape(m)}${m === 'gemini-2.5-flash' ? ' (Recommended)' : ''}</option>`).join('')}
                 </select>
               </div>
 
@@ -449,7 +453,7 @@ class SettingsView {
                       <span>AI Token Usage</span>
                     </div>
                     ${hasAny ? `
-                      <button class="btn btn-secondary btn-sm" onclick="settingsView.resetAiUsage()" title="Reset local counters; Google's quota is unchanged">
+                      <button class="btn btn-secondary btn-sm" onclick="settingsView.resetAiUsage()" title="Reset local counters; provider quotas are unchanged">
                         <i data-lucide="rotate-ccw" style="width:13px;height:13px;"></i>
                         <span>Reset</span>
                       </button>
@@ -476,12 +480,12 @@ class SettingsView {
                       </div>
                     </div>
                     <p style="font-size:0.78rem; color:var(--text-muted); margin-top:0.55rem;">
-                      Exact counts reported by the Gemini API for responses recorded in this browser.
-                      Local daily totals reset at midnight; these counters do not show or reset Google's quota.
+                      Counts reported by Google Gemini for responses recorded in this browser.
+                      Local daily totals reset at midnight; these counters do not show or reset provider quotas or account balances.
                     </p>
                   ` : `
                     <p style="font-size:0.83rem; color:var(--text-muted); margin-top:0.5rem;">
-                      No AI usage recorded in this browser today. Counts appear when Google reports usage in a response.
+                      No AI usage recorded in this browser today. Counts appear when Gemini reports usage in a response.
                     </p>
                   `}
                 </div>
@@ -596,26 +600,18 @@ class SettingsView {
             <span class="badge badge-primary">Offline IndexedDB Storage</span>
           </div>
           <p style="font-size:0.88rem; color:var(--text-secondary); margin-top:0.35rem;">
-            Export your entire library of generated quizzes, MCQs, practice attempts, and personal study notes as a single portable JSON file. You can restore this backup anytime or transfer it between devices.
+            Export your study notes, flashcards, written answers, AI Teacher lessons and saved exams as a single portable JSON file. You can restore this backup anytime or transfer it between devices.
           </p>
 
           <!-- Storage Statistics Chips -->
           <div style="display:flex; flex-wrap:wrap; gap:1rem; margin:1rem 0; padding:0.85rem 1.15rem; background:var(--bg-surface-elevated); border:1px solid var(--border-subtle); border-radius:var(--radius-lg); box-shadow:var(--specular-highlight);">
             <div style="display:flex; align-items:center; gap:0.45rem; font-size:0.85rem; font-weight:600; color:var(--text-main);">
-              <i data-lucide="help-circle" style="width:16px;height:16px;color:var(--color-primary-light);"></i>
-              <span>Quizzes: <strong style="color:var(--color-primary-light);">${dbStats.quizzesCount}</strong></span>
-            </div>
-            <div style="display:flex; align-items:center; gap:0.45rem; font-size:0.85rem; font-weight:600; color:var(--text-main);">
-              <i data-lucide="list-checks" style="width:16px;height:16px;color:#10B981;"></i>
-              <span>Questions: <strong style="color:#10B981;">${dbStats.questionsCount}</strong></span>
+              <i data-lucide="list-checks" style="width:16px;height:16px;color:var(--color-primary);"></i>
+              <span>QUIZ: <strong>${dbStats.quizCount}</strong> · ${dbStats.quizAttemptCount} attempts</span>
             </div>
             <div style="display:flex; align-items:center; gap:0.45rem; font-size:0.85rem; font-weight:600; color:var(--text-main);">
               <i data-lucide="book-open" style="width:16px;height:16px;color:#F59E0B;"></i>
               <span>Study Notes: <strong style="color:#F59E0B;">${dbStats.notesCount}</strong></span>
-            </div>
-            <div style="display:flex; align-items:center; gap:0.45rem; font-size:0.85rem; font-weight:600; color:var(--text-main);">
-              <i data-lucide="award" style="width:16px;height:16px;color:#A855F7;"></i>
-              <span>Attempts: <strong style="color:#A855F7;">${dbStats.attemptsCount}</strong></span>
             </div>
             <div style="display:flex; align-items:center; gap:0.45rem; font-size:0.85rem; font-weight:600; color:var(--text-main);">
               <i data-lucide="layers" style="width:16px;height:16px;color:#38BDF8;"></i>
@@ -681,7 +677,7 @@ class SettingsView {
           <div style="margin-top:1.5rem; padding-top:1.25rem; border-top:1px solid var(--border-subtle);">
             <div style="font-weight:700; color:var(--color-error); font-size:0.95rem;">Danger Zone</div>
             <p style="font-size:0.82rem; color:var(--text-muted); margin-bottom:0.75rem;">
-              Permanently erase every record on this device — quizzes, attempts, study notes, flashcard decks and
+              Permanently erase every active library record on this device — study notes, flashcard decks and
               revision progress, written answers, AI Teacher lessons and saved exams.
               <strong style="color:var(--text-secondary);">Export a backup first.</strong>
             </p>
@@ -731,7 +727,7 @@ class SettingsView {
     this.captureKeyDraft();
     const val = input.value.trim();
     try {
-      window.geminiService.setApiKey(val);
+      window.geminiService.setApiKey(val, 'gemini');
       this._apiKeyDraft = val;
       this.cancelConnectionTest();
       app.showToast(val ? 'Gemini API key saved on this device.' : 'Personal Gemini API key removed.', 'success');
@@ -745,9 +741,12 @@ class SettingsView {
     this.cancelConnectionTest();
     try {
       const service = window.geminiService;
-      if (!service.candidateModels.includes(model)) throw new Error('Unsupported Gemini model.');
-      service.setActiveModel(model);
-      if (service.getActiveModel() !== model) throw new Error('Model selection was not saved.');
+      const models = service._geminiCandidates || service.candidateModels;
+      if (!models.includes(model)) throw new Error('Unsupported Gemini model.');
+      if (service.setGeminiModel) service.setGeminiModel(model);
+      else service.setActiveModel(model, 'gemini');
+      const savedModel = service.getGeminiModel ? service.getGeminiModel() : service.getActiveModel('gemini');
+      if (savedModel !== model) throw new Error('Model selection was not saved.');
       app.showToast(`Selected model: ${model}`, 'info');
     } catch (error) {
       app.showToast(`Could not change model: ${error.message}`, 'error');
@@ -767,16 +766,17 @@ class SettingsView {
     this.updateTestStatus();
     try {
       const service = window.geminiService;
-      const res = await service.testApiKey(val, { signal: controller.signal, saveModel: false });
-      if (controller.signal.aborted || this._testController !== controller) return;
-      // Testing a spare personal key must not change the server's active model.
-      const canSelect = res.success && (res.transport === 'PROXY' || service.getTransportMode() !== 'PROXY');
-      if (canSelect && service.candidateModels.includes(res.model)) {
-        service.setActiveModel(res.model);
-        const select = document.getElementById('gemini-model-select');
-        if (select) select.value = res.model;
+      const res = await service.testApiKey(val, { provider: 'gemini', signal: controller.signal, saveModel: false });
+      const latestInput = document.getElementById('gemini-api-key-input');
+      if (controller.signal.aborted || this._testController !== controller || latestInput?.value.trim() !== val) return;
+      // Verification itself does not change active credentials. Commit only
+      // the current result, so an edited key or cancelled test cannot win late.
+      if (res.success) {
+        service.activateVerifiedConnection(val, res);
+        this._apiKeyDraft = val;
       }
       this._testResult = res;
+      await this.render();
     } catch (error) {
       if (!controller.signal.aborted && this._testController === controller) {
         this._testResult = { success: false, message: error.message || 'Connection test failed. Please retry.' };
@@ -816,7 +816,7 @@ class SettingsView {
 
   resetAiUsage() {
     window.aiClient?.resetUsage?.();
-    app.showToast('Local AI counters reset. Google quota is unchanged.', 'info');
+    app.showToast('Local AI counters reset. Provider quotas and account balances are unchanged.', 'info');
     this.render();
   }
 
@@ -915,6 +915,7 @@ class SettingsView {
         try {
           const report = await importDatabaseBackup(text, { mode });
           if (mode === 'REPLACE') window.flashcardsView?.resetSession?.({ clearDrafts: true });
+          if (mode === 'REPLACE') window.quizView?.resetData?.({ clearDrafts: true });
 
           const restoredLines = Object.values(report.tables)
             .filter(t => t.imported > 0)
@@ -948,8 +949,8 @@ class SettingsView {
     app.showConfirmation({
       title: 'Reset All Data?',
       message:
-        'This irreversibly deletes EVERYTHING stored on this device:\n\n' +
-        '  • Quizzes, questions and attempt history\n' +
+        'This irreversibly deletes the active study libraries stored on this device:\n\n' +
+        '  • Quizzes and quiz attempts\n' +
         '  • Study notes and digital textbooks\n' +
         '  • Flashcard decks, cards and revision progress\n' +
         '  • Written answers and drafts\n' +
@@ -961,8 +962,9 @@ class SettingsView {
         try {
           const removed = await clearDatabase();
           window.flashcardsView?.resetSession?.({ clearDrafts: true });
+          window.quizView?.resetData?.({ clearDrafts: true });
           const total = Object.values(removed).reduce((a, b) => a + b, 0);
-          app.showToast(`All local data reset — ${total} records removed.`, 'info');
+          app.showToast(`Active study libraries reset — ${total} records removed.`, 'info');
         } catch (e) {
           app.showToast(`Reset failed: ${e.message}`, 'error');
         } finally {
@@ -978,12 +980,12 @@ class SettingsView {
     if (app._isGenerating || window.studyNotesView?.isCreating || window.aiTeacherView?.isLoading || window.answerWritingView?.isEvaluating) {
       app.showToast('Finish or cancel the active generation before resetting data.', 'info'); return;
     }
-    const labels = { QUIZZES: 'Quizzes & attempts', NOTES: 'Study Notes', FLASHCARDS: 'Flashcards & revision progress', ANSWERS: 'Answer Writing', TEACHER: 'AI Teacher lessons', EXAMS: 'Saved exams & exam cache' };
+    const labels = { QUIZ: 'QUIZ & quiz attempts', NOTES: 'Study Notes', FLASHCARDS: 'Flashcards & revision progress', ANSWERS: 'Answer Writing', TEACHER: 'AI Teacher lessons', EXAMS: 'Saved exams & exam cache' };
     if (!labels[moduleId]) return;
     this._resetPending = true;
     app.showConfirmation({
       title: `Reset ${labels[moduleId]}?`,
-      message: `Permanently erase ${labels[moduleId]} on this device? Related review progress for deleted notes or quiz questions is also removed. Other libraries, your profile, preferences and API key are kept. This cannot be undone; export a backup first.`,
+      message: `Permanently erase ${labels[moduleId]} on this device? Related review progress for deleted notes is also removed. Other libraries, your profile, preferences and API key are kept. This cannot be undone; export a backup first.`,
       confirmText: 'Reset this module', onCancel: () => { this._resetPending = false; },
       onConfirm: async () => {
         try {
@@ -991,20 +993,17 @@ class SettingsView {
           if (moduleId === 'TEACHER') await window.aiTeacherView?._saveQueue;
           if (moduleId === 'ANSWERS' && window.answerWritingView) clearTimeout(window.answerWritingView._autoSaveTimer);
           const removed = await clearModuleData(moduleId);
+          if (moduleId === 'QUIZ') window.quizView?.resetData?.({ clearDrafts: true });
           if (moduleId === 'NOTES' && window.studyNotesView) {
             const view = window.studyNotesView; view._endNoteSession(); view.activeNote = null; view.activeNoteId = null; view.currentViewMode = 'DASHBOARD';
           }
           if (moduleId === 'TEACHER' && window.aiTeacherView) {
             const view = window.aiTeacherView; view._cancelRequests(); view.currentExplanation = null; view.currentRecordId = null; view.followUpHistory = []; view.isBookmarked = false;
           }
-          if (moduleId === 'QUIZZES') {
-            try { for (const key of Object.keys(localStorage)) if (key==='hamsa_active_quiz_attempt' || key.startsWith('hamsa_active_quiz_attempt:')) localStorage.removeItem(key); } catch {}
-            if (window.quizPlayerView) { window.quizPlayerView.quiz = null; window.quizPlayerView.questions = []; }
-          }
           if (moduleId === 'ANSWERS' && window.answerWritingView) {
             const view = window.answerWritingView; view.activeQuestion = null; view.studentAnswerText = ''; view.currentEvaluation = null; view.currentAttemptId = null; view.activeTab = 'new-answer';
           }
-          if (['QUIZZES','NOTES','FLASHCARDS'].includes(moduleId) && window.flashcardsView) {
+          if (['NOTES','FLASHCARDS'].includes(moduleId) && window.flashcardsView) {
             if (typeof window.flashcardsView.resetSession === 'function') window.flashcardsView.resetSession({ clearDrafts: moduleId === 'FLASHCARDS' });
             else { window.flashcardsView.currentDeck = null; window.flashcardsView.cards = []; window.flashcardsView.activeTab = 'decks'; }
           }

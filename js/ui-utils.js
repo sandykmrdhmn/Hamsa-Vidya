@@ -14,6 +14,33 @@
 
 const UIUtils = {
 
+  /** Keep PDF editing/export bundles out of normal study startup. */
+  ensurePdfEngine(engine) {
+    const engines={
+      editing:{src:'assets/vendor/pdf-lib.min.js',ready:()=>typeof window.PDFLib?.PDFDocument?.load==='function'},
+      export:{src:'assets/vendor/html2pdf.bundle.min.js',ready:()=>typeof window.html2pdf==='function'}
+    };
+    const spec=engines[engine];
+    if(!spec)return Promise.reject(new Error('Unknown PDF engine.'));
+    if(spec.ready())return Promise.resolve();
+    this._pdfLoads ||= new Map();
+    if(this._pdfLoads.has(engine))return this._pdfLoads.get(engine);
+    const task=new Promise((resolve,reject)=>{
+      const script=document.createElement('script');script.src=spec.src;script.async=true;
+      let timer;
+      const finish=error=>{
+        clearTimeout(timer);script.onload=script.onerror=null;script.remove();
+        if(!error && spec.ready())resolve();
+        else reject(new Error('PDF support could not load. Check your connection and retry.'));
+      };
+      script.onload=()=>finish();script.onerror=()=>finish(true);
+      timer=setTimeout(()=>finish(true),15000);document.head.append(script);
+    });
+    this._pdfLoads.set(engine,task);
+    task.then(()=>this._pdfLoads.delete(engine),()=>this._pdfLoads.delete(engine));
+    return task;
+  },
+
   // =========================================================================
   // ESCAPING
   // =========================================================================
@@ -324,7 +351,7 @@ const UIUtils = {
   //
   // Every tab used to open differently. Dashboard and AI Teacher had large
   // branded banners; the other nine views opened with an unstyled `<h2>` in an
-  // inline-styled flex div (create-quiz, library, quiz-history, settings) or a
+  // inline-styled flex div (library, settings) or a
   // one-off header class used by exactly one view (.study-vault-hero,
   // .tools-hero-header, .aw-header-row, .ea-hero). Nine bespoke headers meant
   // nine places to keep in sync and no shared visual language.

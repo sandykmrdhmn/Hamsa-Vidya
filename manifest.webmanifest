@@ -1,7 +1,7 @@
 {
-  "name": "HAMSA VIDYA (हंस विद्या) — AI Wisdom & Quiz Companion",
+  "name": "HAMSA VIDYA (हंस विद्या) — AI Study Companion",
   "short_name": "Hamsa Vidya",
-  "description": "AI-powered MCQ quiz generator and study companion for UPSC, SSC, Banking and state exams. Generate quizzes from PDFs, practise with negative marking, and revise with spaced-repetition flashcards.",
+  "description": "AI study companion for PDF quizzes, study notes, flashcards, lessons, answer writing and exam preparation.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
@@ -10,7 +10,10 @@
   "theme_color": "#4F46E5",
   "lang": "en-IN",
   "dir": "ltr",
-  "categories": ["education", "productivity"],
+  "categories": [
+    "education",
+    "productivity"
+  ],
   "icons": [
     {
       "src": "assets/icons/hamsa-logo.svg",
@@ -33,9 +36,9 @@
   ],
   "shortcuts": [
     {
-      "name": "Create Quiz",
-      "short_name": "Create",
-      "url": "./index.html#create-quiz"
+      "name": "QUIZ",
+      "short_name": "QUIZ",
+      "url": "./index.html#quiz"
     },
     {
       "name": "AI Teacher",

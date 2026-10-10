@@ -1,9 +1,7 @@
 /** Flashcard storage. Source cards and saved schedules share stable keys. */
 async function getFlashcardLibrary() {
-  const [quizzes, questions, notes, customDecks, customCards, reviews] =
+  const [notes, customDecks, customCards, reviews] =
     await Promise.all([
-      db.quizzes.toArray(),
-      db.questions.toArray(),
       db.notes.toArray(),
       db.customDecks.toArray(),
       db.customCards.toArray(),
@@ -19,12 +17,8 @@ async function getFlashcardLibrary() {
       note.flashcardIds = prepared.flashcardIds;
     }
   }
-  const qm = new Map(quizzes.map((q) => [q.id, q])),
-    dm = new Map(customDecks.map((d) => [d.id, d]));
+  const dm = new Map(customDecks.map((d) => [d.id, d]));
   const cards = [
-    ...questions
-      .filter((q) => qm.has(q.quizId))
-      .map((q) => FlashcardTools.questionCard(q, qm.get(q.quizId))),
     ...notes.flatMap((n) => FlashcardTools.noteCards(n)),
     ...customCards
       .filter((c) => dm.has(c.deckId))
@@ -53,40 +47,15 @@ async function getFlashcardLibrary() {
     card.srs = FlashcardTools.reviewFits(review, card) ? review : null;
     card.changed = Boolean(review && !card.srs);
   }
-  const counts = new Map(),
-    diagnostics = new Map();
+  const counts = new Map();
   for (const card of cards) {
     const key = card.sourceDeckType + ':' + card.sourceDeckId;
     counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  for (const question of questions) {
-    if (!qm.has(question.quizId) || byKey.has('q:' + question.id)) continue;
-    const reason = question.reviewIssue
-      ? 'Marked for answer review'
-      : !FlashcardTools.id(question.id)
-        ? 'Invalid question identity'
-        : !FlashcardTools.text(question.explanation || question.rationale)
-          ? 'Missing explanation'
-          : !QuizQuality.normalize(question, { extraction: true })
-            ? 'Invalid or ambiguous choices / answer key'
-            : 'Needs answer review';
-    if (!diagnostics.has(question.quizId)) diagnostics.set(question.quizId, {});
-    const reasons = diagnostics.get(question.quizId);
-    reasons[reason] = (reasons[reason] || 0) + 1;
   }
   const now = new Date(),
     today = FlashcardTools.localDate(now);
   return {
     cards,
-    quizzes: quizzes.map((q) => ({
-      ...q,
-      cardCount: counts.get('QUIZ:' + q.id) || 0,
-      excludedReasons: diagnostics.get(q.id) || {},
-      excludedCount: Object.values(diagnostics.get(q.id) || {}).reduce(
-        (sum, n) => sum + n,
-        0,
-      ),
-    })),
     notes: notes.map((n) => ({
       ...n,
       cardCount: counts.get('NOTE:' + n.id) || 0,
@@ -116,8 +85,6 @@ async function cleanupFlashcardReviews() {
   return db.transaction(
     'rw',
     db.cardReviews,
-    db.questions,
-    db.quizzes,
     db.customCards,
     db.customDecks,
     db.notes,
@@ -134,6 +101,9 @@ async function cleanupFlashcardReviews() {
       for (const row of rows) {
         const card = byKey.get(row.cardKey);
         if (!card) {
+          // Retired source schedules stay in archived backups; removing a
+          // feature must not erase existing browser data during normal render.
+          if (/^q:\d+$/.test(String(row.cardKey || ''))) continue;
           await db.cardReviews.delete(row.id);
           continue;
         }
@@ -161,16 +131,10 @@ async function cleanupFlashcardReviews() {
 }
 async function getFlashcardByKey(key) {
   if (typeof key !== 'string') return null;
-  const match = key.match(/^(q|custom):(\d+)$/);
+  const match = key.match(/^custom:(\d+)$/);
   if (match) {
-    const id = FlashcardTools.id(match[2]);
+    const id = FlashcardTools.id(match[1]);
     if (!id) return null;
-    if (match[1] === 'q') {
-      const q = await db.questions.get(id);
-      if (!q) return null;
-      const quiz = await db.quizzes.get(q.quizId);
-      return quiz ? FlashcardTools.questionCard(q, quiz) : null;
-    }
     const c = await db.customCards.get(id);
     if (!c) return null;
     const deck = await db.customDecks.get(c.deckId);
@@ -200,8 +164,6 @@ async function saveCardReviewProgress(
   return db.transaction(
     'rw',
     db.cardReviews,
-    db.questions,
-    db.quizzes,
     db.customCards,
     db.customDecks,
     db.notes,
@@ -280,6 +242,7 @@ async function getCardReviewProgress(key) {
   return FlashcardTools.reviewFits(r, card) ? r : null;
 }
 async function getCardReviewsForDeck(id, type) {
+  if (!['NOTE', 'CUSTOM'].includes(type)) return [];
   return db.cardReviews
     .filter((r) => String(r.deckId) === String(id) && r.deckType === type)
     .toArray();
